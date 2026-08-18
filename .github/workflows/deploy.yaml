@@ -1,0 +1,128 @@
+name: Deploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    # Skips rather than fails until the infrastructure exists and the
+    # repository variables are set from the Terraform outputs. A deploy job
+    # that is permanently red teaches everyone to ignore it.
+    if: ${{ vars.WIF_PROVIDER != '' && vars.DEPLOY_SERVICE_ACCOUNT != '' && vars.GCP_PROJECT != '' }}
+
+    permissions:
+      contents: read
+      # Required to mint the OIDC token Workload Identity Federation exchanges.
+      # This is the whole reason no service-account key exists anywhere.
+      id-token: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          allowed-endpoints: >
+            accounts.google.com:443
+            api.github.com:443
+            artifactregistry.googleapis.com:443
+            europe-west3-docker.pkg.dev:443
+            github.com:443
+            iamcredentials.googleapis.com:443
+            oauth2.googleapis.com:443
+            objects.githubusercontent.com:443
+            proxy.golang.org:443
+            release-assets.githubusercontent.com:443
+            run.googleapis.com:443
+            storage.googleapis.com:443
+            sts.googleapis.com:443
+            sum.golang.org:443
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No exported key: the workflow presents its GitHub OIDC token and gets a
+      # short-lived credential back. The provider only accepts tokens from this
+      # repository.
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Build and push the image
+        env:
+          PROJECT: ${{ vars.GCP_PROJECT }}
+          REGION: ${{ vars.GCP_REGION }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          registry="${REGION}-docker.pkg.dev/${PROJECT}/containers"
+          image="${registry}/titelheld:${SHA}"
+
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build --tag "$image" .
+          docker push "$image"
+
+          echo "image=$image" >> "$GITHUB_ENV"
+
+      # Only the image is set here. Everything else about the service — the
+      # service account, the scaling bounds, the environment, the secret
+      # references — belongs to Terraform, which ignores the image in return.
+      - name: Deploy the revision
+        env:
+          PROJECT: ${{ vars.GCP_PROJECT }}
+          REGION: ${{ vars.GCP_REGION }}
+        run: |
+          set -euo pipefail
+
+          gcloud run deploy titelheld \
+            --project="$PROJECT" \
+            --region="$REGION" \
+            --image="$image" \
+            --quiet
+
+      - name: Report what is running
+        env:
+          PROJECT: ${{ vars.GCP_PROJECT }}
+          REGION: ${{ vars.GCP_REGION }}
+        run: |
+          set -euo pipefail
+
+          gcloud run services describe titelheld \
+            --project="$PROJECT" --region="$REGION" \
+            --format='value(status.url, status.latestReadyRevisionName)'
+
+          # DRY_RUN is Terraform's to set, and it is set to 1. Deploying a new
+          # revision must never be the thing that turns writes on, so this
+          # fails the deploy if it ever is.
+          dry_run=$(gcloud run services describe titelheld \
+            --project="$PROJECT" --region="$REGION" \
+            --format='value(spec.template.spec.containers[0].env.filter("name:DRY_RUN").extract("value"))')
+
+          if [ "$dry_run" != "['1']" ] && [ "$dry_run" != "1" ]; then
+            echo "::error::the deployed service does not have DRY_RUN=1 (got '${dry_run}')"
+            exit 1
+          fi
+
+          echo "DRY_RUN is on; the deployed service cannot write to Strava."

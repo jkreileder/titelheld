@@ -86,6 +86,31 @@
             "matchStrings": [
                 "version: (?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
             ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "hashicorp/terraform",
+            "description": "Keep the Terraform version used by CI in step with the one developers run.",
+            "extractVersionTemplate": "^v(?<version>.*)$",
+            "managerFilePatterns": [
+                ".github/workflows/terraform.yaml"
+            ],
+            "matchStrings": [
+                "terraform_version: (?<currentValue>[0-9.]+)"
+            ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "terraform-linters/tflint",
+            "description": "Keep the tflint version used by CI current.",
+            "managerFilePatterns": [
+                ".github/workflows/terraform.yaml"
+            ],
+            "matchStrings": [
+                "tflint_version: (?<currentValue>v[0-9.]+)"
+            ]
         }
     ],
     "extends": [

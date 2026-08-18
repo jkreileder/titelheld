@@ -37,14 +37,17 @@
 - `internal/logsafe/` neutralises untrusted text before it reaches a log. Use it
   for anything from a webhook body, Strava, a geocoder or an LLM.
 - `cmd/titelheld/` is a shim with no behaviour, and is excluded from coverage.
+- `infra/` is the GCP deployment in Terraform. `make tf-check` runs exactly what
+  CI runs. CI never applies: applies are by hand. Secret Manager *values* never
+  appear in code, tfvars or state - only the secret resources are managed.
 
 - `internal/geo/` decodes the summary polyline and reverse-geocodes samples via
   Nominatim into verified place names. The privacy allow-list and the 1 req/s
   limit live there and are enforced in code, not by convention.
 
-Not built yet: the prompt builder and LLM interface, the sweep and writer, and
-the Cloud Run deployment configuration. No Strava push subscription has been
-created yet.
+Not built yet: the prompt builder and LLM interface, and the sweep and writer.
+The infrastructure is described but has never been applied, and no Strava push
+subscription has been created.
 
 ## Design Rules That Are Not Negotiable
 
@@ -83,6 +86,10 @@ created yet.
 - Additional workflows cover CodeQL (Go and Actions), dependency review, OpenSSF
   Scorecard, TruffleHog secret scanning, pre-commit hooks, PR-title validation
   and test-result publication.
+- `terraform.yaml` formats, validates and lints `infra/`; it holds no
+  credentials and never applies. `deploy.yaml` authenticates through Workload
+  Identity Federation on release - no exported service-account key exists - and
+  fails if the deployed service does not have `DRY_RUN=1`.
 - Every workflow hardens the runner with a blocked egress policy and pins actions
   by commit SHA. Renovate keeps the pins and the Go toolchain current.
 
