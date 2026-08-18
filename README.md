@@ -45,11 +45,16 @@ Tier rules are evaluated in order, first match wins:
 | Tier | Name       | Matches                                            | Action when still at a Strava default |
 | ---- | ---------- | -------------------------------------------------- | ------------------------------------- |
 | 1    | Skip       | `WeightTraining`, `Workout`, `Walk`, `Hike`, Whoop | never written                         |
-| 2    | Virtual    | `VirtualRide` or the trainer flag                  | `zwift_mode`: keep, or indoor LLM     |
-| 3    | Commute    | ride to/from the work geofence                     | deterministic commute title           |
+| 2    | Virtual    | `VirtualRide`, or a ride with the trainer flag     | `zwift_mode`: keep, or indoor LLM     |
+| 3    | Commute    | short ride to or from the work geofence            | deterministic commute title           |
 | 4    | Errand     | commute-tagged ride                                | deterministic errand title            |
 | 5    | Sport ride | ride ≥ 15 km or ≥ 45 min                           | full LLM naming pipeline              |
 | —    | None       | anything else (runs, swims, short rides)           | never written                         |
+
+Tiers 3 to 5 apply to rides only: the trainer flag does not make a treadmill run a virtual
+ride, and a commute-tagged run does not become an errand. Tier 3's geofence match is capped by
+the tier-5 thresholds, so a long ride that merely finishes at work stays a sport ride; a title
+ActivityFix already wrote is taken at face value whatever the ride's size.
 
 The **skip gate** runs after tier assignment: unless the activity's current title is a recognised
 Strava default, the action is downgraded to skip. The gate fails closed — an unrecognised title is

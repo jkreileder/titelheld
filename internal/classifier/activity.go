@@ -30,8 +30,9 @@ type Activity struct {
 	// "VirtualRide", "WeightTraining", ...), not the legacy type field.
 	SportType string
 
-	// Trainer reports Strava's trainer flag (is_trainer). Together with
-	// SportType == "VirtualRide" it identifies indoor rides.
+	// Trainer reports Strava's trainer flag (is_trainer). On a ride it marks
+	// an indoor session; on any other sport type it is ignored, because a
+	// treadmill run is not a virtual ride.
 	Trainer bool
 
 	// Commute reports Strava's commute flag (is_commute), which ActivityFix
