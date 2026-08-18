@@ -203,6 +203,12 @@ func dueIsOrderedOldestFirst(t *testing.T, s store.Store) {
 		t.Fatalf("Due: %v", err)
 	}
 
+	// Assert the count first: the ordering loop below is vacuous for zero or
+	// one entry, so an implementation that silently dropped entries would pass.
+	if len(due) != 3 {
+		t.Fatalf("Due returned %d entries, want 3 (%v)", len(due), ids(due))
+	}
+
 	for i := 1; i < len(due); i++ {
 		if due[i].ProcessAfter.Before(due[i-1].ProcessAfter) {
 			t.Fatalf("Due is not ordered oldest first: %v", due)

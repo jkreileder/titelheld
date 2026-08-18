@@ -11,6 +11,8 @@ package firestore
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -388,31 +390,52 @@ func (s *Store) SavePlace(ctx context.Context, key string, place store.Place) er
 
 // cacheDocID makes a geocode key safe as a Firestore document ID.
 //
-// A document ID may not contain a forward slash and may not be "." or "..";
-// rounded coordinate keys contain neither, but the cache is keyed by a string
-// this package does not own, so the substitution is done here rather than
-// assumed.
+// A document ID may not contain a forward slash, may not be "." or "..", and
+// may not exceed 1500 bytes. Rounded coordinate keys satisfy all of that, but
+// the cache is keyed by a string this package does not own.
+//
+// The mapping must be injective, not merely safe: substituting one character
+// for another would let two distinct keys land on one document and share a
+// cached place — two different points reported as the same village. Anything
+// not plainly safe is therefore encoded whole, under a prefix the safe set
+// cannot produce.
 func cacheDocID(key string) string {
-	if key == "" {
-		return "_"
+	if isSafeDocID(key) {
+		return key
 	}
 
-	safe := make([]rune, 0, len(key))
+	// Hashed rather than encoded: an encoding of an over-long key is longer
+	// still, and Firestore's 1500-byte limit applies to the result. A digest is
+	// fixed width and collision-resistant, which is what injectivity needs in
+	// practice.
+	digest := sha256.Sum256([]byte(key))
+
+	return docIDEscapePrefix + hex.EncodeToString(digest[:])
+}
+
+// docIDEscapePrefix marks a hashed document ID. "=" is valid in a document ID
+// and is excluded from the safe set below, so no unhashed key can begin with
+// it.
+const docIDEscapePrefix = "="
+
+// maxDocIDBytes is Firestore's document ID limit.
+const maxDocIDBytes = 1500
+
+func isSafeDocID(key string) bool {
+	if key == "" || key == "." || key == ".." || len(key) > maxDocIDBytes {
+		return false
+	}
 
 	for _, r := range key {
-		if r == '/' {
-			safe = append(safe, '_')
-
-			continue
+		switch {
+		case r >= '0' && r <= '9',
+			r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z':
+		case r == '.' || r == ',' || r == '-' || r == '_' || r == '~':
+		default:
+			return false
 		}
-
-		safe = append(safe, r)
 	}
 
-	id := string(safe)
-	if id == "." || id == ".." {
-		return "_" + id
-	}
-
-	return id
+	return true
 }

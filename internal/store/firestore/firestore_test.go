@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -147,19 +148,38 @@ func TestGeocodeKeysThatAreNotValidDocumentIDs(t *testing.T) {
 
 	firestoreStore := newStore(t)
 
-	for _, key := range []string{"", ".", "..", "48.123/12.456", "0.000,0.000"} {
-		place := store.Place{Name: "Musterdorf", Kind: "village"}
+	// Every key gets a *distinct* place, and all of them are written before any
+	// is read back. Writing the same place each time would hide a collision:
+	// two keys mapping to one document would still read back correctly.
+	keys := []string{
+		"", ".", "..", "0.000,0.000",
+		"48.123/12.456",
+		// Differs from the previous key only in the character that a
+		// substituting escape would flatten.
+		"48.123_12.456",
+		"a/b", "a_b",
+		strings.Repeat("x", 2000),
+	}
+
+	for i, key := range keys {
+		place := store.Place{Name: "Musterdorf" + strconv.Itoa(i), Kind: "village"}
 
 		if err := firestoreStore.SavePlace(t.Context(), key, place); err != nil {
 			t.Fatalf("SavePlace(%q): %v", key, err)
 		}
+	}
+
+	for i, key := range keys {
+		want := "Musterdorf" + strconv.Itoa(i)
 
 		cached, ok, err := firestoreStore.Place(t.Context(), key)
 		if err != nil || !ok {
 			t.Fatalf("Place(%q) = %+v, %v, %v", key, cached, ok, err)
 		}
-		if cached.Name != "Musterdorf" {
-			t.Errorf("Place(%q).Name = %q", key, cached.Name)
+
+		if cached.Name != want {
+			t.Errorf("Place(%q).Name = %q, want %q — two keys share a document",
+				key, cached.Name, want)
 		}
 	}
 }

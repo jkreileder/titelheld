@@ -103,17 +103,10 @@ type GeocodeCache interface {
 // Firestore implementations satisfy it, and the conformance suite in
 // storetest exercises them through it.
 type Store interface {
-	TokenStore
+	strava.TokenStore
 	Queue
 	NamedLog
 	GeocodeCache
-}
-
-// TokenStore is re-declared here so [Store] can compose it without every
-// caller importing the strava package.
-type TokenStore interface {
-	Load(ctx context.Context, athleteID int64) (strava.Token, error)
-	Save(ctx context.Context, token strava.Token) error
 }
 
 // NamedLog records what this service has written.

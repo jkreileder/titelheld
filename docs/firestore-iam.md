@@ -27,20 +27,27 @@ Only `tokens` genuinely has to survive. Strava rotates the refresh token on ever
 invalidates the previous one immediately, so losing that document means re-running the
 authorization flow by hand. The other three are a work queue and two caches.
 
-No coordinates are stored. `geocache` documents hold place names; the coordinates that produced
-them appear only as the rounded document ID.
+Location data is minimised, not absent. No coordinate is stored as a *field*: `geocache`
+documents hold place names only. The coordinate that produced a place does survive as the
+document ID, rounded to three decimals — roughly 110 m, and enough to reconstruct the rough
+shape of a route from the cache alone. Nothing finer is retained anywhere.
 
 ## The role
-
-```sh
-gcloud projects add-iam-policy-binding "$PROJECT" \
-  --member="serviceAccount:$RUNTIME_SA" \
-  --role="roles/datastore.user"
-```
 
 `roles/datastore.user` is read/write access to data in a Firestore database — the
 `datastore.entities.*` permissions plus metadata reads. It is the least-privileged predefined
 role that lets an application read and write documents.
+
+Granted **without a condition it covers every database in the project**, so bind it with one:
+
+```sh
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member="serviceAccount:$RUNTIME_SA" \
+  --role="roles/datastore.user" \
+  --condition='expression=resource.name == "projects/'"$PROJECT"'/databases/titelheld",title=titelheld-database-only'
+```
+
+Verify the condition takes effect before relying on it — see the next section.
 
 ## Scoping to one database
 
@@ -52,10 +59,19 @@ gcloud firestore databases create --database=titelheld --location="$REGION" --ty
 ```
 
 Firestore supports IAM Conditions for per-database access; see
-[Security for server client libraries][iam-docs]. Confirm the exact condition attributes for
-your setup with `gcloud iam list-testable-permissions` and the
-[conditions attribute reference][attr-docs] before applying — the resource name has the form
+[Security for server client libraries][iam-docs] and the
+[conditions attribute reference][attr-docs]. The resource name has the form
 `projects/$PROJECT/databases/titelheld`.
+
+Confirm the binding actually landed with a condition, because a malformed expression is
+accepted as an unconditioned grant in some tooling:
+
+```sh
+gcloud projects get-iam-policy "$PROJECT" \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:$RUNTIME_SA AND bindings.role:roles/datastore.user" \
+  --format="yaml(bindings.condition)"
+```
 
 Set `FIRESTORE_PROJECT` and `FIRESTORE_DATABASE` on the service to match. With
 `FIRESTORE_PROJECT` unset the service falls back to the in-memory store and says so loudly at
@@ -102,9 +118,12 @@ administration permission to grant.
 Neither touches a real project. Setting `FIRESTORE_EMULATOR_HOST` makes the client library talk
 to the emulator and skip credentials entirely:
 
+The image is pinned by digest, matching `.github/workflows/go.yaml`, so a local run and CI
+test against the same emulator:
+
 ```sh
 docker run --rm -p 8080:8080 \
-  gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators \
+  gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators@sha256:25300472f1fa63b4df0e0c3a5dd67bdc6774b39f6dd440605e520a6d04ae0f26 \
   gcloud emulators firestore start --host-port=0.0.0.0:8080
 
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 go test ./internal/store/...

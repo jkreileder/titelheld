@@ -6,14 +6,15 @@ everything that should stay boring untouched.
 
 *Titelheld* is German for the character a piece is named after: the one in the title role.
 
-> **Status: early construction.** The classifier, configuration, store interfaces, Strava
-> client with OAuth, and the webhook with its delay-queue enqueue are implemented, and the
-> binary runs. The Firestore store, geocoding, the prompt builder, the LLM interface, the
+> **Status: early construction.** The classifier, configuration, the store (in-memory *and*
+> Firestore), the Strava client with OAuth, the webhook with its delay-queue enqueue, and
+> geocoding are implemented, and the binary runs. The prompt builder, the LLM interface, the
 > sweep and writer, and the Cloud Run deployment are not built yet. Operator documentation
 > (GCP setup, Strava app registration, config schema, franchises) lands with those phases.
 >
-> **No Strava push subscription exists yet**, and state is in memory only, so a restart
-> forgets the OAuth token.
+> **No Strava push subscription exists yet.** With `FIRESTORE_PROJECT` unset the service runs
+> on the in-memory store and forgets the OAuth token on restart; see
+> [docs/firestore-iam.md](docs/firestore-iam.md).
 >
 > **Nothing can write to Strava yet.** Dry run is the default and the zero value throughout;
 > see [Writes and dry run](#writes-and-dry-run).
