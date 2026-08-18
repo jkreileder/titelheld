@@ -69,7 +69,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/jkreileder/strava-namer
+        - github.com/jkreileder/titelheld
 
 issues:
   max-issues-per-linter: 0

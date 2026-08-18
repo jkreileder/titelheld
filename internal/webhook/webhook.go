@@ -13,8 +13,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jkreileder/strava-namer/internal/logsafe"
-	"github.com/jkreileder/strava-namer/internal/store"
+	"github.com/jkreileder/titelheld/internal/logsafe"
+	"github.com/jkreileder/titelheld/internal/store"
 )
 
 // maxBodyBytes caps the request body. Strava's events are a few hundred bytes;

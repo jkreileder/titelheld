@@ -7,7 +7,7 @@ your contributions.
 ## How to Report a Security Issue
 
 Please **do not** open a public GitHub issue for security vulnerabilities. Instead, use the
-GitHub Security Advisory ["Report a Vulnerability"](https://github.com/jkreileder/strava-namer/security/advisories/new)
+GitHub Security Advisory ["Report a Vulnerability"](https://github.com/jkreileder/titelheld/security/advisories/new)
 tab to report the issue privately.
 
 ## What to Include
@@ -35,4 +35,4 @@ We aim to:
 ## Supported Versions
 
 Security updates are provided for the latest release. Please ensure you are
-running the latest version of strava-namer.
+running the latest version of Titelheld.

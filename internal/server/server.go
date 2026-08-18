@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jkreileder/strava-namer/internal/config"
-	"github.com/jkreileder/strava-namer/internal/logsafe"
-	"github.com/jkreileder/strava-namer/internal/strava"
+	"github.com/jkreileder/titelheld/internal/config"
+	"github.com/jkreileder/titelheld/internal/logsafe"
+	"github.com/jkreileder/titelheld/internal/strava"
 )
 
 // stateTTL bounds how long an authorization attempt may take.

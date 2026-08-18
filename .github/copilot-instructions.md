@@ -1,4 +1,4 @@
-# strava-namer – Copilot Onboarding
+# Titelheld – Copilot Onboarding
 
 ## Quick Pitch
 
@@ -34,7 +34,7 @@
   parameter so the whole service can be started in a test.
 - `internal/logsafe/` neutralises untrusted text before it reaches a log. Use it
   for anything from a webhook body, Strava, a geocoder or an LLM.
-- `cmd/strava-namer/` is a shim with no behaviour, and is excluded from coverage.
+- `cmd/titelheld/` is a shim with no behaviour, and is excluded from coverage.
 
 Not built yet: the Firestore store, geocoding, the prompt builder and LLM
 interface, the sweep and writer, and the Cloud Run deployment configuration.

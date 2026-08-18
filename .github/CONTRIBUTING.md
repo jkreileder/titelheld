@@ -8,7 +8,7 @@ To contribute to this project, please follow these guidelines:
 ## Issue Reporting
 
 If you encounter any issues or have any feature requests, please open an issue
-on the [issue tracker](https://github.com/jkreileder/strava-namer/issues).
+on the [issue tracker](https://github.com/jkreileder/titelheld/issues).
 Please provide as much detail as possible, including steps to reproduce the
 issue.
 
@@ -55,11 +55,11 @@ or refresh tokens, or reverse-geocoded points of interest.
 ## Code of Conduct
 
 Please note that this project follows a [Code of
-Conduct](https://github.com/jkreileder/strava-namer/blob/main/.github/CODE_OF_CONDUCT.md).
+Conduct](https://github.com/jkreileder/titelheld/blob/main/.github/CODE_OF_CONDUCT.md).
 By participating in this project, you agree to abide by its terms.
 
 ## License
 
 By contributing to this project, you agree that your contributions will be
 licensed under the [Apache License
-2.0](https://github.com/jkreileder/strava-namer/blob/main/LICENSE).
+2.0](https://github.com/jkreileder/titelheld/blob/main/LICENSE).

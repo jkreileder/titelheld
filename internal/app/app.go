@@ -11,11 +11,11 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/jkreileder/strava-namer/internal/config"
-	"github.com/jkreileder/strava-namer/internal/server"
-	"github.com/jkreileder/strava-namer/internal/store"
-	"github.com/jkreileder/strava-namer/internal/strava"
-	"github.com/jkreileder/strava-namer/internal/webhook"
+	"github.com/jkreileder/titelheld/internal/config"
+	"github.com/jkreileder/titelheld/internal/server"
+	"github.com/jkreileder/titelheld/internal/store"
+	"github.com/jkreileder/titelheld/internal/strava"
+	"github.com/jkreileder/titelheld/internal/webhook"
 )
 
 // Run wires the packages together and serves until ctx is cancelled.
