@@ -14,6 +14,7 @@ import (
 	"github.com/jkreileder/titelheld/internal/config"
 	"github.com/jkreileder/titelheld/internal/server"
 	"github.com/jkreileder/titelheld/internal/store"
+	firestorestore "github.com/jkreileder/titelheld/internal/store/firestore"
 	"github.com/jkreileder/titelheld/internal/strava"
 	"github.com/jkreileder/titelheld/internal/webhook"
 )
@@ -36,7 +37,12 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		logger.Warn("WRITES ENABLED: this process will rename real Strava activities")
 	}
 
-	memory := store.NewMemory()
+	dataStore, closeStore, err := openStore(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+
+	defer closeStore()
 
 	oauth := &strava.OAuth{
 		ClientID:     cfg.StravaClientID,
@@ -48,8 +54,8 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		VerifyToken: cfg.StravaVerifyToken,
 		AthleteID:   cfg.AthleteID,
 		Delay:       cfg.ProcessDelay,
-		Queue:       memory,
-		Named:       memory,
+		Queue:       dataStore,
+		Named:       dataStore,
 		Logger:      logger,
 	})
 	if err != nil {
@@ -59,11 +65,11 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 	httpServer, err := server.New(server.Deps{
 		Config:  cfg,
 		OAuth:   oauth,
-		Tokens:  memory,
+		Tokens:  dataStore,
 		Webhook: hook,
 		Logger:  logger,
 		Bound: func(ctx context.Context) (int64, bool) {
-			token, err := memory.AnyToken(ctx)
+			token, err := dataStore.AnyToken(ctx)
 
 			return token.AthleteID, err == nil
 		},
@@ -76,7 +82,52 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		"process_delay", cfg.ProcessDelay,
 		"athlete_id", cfg.AthleteID,
 		"auth_path", cfg.AuthPath,
-		"store", "memory")
+		"store", storeKind(cfg))
 
 	return httpServer.Run(ctx, net.JoinHostPort("", strconv.Itoa(cfg.Port)))
+}
+
+// boundStore is the store plus the bootstrap lookup the server needs.
+type boundStore interface {
+	store.Store
+
+	AnyToken(ctx context.Context) (strava.Token, error)
+}
+
+func storeKind(cfg config.Config) string {
+	if cfg.PersistentStore() {
+		return "firestore"
+	}
+
+	return "memory"
+}
+
+// openStore picks the persistent store when one is configured.
+//
+// The in-memory fallback exists for local runs. It is called out loudly because
+// it silently loses the OAuth token pair on restart, and Strava has already
+// invalidated the refresh token that would let the service recover.
+func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (boundStore, func(), error) {
+	if !cfg.PersistentStore() {
+		logger.Warn("using the in-memory store: state is lost on restart, including the OAuth token")
+
+		return store.NewMemory(), func() {}, nil
+	}
+
+	firestoreStore, err := firestorestore.New(ctx, firestorestore.Config{
+		ProjectID: cfg.FirestoreProject,
+		Database:  cfg.FirestoreDatabase,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("open firestore store: %w", err)
+	}
+
+	logger.Info("using the Firestore store",
+		"project", cfg.FirestoreProject, "database", cfg.FirestoreDatabase)
+
+	return firestoreStore, func() {
+		if err := firestoreStore.Close(); err != nil {
+			logger.Error("closing the Firestore client", "error", err)
+		}
+	}, nil
 }

@@ -24,8 +24,10 @@
   (`oauth.go`), the auto-refreshing token source (`tokensource.go`), the HTTP
   client with rate-limit accounting and 429 backoff (`client.go`), and the two
   API calls this service makes (`activity.go`).
-- `internal/store/` holds the persistence interfaces and an in-memory
-  implementation. The Firestore one lands with the store phase.
+- `internal/store/` holds the persistence interfaces, an in-memory
+  implementation, and `storetest`, the conformance suite both implementations
+  must pass. `internal/store/firestore/` is the persistent one; its IAM is
+  documented in `docs/firestore-iam.md`.
 - `internal/webhook/` serves the subscription handshake and the event intake,
   and queues activities. It acknowledges before it touches the store.
 - `internal/server/` assembles the HTTP surface: health, the one-time OAuth
@@ -36,8 +38,8 @@
   for anything from a webhook body, Strava, a geocoder or an LLM.
 - `cmd/titelheld/` is a shim with no behaviour, and is excluded from coverage.
 
-Not built yet: the Firestore store, geocoding, the prompt builder and LLM
-interface, the sweep and writer, and the Cloud Run deployment configuration.
+Not built yet: geocoding, the prompt builder and LLM interface, the sweep and
+writer, and the Cloud Run deployment configuration.
 No Strava push subscription has been created yet.
 
 ## Design Rules That Are Not Negotiable

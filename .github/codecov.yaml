@@ -17,3 +17,7 @@ coverage:
 # anyone anything.
 ignore:
   - "cmd/**"
+  # storetest is the conformance suite itself. Its statements are executed by
+  # the store and firestore tests, but Go attributes coverage per package under
+  # test, so it always reports zero.
+  - "internal/store/storetest/**"

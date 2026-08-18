@@ -339,3 +339,34 @@ func TestByDeadline(t *testing.T) {
 		t.Errorf("byDeadline of an entry with itself = %d, want 0", got)
 	}
 }
+
+func TestMemoryGeocodeCache(t *testing.T) {
+	t.Parallel()
+
+	memory := NewMemory()
+
+	if _, ok, err := memory.Place(t.Context(), "0.000,0.000"); ok || err != nil {
+		t.Fatalf("Place on an empty cache = %v, %v", ok, err)
+	}
+
+	place := Place{Name: "Musterdorf", Kind: "village", Region: "Musterregion", Country: "Testland"}
+	if err := memory.SavePlace(t.Context(), "0.000,0.000", place); err != nil {
+		t.Fatalf("SavePlace: %v", err)
+	}
+
+	cached, ok, err := memory.Place(t.Context(), "0.000,0.000")
+	if err != nil || !ok || cached != place {
+		t.Errorf("Place = %+v, %v, %v", cached, ok, err)
+	}
+}
+
+func TestPlaceEmpty(t *testing.T) {
+	t.Parallel()
+
+	if !(Place{}).Empty() {
+		t.Error("a zero Place must report as empty")
+	}
+	if (Place{Country: "Testland"}).Empty() {
+		t.Error("a Place with a country is not empty")
+	}
+}

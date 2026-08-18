@@ -61,6 +61,31 @@
             "matchStrings": [
                 "GOTESTSUM_VERSION := (?<currentValue>v[^\\s]+)"
             ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "docker",
+            "depNameTemplate": "gcr.io/google.com/cloudsdktool/google-cloud-cli",
+            "description": "Pin the Firestore emulator image by tag + digest. The same pin appears in the workflow and in docs/firestore-iam.md, so a local run and CI test the same emulator; both are updated together.",
+            "managerFilePatterns": [
+                ".github/workflows/go.yaml",
+                "docs/firestore-iam.md"
+            ],
+            "matchStrings": [
+                "gcr\\.io/google\\.com/cloudsdktool/google-cloud-cli:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+            ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "docker",
+            "depNameTemplate": "ghcr.io/trufflesecurity/trufflehog",
+            "description": "Pin the TruffleHog scanner image (version input of trufflesecurity/trufflehog) by version + digest. The action pin alone leaves the image floating.",
+            "managerFilePatterns": [
+                ".github/workflows/trufflehog.yaml"
+            ],
+            "matchStrings": [
+                "version: (?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+            ]
         }
     ],
     "extends": [
@@ -122,6 +147,18 @@
             ]
         },
         {
+            "automerge": false,
+            "description": "Renovate disables indirect Go updates by default, which would leave most of the Firestore dependency tree - grpc, the google-api stack, golang.org/x/* - unwatched. They are compiled into the binary and are exactly where govulncheck findings surface, so they are updated too, grouped and reviewed by hand like the direct ones.",
+            "enabled": true,
+            "groupName": "go modules (indirect)",
+            "matchDepTypes": [
+                "indirect"
+            ],
+            "matchManagers": [
+                "gomod"
+            ]
+        },
+        {
             "automerge": true,
             "description": "Patch releases of the Go toolchain itself (the `go` directive in go.mod) carry the security fixes; the spec requires staying on latest stable. Minors and majors fall through to manual review.",
             "matchDatasources": [
@@ -154,6 +191,9 @@
                 "digest"
             ]
         }
+    ],
+    "postUpdateOptions": [
+        "gomodTidy"
     ],
     "semanticCommits": "enabled",
     "timezone": "Europe/Berlin",

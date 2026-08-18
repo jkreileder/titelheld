@@ -5,10 +5,13 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jkreileder/titelheld/internal/config"
 )
 
 // freePort reserves a port and releases it, so the service can bind it.
@@ -104,5 +107,49 @@ func TestRunAcceptsWritesEnabled(t *testing.T) {
 
 	if err := <-done; err != nil {
 		t.Errorf("run = %v, want nil", err)
+	}
+}
+
+// The Firestore path is the one that matters in production, so it is started
+// end to end against the emulator rather than assumed to work.
+func TestRunOnFirestore(t *testing.T) {
+	t.Parallel()
+
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set; start the Firestore emulator to run this test")
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan error, 1)
+
+	go func() {
+		done <- Run(ctx, quietLogger(), env(map[string]string{
+			"PORT":              freePort(t),
+			"FIRESTORE_PROJECT": "titelheld-emulator-test",
+		}))
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run on Firestore = %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after the context was cancelled")
+	}
+}
+
+func TestStoreKind(t *testing.T) {
+	t.Parallel()
+
+	if got := storeKind(config.Config{}); got != "memory" {
+		t.Errorf("storeKind with no project = %q, want memory", got)
+	}
+	if got := storeKind(config.Config{FirestoreProject: "p"}); got != "firestore" {
+		t.Errorf("storeKind with a project = %q, want firestore", got)
 	}
 }

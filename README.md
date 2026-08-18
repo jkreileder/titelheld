@@ -6,14 +6,15 @@ everything that should stay boring untouched.
 
 *Titelheld* is German for the character a piece is named after: the one in the title role.
 
-> **Status: early construction.** The classifier, configuration, store interfaces, Strava
-> client with OAuth, and the webhook with its delay-queue enqueue are implemented, and the
-> binary runs. The Firestore store, geocoding, the prompt builder, the LLM interface, the
+> **Status: early construction.** The classifier, configuration, the store (in-memory *and*
+> Firestore), the Strava client with OAuth, and the webhook with its delay-queue enqueue are
+> implemented, and the binary runs. Geocoding, the prompt builder, the LLM interface, the
 > sweep and writer, and the Cloud Run deployment are not built yet. Operator documentation
 > (GCP setup, Strava app registration, config schema, franchises) lands with those phases.
 >
-> **No Strava push subscription exists yet**, and state is in memory only, so a restart
-> forgets the OAuth token.
+> **No Strava push subscription exists yet.** With `FIRESTORE_PROJECT` unset the service runs
+> on the in-memory store and forgets the OAuth token on restart; see
+> [docs/firestore-iam.md](docs/firestore-iam.md).
 >
 > **Nothing can write to Strava yet.** Dry run is the default and the zero value throughout;
 > see [Writes and dry run](#writes-and-dry-run).
@@ -39,15 +40,16 @@ An activity is only ever renamed. Sport type, gear and descriptions are never to
 
 ## Repository layout
 
-| Path                   | Purpose                                                          |
-| ---------------------- | ---------------------------------------------------------------- |
-| `internal/classifier/` | Tier rules and the Strava default-title gate. No I/O, no deps.   |
-| `internal/config/`     | Runtime configuration, read from the environment only.           |
-| `internal/store/`      | Persistence interfaces plus an in-memory implementation.         |
-| `internal/strava/`     | The only package that talks to Strava: OAuth, client, API calls. |
-| `internal/webhook/`    | Subscription handshake, event intake, delay-queue enqueue.       |
-| `internal/server/`     | HTTP surface: health, OAuth bootstrap, webhook route.            |
-| `cmd/titelheld/`       | Cloud Run entry point; wiring only.                              |
+| Path                        | Purpose                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `internal/classifier/`      | Tier rules and the Strava default-title gate. No I/O, no deps.                         |
+| `internal/config/`          | Runtime configuration, read from the environment only.                                 |
+| `internal/store/`           | Persistence interfaces, an in-memory implementation, and the shared conformance suite. |
+| `internal/store/firestore/` | The Firestore implementation. See [docs/firestore-iam.md](docs/firestore-iam.md).      |
+| `internal/strava/`          | The only package that talks to Strava: OAuth, client, API calls.                       |
+| `internal/webhook/`         | Subscription handshake, event intake, delay-queue enqueue.                             |
+| `internal/server/`          | HTTP surface: health, OAuth bootstrap, webhook route.                                  |
+| `cmd/titelheld/`            | Cloud Run entry point; wiring only.                                                    |
 
 Core logic lives in packages with no HTTP, Firestore or Strava-SDK imports, so a future
 multi-athlete deployment needs no changes there.
