@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,10 +23,26 @@ const DefaultNominatimBaseURL = "https://nominatim.openstreetmap.org"
 // rate: at most one per second, absolute.
 const MinRequestInterval = time.Second
 
-// ErrNoUserAgent means the caller did not supply the identifying User-Agent
-// Nominatim's usage policy requires. Refusing to start is deliberate — an
-// anonymous client is the thing that gets an IP blocked.
-var ErrNoUserAgent = errors.New("geo: a Nominatim User-Agent is required")
+var (
+	// ErrNoUserAgent means the caller did not supply the identifying
+	// User-Agent Nominatim's usage policy requires. Refusing to start is
+	// deliberate — an anonymous client is the thing that gets an IP blocked.
+	ErrNoUserAgent = errors.New("geo: a Nominatim User-Agent is required")
+
+	// ErrThrottled is a 429: the request rate was too high for the moment.
+	ErrThrottled = errors.New("geo: throttled by Nominatim")
+
+	// ErrBlocked is a 403, which for Nominatim means the address is banned
+	// rather than the request being wrong. It is separate from ErrThrottled
+	// because it does not resolve by waiting, and it would otherwise surface
+	// only as activities quietly going unnamed.
+	ErrBlocked = errors.New("geo: blocked by Nominatim")
+)
+
+// maxResponseBytes bounds the reverse-geocoding response. A few kilobytes is
+// typical; this is generous and still stops a misbehaving or hostile endpoint
+// from growing the decode until the process runs out of memory.
+const maxResponseBytes = 256 << 10
 
 // addressFields are the only Nominatim address keys that may reach a title,
 // most specific first.
@@ -98,7 +115,53 @@ type reverseResponse struct {
 	Type     string            `json:"type"`
 	Name     string            `json:"name"`
 	Address  map[string]string `json:"address"`
-	Error    string            `json:"error"`
+	Error    nominatimError    `json:"error"`
+}
+
+// nominatimError accepts both shapes the error field is reported in.
+//
+// Nominatim answers an unresolvable coordinate with {"error":"Unable to
+// geocode"}, and some failures with an object carrying a code and a message.
+// Which one appears where is not documented, so both are accepted rather than
+// betting on one: a shape mismatch would otherwise fail the whole decode and
+// turn "nothing here" into an aborted route.
+type nominatimError struct {
+	message string
+	present bool
+}
+
+func (e *nominatimError) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		e.message = text
+		e.present = text != ""
+
+		return nil
+	}
+
+	// Whatever shape it is, the field being present at all means Nominatim had
+	// nothing to return. Only the message is best-effort.
+	e.present = true
+
+	var object struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+
+	if err := json.Unmarshal(data, &object); err == nil {
+		e.message = object.Message
+	}
+
+	return nil
+}
+
+// reported says whether the response carried an error at all.
+func (e nominatimError) reported() bool {
+	return e.present
 }
 
 // limiter enforces a minimum interval between requests.
@@ -240,16 +303,24 @@ func (n *Nominatim) Reverse(ctx context.Context, point Point) (store.Place, erro
 		_ = response.Body.Close()
 	}()
 
-	if response.StatusCode != http.StatusOK {
+	switch response.StatusCode {
+	case http.StatusOK:
+	case http.StatusTooManyRequests:
+		return store.Place{}, ErrThrottled
+	case http.StatusForbidden:
+		return store.Place{}, ErrBlocked
+	default:
 		return store.Place{}, fmt.Errorf("geo: reverse request: unexpected status %d", response.StatusCode)
 	}
 
 	var payload reverseResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBytes)).Decode(&payload); err != nil {
 		return store.Place{}, fmt.Errorf("geo: decode reverse response: %w", err)
 	}
 
-	if payload.Error != "" {
+	// "Nothing here" is an answer, not a failure: Nominatim has nothing to say
+	// about the middle of a lake.
+	if payload.Error.reported() {
 		return store.Place{}, nil
 	}
 

@@ -388,10 +388,17 @@ func TestReverseErrors(t *testing.T) {
 
 		server := jsonServer(t, `{"address":{"village":"Musterdorf"}}`)
 
+		// The clock is pinned so the second call always owes a wait. On the
+		// real clock a stalled runner could put more than the interval between
+		// the two calls, no wait would be needed, and the assertion would fail
+		// for reasons that have nothing to do with cancellation.
+		clock := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+
 		client, err := NewNominatim(NominatimConfig{
 			UserAgent:  "titelheld-test/1.0",
 			BaseURL:    server.URL,
 			HTTPClient: server.Client(),
+			Now:        func() time.Time { return clock },
 			Sleep:      func(ctx context.Context, _ time.Duration) error { return ctx.Err() },
 		})
 		if err != nil {
@@ -547,5 +554,101 @@ func TestNaturalFeaturesThatAreAllowed(t *testing.T) {
 				t.Errorf("place = %+v, want %s/%s", place, tt.wantName, tt.wantKind)
 			}
 		})
+	}
+}
+
+// A throttle resolves by waiting; a block does not. They surface as different
+// errors so a ban is visible rather than showing up as activities quietly
+// going unnamed.
+func TestThrottleAndBlockAreDistinct(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status  int
+		wantErr error
+	}{
+		{status: http.StatusTooManyRequests, wantErr: ErrThrottled},
+		{status: http.StatusForbidden, wantErr: ErrBlocked},
+	}
+
+	for _, tt := range tests {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+			}))
+			defer server.Close()
+
+			_, err := newNominatim(t, server).Reverse(t.Context(), testPoint)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// Nominatim reports errors in more than one shape and does not document which
+// appears where, so both are accepted: a shape mismatch would otherwise fail
+// the decode and turn "nothing here" into an aborted route.
+func TestErrorFieldShapes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "string", body: `{"error":"Unable to geocode"}`},
+		{name: "object", body: `{"error":{"code":400,"message":"Bad request"}}`},
+		{name: "unexpected shape", body: `{"error":[1,2,3]}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			place, err := newNominatim(t, jsonServer(t, tt.body)).Reverse(t.Context(), testPoint)
+			if err != nil {
+				t.Fatalf("Reverse: %v", err)
+			}
+
+			if !place.Empty() {
+				t.Errorf("place = %+v, want empty", place)
+			}
+		})
+	}
+
+	// An absent error field is not an error.
+	place, err := newNominatim(t, jsonServer(t, `{"address":{"village":"Musterdorf"}}`)).
+		Reverse(t.Context(), testPoint)
+	if err != nil {
+		t.Fatalf("Reverse: %v", err)
+	}
+
+	if place.Name != "Musterdorf" {
+		t.Errorf("place = %+v, want Musterdorf", place)
+	}
+}
+
+// An endpoint that never stops sending must not be decoded without a bound.
+func TestOversizedResponseIsBounded(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"address":{"village":"`))
+
+		// Far past the cap; the decode is cut short mid-string.
+		chunk := strings.Repeat("x", 64<<10)
+		for range 8 {
+			_, _ = w.Write([]byte(chunk))
+		}
+
+		_, _ = w.Write([]byte(`"}}`))
+	}))
+	defer server.Close()
+
+	if _, err := newNominatim(t, server).Reverse(t.Context(), testPoint); err == nil {
+		t.Error("Reverse on an oversized body = nil error, want a decode failure")
 	}
 }

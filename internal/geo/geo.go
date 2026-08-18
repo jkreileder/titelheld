@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 
 	"github.com/jkreileder/titelheld/internal/logsafe"
@@ -229,7 +230,7 @@ func round(value float64) float64 {
 		scale *= 10
 	}
 
-	rounded := float64(int64(value*scale+copysign(0.5, value))) / scale
+	rounded := math.Round(value*scale) / scale
 
 	// Avoid a negative zero in the key, so -0.000 and 0.000 do not become two
 	// cache entries for one place.
@@ -238,14 +239,6 @@ func round(value float64) float64 {
 	}
 
 	return rounded
-}
-
-func copysign(magnitude, sign float64) float64 {
-	if sign < 0 {
-		return -magnitude
-	}
-
-	return magnitude
 }
 
 // SamplePoints picks the points worth geocoding: the start, the four
