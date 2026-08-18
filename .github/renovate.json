@@ -49,6 +49,18 @@
             "matchStrings": [
                 "govulncheck@(?<currentValue>v[^\\s]+)"
             ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "go",
+            "depNameTemplate": "gotest.tools/gotestsum",
+            "description": "Keep the gotestsum version pinned in the Makefile current - it is run via `go run <module>@<version>`, so no standard manager sees it.",
+            "managerFilePatterns": [
+                "Makefile"
+            ],
+            "matchStrings": [
+                "GOTESTSUM_VERSION := (?<currentValue>v[^\\s]+)"
+            ]
         }
     ],
     "extends": [

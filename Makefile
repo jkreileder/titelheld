@@ -9,6 +9,7 @@ GO := go
 # Pinned so the Makefile, the pre-commit hook and CI all run the same linter.
 GOLANGCI_LINT_VERSION := v2.12.2
 GOVULNCHECK_VERSION := v1.7.0
+GOTESTSUM_VERSION := v1.13.0
 
 .PHONY: all
 all: lint test build
@@ -26,6 +27,15 @@ lint:
 .PHONY: test
 test:
 	$(GO) test -race -coverprofile=coverage.out -covermode=atomic ./...
+	$(GO) tool cover -func=coverage.out | tail -1
+
+# Same test run, plus the JUnit report Codecov's test analytics consumes.
+# Kept separate from `test` so the local loop needs no network.
+.PHONY: test-junit
+test-junit:
+	$(GO) run gotest.tools/gotestsum@$(GOTESTSUM_VERSION) \
+		--junitfile test-results.xml --format testname \
+		-- -race -covermode=atomic -coverprofile=coverage.out ./...
 	$(GO) tool cover -func=coverage.out | tail -1
 
 .PHONY: cover
