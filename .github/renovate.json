@@ -66,12 +66,25 @@
             "customType": "regex",
             "datasourceTemplate": "docker",
             "depNameTemplate": "gcr.io/google.com/cloudsdktool/google-cloud-cli",
-            "description": "Pin the Firestore emulator image used by the store conformance job by tag + digest.",
+            "description": "Pin the Firestore emulator image by tag + digest. The same pin appears in the workflow and in docs/firestore-iam.md, so a local run and CI test the same emulator; both are updated together.",
             "managerFilePatterns": [
-                ".github/workflows/go.yaml"
+                ".github/workflows/go.yaml",
+                "docs/firestore-iam.md"
             ],
             "matchStrings": [
                 "gcr\\.io/google\\.com/cloudsdktool/google-cloud-cli:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+            ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "docker",
+            "depNameTemplate": "ghcr.io/trufflesecurity/trufflehog",
+            "description": "Pin the TruffleHog scanner image (version input of trufflesecurity/trufflehog) by version + digest. The action pin alone leaves the image floating.",
+            "managerFilePatterns": [
+                ".github/workflows/trufflehog.yaml"
+            ],
+            "matchStrings": [
+                "version: (?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
             ]
         }
     ],

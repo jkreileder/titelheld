@@ -118,8 +118,9 @@ administration permission to grant.
 Neither touches a real project. Setting `FIRESTORE_EMULATOR_HOST` makes the client library talk
 to the emulator and skip credentials entirely:
 
-The image is pinned by digest, matching `.github/workflows/go.yaml`, so a local run and CI
-test against the same emulator:
+The image is pinned by digest, matching `.github/workflows/go.yaml`, so a local run and CI test
+against the same emulator. Renovate updates both occurrences together — see the custom manager
+in `.github/renovate.json`; changing one by hand will drift.
 
 ```sh
 docker run --rm -p 8080:8080 \
