@@ -121,7 +121,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		client.sleep = sleepContext
 	}
 	if client.userAgent == "" {
-		client.userAgent = "strava-namer"
+		client.userAgent = "titelheld"
 	}
 
 	return client, nil

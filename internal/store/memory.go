@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jkreileder/strava-namer/internal/strava"
+	"github.com/jkreileder/titelheld/internal/strava"
 )
 
 // Memory is an in-process implementation of every store interface.

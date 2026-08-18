@@ -1,4 +1,4 @@
-// Command strava-namer is the Cloud Run entry point. It is a shim: the wiring
+// Command titelheld is the Cloud Run entry point. It is a shim: the wiring
 // and everything else lives in internal/app.
 package main
 
@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jkreileder/strava-namer/internal/app"
+	"github.com/jkreileder/titelheld/internal/app"
 )
 
 func main() {

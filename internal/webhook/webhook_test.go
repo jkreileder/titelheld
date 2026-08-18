@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jkreileder/strava-namer/internal/store"
+	"github.com/jkreileder/titelheld/internal/store"
 )
 
 var testNow = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)

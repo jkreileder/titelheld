@@ -1,8 +1,10 @@
 <!-- omit in toc -->
-# strava-namer
+# Titelheld
 
 A single-athlete backend service that gives Strava activities context-aware titles — and leaves
 everything that should stay boring untouched.
+
+*Titelheld* is German for the character a piece is named after: the one in the title role.
 
 > **Status: early construction.** The classifier, configuration, store interfaces, Strava
 > client with OAuth, and the webhook with its delay-queue enqueue are implemented, and the
@@ -24,6 +26,7 @@ everything that should stay boring untouched.
 - [HTTP surface](#http-surface)
 - [Development](#development)
 - [Security and privacy](#security-and-privacy)
+- [Attribution](#attribution)
 - [License](#license)
 
 ## What it does
@@ -44,7 +47,7 @@ An activity is only ever renamed. Sport type, gear and descriptions are never to
 | `internal/strava/`     | The only package that talks to Strava: OAuth, client, API calls. |
 | `internal/webhook/`    | Subscription handshake, event intake, delay-queue enqueue.       |
 | `internal/server/`     | HTTP surface: health, OAuth bootstrap, webhook route.            |
-| `cmd/strava-namer/`    | Cloud Run entry point; wiring only.                              |
+| `cmd/titelheld/`       | Cloud Run entry point; wiring only.                              |
 
 Core logic lives in packages with no HTTP, Firestore or Strava-SDK imports, so a future
 multi-athlete deployment needs no changes there.
@@ -157,6 +160,14 @@ Install the pre-commit hooks with `pre-commit install` or `prek install`.
   [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 - Activity titles are never derived from reverse-geocoded points of interest; only an explicit
   whitelist and generic area templates are used.
+
+## Attribution
+
+Titelheld is an independent integration, **"Titelheld for Strava"**. It is not endorsed by,
+sponsored by, or affiliated with Strava, and Strava takes no responsibility for it.
+
+No Strava logos, marks, or trade dress are used anywhere in this project. "Strava" appears only
+as a plain-text reference to the service this integration talks to.
 
 ## License
 

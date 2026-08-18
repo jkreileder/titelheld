@@ -1,5 +1,5 @@
 <!--
-Thanks for contributing to strava-namer!
+Thanks for contributing to Titelheld!
 PR titles follow Conventional Commits: <type>[scope]: <description>
 Commits must be signed off (git commit -s) for DCO.
 -->
