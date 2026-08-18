@@ -1,0 +1,109 @@
+name: Publish test results
+
+# workflow_run is used deliberately (the EnricoMi-documented pattern): fork-PR
+# artifacts are processed here, in a job whose token is limited to
+# checks/pull-requests write and whose egress is locked to api.github.com,
+# instead of granting write permissions to the untrusted PR run itself.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows:
+      - Lint, test, and scan
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+# workflow_run runs on the default-branch ref, so group by the *triggering*
+# run's branch — otherwise unrelated builds finishing together cancel each
+# other's publish. The head repository is part of the key because a branch name
+# is only unique within a repository: without it, a fork PR from a branch named
+# `main` shares a group with the base repo's own main-branch run.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.event.workflow_run.head_repository.full_name }}-${{
+    github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  publish-test-results:
+    name: Publish test results
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # A skipped or concurrency-cancelled run has no results worth publishing,
+    # and an empty check run only buries the real one. Failed runs still
+    # publish: a red test run must report its results.
+    if: ${{ github.event.workflow_run.conclusion != 'skipped' && github.event.workflow_run.conclusion != 'cancelled' }}
+
+    permissions:
+      checks: write
+      pull-requests: write
+      actions: read
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+
+      - name: Download artifacts
+        uses: dawidd6/action-download-artifact@57aa996fc1713cc1579039614f4645a7f4841fd4 # v23
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: test-results
+          path: artifacts
+          # A run that died before gotestsum wrote any XML has nothing to
+          # fetch; warn rather than fail and let the publish step report the
+          # empty result set.
+          if_no_artifact_found: warn
+
+      # The event file is written here rather than downloaded, because GitHub
+      # runs the *fork's* copy of go.yaml for a fork PR and everything that run
+      # uploads is attacker-controlled. The action reads pull_request.number
+      # straight out of this file (publisher.py get_pull_from_event) and that
+      # lookup beats the commit-based one, guarded only by a base.repo
+      # .full_name field the same attacker supplies — enough to aim this job's
+      # comment at any PR in the repository, posted with pull-requests:write.
+      #
+      # With an empty object there is no pull_request.number, so the action
+      # resolves the PR from `commit` below, which comes from the workflow_run
+      # payload and is checked against the PR's own head SHA. get_base_commit_sha
+      # likewise falls back to the API for the merge base.
+      #
+      # The input must still be passed and the file must exist: omitting it
+      # falls back to GITHUB_EVENT_PATH, whose workflow_run payload has no
+      # pull_request key, which makes is_fork true and suppresses both the check
+      # run and the comment. Naming a missing file fails the step.
+      #
+      # Trade-off: default-branch pushes lose the "compared against earlier
+      # commit" delta, which comes from the push event's `before` field. PR runs
+      # are unaffected — a pull_request event has no `before` either way.
+      - name: Write trusted event file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p trusted
+          echo '{}' > trusted/event.json
+
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
+        with:
+          commit: ${{ github.event.workflow_run.head_sha }}
+          event_file: trusted/event.json
+          event_name: ${{ github.event.workflow_run.event }}
+          files: artifacts/*.xml
+          comment_mode: ${{ github.event.workflow_run.event == 'pull_request' && 'always' || 'off' }}
+          report_individual_runs: true
+          # Test names and failure messages come from the fork's own test run
+          # and render as markdown here. Accepted rather than blocked: with the
+          # event file not steerable, the output lands on the contributor's own
+          # PR, where they already control title, body and diff.
+          # check_run_annotations_branch cannot narrow it — the action matches
+          # that list against GITHUB_REF, which a workflow_run job always
+          # reports as the default branch, so any value matches. The lever that
+          # would work is `check_run_annotations: none`, at the cost of inline
+          # annotations on every PR.
+          check_run_annotations_branch: "*"

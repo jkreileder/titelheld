@@ -52,7 +52,8 @@ deployment configuration.
 - `go.yaml` — build, race tests with coverage, `go mod tidy -diff`, golangci-lint,
   gofmt check, govulncheck, and the Codecov upload (isolated in its own job).
 - Additional workflows cover CodeQL (Go and Actions), dependency review, OpenSSF
-  Scorecard, TruffleHog secret scanning, pre-commit hooks and PR-title validation.
+  Scorecard, TruffleHog secret scanning, pre-commit hooks, PR-title validation
+  and test-result publication.
 - Every workflow hardens the runner with a blocked egress policy and pins actions
   by commit SHA. Renovate keeps the pins and the Go toolchain current.
 
