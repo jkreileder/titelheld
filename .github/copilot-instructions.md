@@ -24,8 +24,10 @@
   (`oauth.go`), the auto-refreshing token source (`tokensource.go`), the HTTP
   client with rate-limit accounting and 429 backoff (`client.go`), and the two
   API calls this service makes (`activity.go`).
-- `internal/store/` holds the persistence interfaces and an in-memory
-  implementation. The Firestore one lands with the store phase.
+- `internal/store/` holds the persistence interfaces, an in-memory
+  implementation, and `storetest`, the conformance suite both implementations
+  must pass. `internal/store/firestore/` is the persistent one; its IAM is
+  documented in `docs/firestore-iam.md`.
 - `internal/webhook/` serves the subscription handshake and the event intake,
   and queues activities. It acknowledges before it touches the store.
 - `internal/server/` assembles the HTTP surface: health, the one-time OAuth

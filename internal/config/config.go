@@ -71,6 +71,18 @@ type Config struct {
 	// StravaVerifyToken is the shared secret echoed during the subscription
 	// validation handshake.
 	StravaVerifyToken string
+
+	// FirestoreProject and FirestoreDatabase select the Firestore database
+	// that holds the OAuth token pair. When the project is empty the service
+	// runs on the in-memory store, which forgets everything on restart and is
+	// only appropriate for local runs.
+	FirestoreProject  string
+	FirestoreDatabase string
+}
+
+// PersistentStore reports whether state will survive a restart.
+func (c Config) PersistentStore() bool {
+	return c.FirestoreProject != ""
 }
 
 // DryRun reports whether writes are suppressed.
@@ -98,6 +110,8 @@ const (
 	EnvProcessDelay       = "PROCESS_DELAY"
 	EnvDryRun             = "DRY_RUN"
 	EnvPort               = "PORT"
+	EnvFirestoreProject   = "FIRESTORE_PROJECT"
+	EnvFirestoreDatabase  = "FIRESTORE_DATABASE"
 )
 
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.
@@ -131,6 +145,8 @@ func Load(getenv func(string) string) (Config, error) {
 		StravaClientSecret: getenv(EnvStravaClientSecret),
 		StravaVerifyToken:  getenv(EnvStravaVerifyToken),
 		BaseURL:            strings.TrimRight(strings.TrimSpace(getenv(EnvBaseURL)), "/"),
+		FirestoreProject:   strings.TrimSpace(getenv(EnvFirestoreProject)),
+		FirestoreDatabase:  strings.TrimSpace(getenv(EnvFirestoreDatabase)),
 	}
 
 	var errs []error

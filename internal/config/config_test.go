@@ -311,3 +311,32 @@ func TestErrMissingMessage(t *testing.T) {
 		t.Errorf("Error() = %q", err.Error())
 	}
 }
+
+func TestFirestoreConfiguration(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Unset means the in-memory store, which loses the OAuth token on restart.
+	if cfg.PersistentStore() {
+		t.Error("PersistentStore() = true with FIRESTORE_PROJECT unset")
+	}
+
+	cfg, err = Load(env(map[string]string{
+		"FIRESTORE_PROJECT":  "titelheld-prod",
+		"FIRESTORE_DATABASE": "titelheld",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !cfg.PersistentStore() {
+		t.Error("PersistentStore() = false with FIRESTORE_PROJECT set")
+	}
+	if cfg.FirestoreProject != "titelheld-prod" || cfg.FirestoreDatabase != "titelheld" {
+		t.Errorf("firestore config = %q/%q", cfg.FirestoreProject, cfg.FirestoreDatabase)
+	}
+}

@@ -61,6 +61,18 @@
             "matchStrings": [
                 "GOTESTSUM_VERSION := (?<currentValue>v[^\\s]+)"
             ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "docker",
+            "depNameTemplate": "gcr.io/google.com/cloudsdktool/google-cloud-cli",
+            "description": "Pin the Firestore emulator image used by the store conformance job by tag + digest.",
+            "managerFilePatterns": [
+                ".github/workflows/go.yaml"
+            ],
+            "matchStrings": [
+                "gcr\\.io/google\\.com/cloudsdktool/google-cloud-cli:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+            ]
         }
     ],
     "extends": [

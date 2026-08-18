@@ -25,6 +25,7 @@ type Memory struct {
 	tokens  map[int64]strava.Token
 	pending map[key]Pending
 	named   map[key]string
+	places  map[string]Place
 }
 
 type key struct {
@@ -38,6 +39,7 @@ func NewMemory() *Memory {
 		tokens:  make(map[int64]strava.Token),
 		pending: make(map[key]Pending),
 		named:   make(map[key]string),
+		places:  make(map[string]Place),
 	}
 }
 
@@ -168,4 +170,24 @@ func (m *Memory) Named(_ context.Context, athleteID, activityID int64) (string, 
 	title, ok := m.named[key{athleteID: athleteID, activityID: activityID}]
 
 	return title, ok, nil
+}
+
+// Place implements [GeocodeCache].
+func (m *Memory) Place(_ context.Context, key string) (Place, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	place, ok := m.places[key]
+
+	return place, ok, nil
+}
+
+// SavePlace implements [GeocodeCache].
+func (m *Memory) SavePlace(_ context.Context, key string, place Place) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.places[key] = place
+
+	return nil
 }

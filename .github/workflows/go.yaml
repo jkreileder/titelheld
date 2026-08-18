@@ -34,6 +34,8 @@ jobs:
             api.github.com:443
             github.com:443
             objects.githubusercontent.com:443
+            auth.docker.io:443
+            gcr.io:443
             proxy.golang.org:443
             raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
@@ -63,11 +65,58 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # The store's claim is that Firestore behaves exactly like the in-memory
+      # implementation, so the shared conformance suite runs against a real
+      # emulator — in this job rather than its own, so one coverage profile
+      # covers every package. Nothing here touches a GCP project: with
+      # FIRESTORE_EMULATOR_HOST set the client library never contacts Google
+      # and the project ID is a placeholder. The image is pinned by digest like
+      # every other third-party artifact here.
+      - name: Start the Firestore emulator
+        run: |
+          docker run -d --rm -p 127.0.0.1:8080:8080 --name firestore-emulator \
+            gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators@sha256:25300472f1fa63b4df0e0c3a5dd67bdc6774b39f6dd440605e520a6d04ae0f26 \
+            gcloud emulators firestore start --host-port=0.0.0.0:8080
+
+          for _ in $(seq 1 60); do
+            if (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
+              echo "emulator accepting connections"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::the Firestore emulator never came up"
+          docker logs firestore-emulator
+          exit 1
+
       # Via make so CI and the local target cannot drift; gotestsum wraps the
       # same `go test` run and additionally writes the JUnit report that
       # Codecov's test analytics consumes.
       - name: Test
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
         run: make test-junit
+
+      # The emulator tests skip by design when FIRESTORE_EMULATOR_HOST is
+      # unset, and a suite of skips is indistinguishable from a suite of passes.
+      # Assert they actually ran, or the emulator above is decorative.
+      - name: Verify the Firestore tests ran rather than skipped
+        run: |
+          if ! grep -q "TestFirestoreConformance" test-results.xml; then
+            echo "::error::the Firestore conformance suite did not run"
+            exit 1
+          fi
+
+          if grep -q "<skipped" test-results.xml; then
+            echo "::error::tests were skipped; the emulator was not reachable"
+            grep -o 'name="[^"]*"[^>]*>[[:space:]]*<skipped' test-results.xml || true
+            exit 1
+          fi
+
+      - name: Stop the emulator
+        if: always()
+        run: docker rm -f firestore-emulator || true
 
       - name: Upload test results
         if: always()

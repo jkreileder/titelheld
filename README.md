@@ -39,15 +39,16 @@ An activity is only ever renamed. Sport type, gear and descriptions are never to
 
 ## Repository layout
 
-| Path                   | Purpose                                                          |
-| ---------------------- | ---------------------------------------------------------------- |
-| `internal/classifier/` | Tier rules and the Strava default-title gate. No I/O, no deps.   |
-| `internal/config/`     | Runtime configuration, read from the environment only.           |
-| `internal/store/`      | Persistence interfaces plus an in-memory implementation.         |
-| `internal/strava/`     | The only package that talks to Strava: OAuth, client, API calls. |
-| `internal/webhook/`    | Subscription handshake, event intake, delay-queue enqueue.       |
-| `internal/server/`     | HTTP surface: health, OAuth bootstrap, webhook route.            |
-| `cmd/titelheld/`       | Cloud Run entry point; wiring only.                              |
+| Path                        | Purpose                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `internal/classifier/`      | Tier rules and the Strava default-title gate. No I/O, no deps.                         |
+| `internal/config/`          | Runtime configuration, read from the environment only.                                 |
+| `internal/store/`           | Persistence interfaces, an in-memory implementation, and the shared conformance suite. |
+| `internal/store/firestore/` | The Firestore implementation. See [docs/firestore-iam.md](docs/firestore-iam.md).      |
+| `internal/strava/`          | The only package that talks to Strava: OAuth, client, API calls.                       |
+| `internal/webhook/`         | Subscription handshake, event intake, delay-queue enqueue.                             |
+| `internal/server/`          | HTTP surface: health, OAuth bootstrap, webhook route.                                  |
+| `cmd/titelheld/`            | Cloud Run entry point; wiring only.                                                    |
 
 Core logic lives in packages with no HTTP, Firestore or Strava-SDK imports, so a future
 multi-athlete deployment needs no changes there.

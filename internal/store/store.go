@@ -11,6 +11,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/jkreileder/titelheld/internal/strava"
 )
 
 // ErrNotFound is returned when a lookup has no result.
@@ -57,6 +59,61 @@ type Queue interface {
 
 	// Len reports how many entries are queued. For logging and tests.
 	Len(ctx context.Context) (int, error)
+}
+
+// Place is a verified place name from reverse geocoding.
+//
+// It holds names and nothing else. That is the point: the naming layer receives
+// values of this type, so it cannot be handed raw coordinates even by accident,
+// and the fields are limited to administrative and natural features so a title
+// can never reveal a point of interest the athlete visited.
+type Place struct {
+	// Name is the most specific settlement or natural feature, e.g. a village
+	// or a river.
+	Name string
+
+	// Kind describes what Name is ("city", "village", "river", ...).
+	Kind string
+
+	// Region and Country are the coarser containers.
+	Region  string
+	Country string
+}
+
+// Empty reports whether nothing usable was resolved.
+func (p Place) Empty() bool {
+	return p.Name == "" && p.Region == "" && p.Country == ""
+}
+
+// GeocodeCache stores reverse-geocoding results.
+//
+// Nominatim's usage policy requires results to be cached rather than re-fetched,
+// and the key is a rounded coordinate, so nearby points on the same route share
+// an entry. The cache holds only [Place] values — never the coordinates that
+// produced them.
+type GeocodeCache interface {
+	// Place returns the cached place for a rounded-coordinate key.
+	Place(ctx context.Context, key string) (Place, bool, error)
+
+	// SavePlace records a place against a rounded-coordinate key.
+	SavePlace(ctx context.Context, key string, place Place) error
+}
+
+// Store is everything the service persists. Both the in-memory and the
+// Firestore implementations satisfy it, and the conformance suite in
+// storetest exercises them through it.
+type Store interface {
+	TokenStore
+	Queue
+	NamedLog
+	GeocodeCache
+}
+
+// TokenStore is re-declared here so [Store] can compose it without every
+// caller importing the strava package.
+type TokenStore interface {
+	Load(ctx context.Context, athleteID int64) (strava.Token, error)
+	Save(ctx context.Context, token strava.Token) error
 }
 
 // NamedLog records what this service has written.
