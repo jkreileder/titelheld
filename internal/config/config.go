@@ -9,10 +9,21 @@ package config
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// pathSecretPattern bounds WEBHOOK_PATH_SECRET to characters that are safe in a
+// URL path segment.
+//
+// This is not cosmetic. http.ServeMux parses its patterns: a segment containing
+// a space registers as a malformed pattern and panics, and a segment of the
+// form {x} registers as a *wildcard*, which would match any path and remove the
+// unguessable-path defence entirely. Both would surface as a crash loop or a
+// silent hole after the service had already logged a healthy start.
+var pathSecretPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{8,128}$`)
 
 // Defaults applied when the corresponding variable is unset.
 const (
@@ -35,6 +46,11 @@ type Config struct {
 	// WebhookPath is the full, unguessable path the Strava subscription posts
 	// to, including the secret segment.
 	WebhookPath string
+
+	// AuthPath is the unguessable path that starts the one-time authorization.
+	// The callback stays at the fixed [AuthCallbackPath], because that URL is
+	// registered with Strava.
+	AuthPath string
 
 	// AthleteID, when set, is the only athlete whose events are accepted.
 	// Zero means "accept whichever athlete completed the OAuth flow".
@@ -86,9 +102,12 @@ const (
 
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.
 const (
-	AuthPath         = "/auth"
 	AuthCallbackPath = "/auth/callback"
 	HealthPath       = "/healthz"
+
+	// authCallbackSegment is the one path secret that would collide with the
+	// callback route.
+	authCallbackSegment = "callback"
 )
 
 // ErrMissing reports a required variable that was not set.
@@ -128,10 +147,19 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	pathSecret := strings.Trim(strings.TrimSpace(getenv(EnvWebhookPathSecret)), "/")
-	if pathSecret == "" {
+
+	switch {
+	case pathSecret == "":
 		errs = append(errs, &ErrMissing{Name: EnvWebhookPathSecret})
-	} else {
+	case !pathSecretPattern.MatchString(pathSecret):
+		errs = append(errs, errors.New(
+			"config: "+EnvWebhookPathSecret+" must be 8 to 128 characters from A-Z a-z 0-9 . _ ~ -"))
+	case pathSecret == authCallbackSegment:
+		errs = append(errs, errors.New(
+			"config: "+EnvWebhookPathSecret+" must not be \"callback\": it would collide with the OAuth callback route"))
+	default:
 		cfg.WebhookPath = "/webhook/" + pathSecret
+		cfg.AuthPath = "/auth/" + pathSecret
 	}
 
 	if raw := strings.TrimSpace(getenv(EnvPort)); raw != "" {

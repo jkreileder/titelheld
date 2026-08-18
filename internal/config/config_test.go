@@ -42,6 +42,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.WebhookPath != "/webhook/s3cr3t-segment" {
 		t.Errorf("WebhookPath = %q", cfg.WebhookPath)
 	}
+	if cfg.AuthPath != "/auth/s3cr3t-segment" {
+		t.Errorf("AuthPath = %q", cfg.AuthPath)
+	}
 	if cfg.RedirectURL() != "https://namer.example.invalid/auth/callback" {
 		t.Errorf("RedirectURL() = %q", cfg.RedirectURL())
 	}
@@ -231,13 +234,44 @@ func TestOptionalOverrides(t *testing.T) {
 func TestWebhookPathSecretIsNormalised(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := Load(env(map[string]string{"WEBHOOK_PATH_SECRET": "/wrapped/"}))
+	cfg, err := Load(env(map[string]string{"WEBHOOK_PATH_SECRET": "/wrapped-segment/"}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.WebhookPath != "/webhook/wrapped" {
+	if cfg.WebhookPath != "/webhook/wrapped-segment" {
 		t.Errorf("WebhookPath = %q", cfg.WebhookPath)
+	}
+	if cfg.AuthPath != "/auth/wrapped-segment" {
+		t.Errorf("AuthPath = %q", cfg.AuthPath)
+	}
+}
+
+// A path secret that http.ServeMux would reject, or silently read as a
+// wildcard, must be caught at load time rather than at route registration.
+func TestPathSecretIsValidated(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		secret string
+	}{
+		{name: "space would panic ServeMux", secret: "has space"},
+		{name: "tab would panic ServeMux", secret: "has\ttab"},
+		{name: "braces register a wildcard", secret: "{anything}"},
+		{name: "slash splits the segment", secret: "two/segments"},
+		{name: "too short to be unguessable", secret: "short"},
+		{name: "collides with the OAuth callback", secret: "callback"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := Load(env(map[string]string{"WEBHOOK_PATH_SECRET": tt.secret})); err == nil {
+				t.Fatalf("Load with secret %q = nil error, want error", tt.secret)
+			}
+		})
 	}
 }
 

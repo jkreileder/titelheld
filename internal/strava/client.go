@@ -164,6 +164,14 @@ func (c *Client) do(ctx context.Context, method, path string, body func() (*stri
 		if err != nil {
 			lastErr = err
 
+			// A token that cannot be obtained will not become obtainable by
+			// asking again, and each retry costs another /oauth/token round
+			// trip against a refresh token Strava has already rejected.
+			var tokenErr *tokenError
+			if errors.As(err, &tokenErr) {
+				return nil, tokenErr.err
+			}
+
 			// A transport error is worth one more try; a context that is done
 			// is not.
 			if ctx.Err() != nil {
@@ -221,7 +229,7 @@ func (c *Client) attempt(ctx context.Context, method, path string, body func() (
 
 	token, err := c.tokens.AccessToken(ctx)
 	if err != nil {
-		return nil, err
+		return nil, &tokenError{err: err}
 	}
 
 	request.Header.Set("Authorization", "Bearer "+token)

@@ -27,6 +27,10 @@ type StoredTokenSource struct {
 	mu     sync.Mutex
 	cached Token
 	loaded bool
+
+	// persisted records whether cached has reached the store. A refresh that
+	// could not be written leaves this false so the next call retries.
+	persisted bool
 }
 
 // NewStoredTokenSource builds a token source backed by store.
@@ -63,9 +67,19 @@ func (s *StoredTokenSource) Token(ctx context.Context) (Token, error) {
 
 		s.cached = token
 		s.loaded = true
+		s.persisted = true
 	}
 
 	if !s.cached.Expired(s.now(), refreshLeeway) {
+		// A previous refresh produced a usable pair that could not be written.
+		// Keep trying: the token in hand works, but a restart would fall back
+		// to a refresh token Strava has already invalidated.
+		if !s.persisted {
+			if err := s.store.Save(ctx, s.cached); err == nil {
+				s.persisted = true
+			}
+		}
+
 		return s.cached, nil
 	}
 
@@ -74,10 +88,11 @@ func (s *StoredTokenSource) Token(ctx context.Context) (Token, error) {
 
 // refreshLocked exchanges the refresh token and persists the result.
 //
-// The new pair is written to the store *before* it is returned: Strava
-// invalidates the previous refresh token the moment it issues a new one, so a
-// pair that is used but not persisted would strand the service with no way back
-// short of re-running the authorization flow by hand.
+// Strava invalidates the previous refresh token the moment it issues a new one,
+// which drives both halves of this: the new pair is adopted in memory before
+// the store is touched, because the old one is already dead and holding on to
+// it would strand every later refresh; and a failed write is still reported,
+// because a pair that never reaches the store would not survive a restart.
 func (s *StoredTokenSource) refreshLocked(ctx context.Context) (Token, error) {
 	if s.cached.RefreshToken == "" {
 		return Token{}, ErrTokenNotFound
@@ -100,11 +115,15 @@ func (s *StoredTokenSource) refreshLocked(ctx context.Context) (Token, error) {
 		refreshed.AthleteID = s.athleteID
 	}
 
+	// Adopt first: from here on, refreshed is the only pair Strava will accept.
+	s.cached = refreshed
+	s.persisted = false
+
 	if err := s.store.Save(ctx, refreshed); err != nil {
 		return Token{}, fmt.Errorf("strava: persist refreshed token: %w", err)
 	}
 
-	s.cached = refreshed
+	s.persisted = true
 
 	return refreshed, nil
 }

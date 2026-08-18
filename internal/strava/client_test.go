@@ -697,3 +697,61 @@ func TestStatusErrorDoesNotMatchUnrelatedSentinels(t *testing.T) {
 		t.Error("a 403 must match ErrUnauthorized")
 	}
 }
+
+// A token that cannot be obtained will not become obtainable by asking again,
+// and every retry costs another /oauth/token round trip.
+func TestTokenErrorsAreNotRetried(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int64
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(`{"id":1,"athlete":{"id":2}}`))
+	}))
+	defer server.Close()
+
+	var sleeps atomic.Int64
+
+	wantErr := errors.New("refresh token rejected")
+
+	client, err := NewClient(ClientConfig{
+		Tokens:     staticTokens{err: wantErr},
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
+		MaxRetries: 3,
+		Sleep: func(context.Context, time.Duration) error {
+			sleeps.Add(1)
+
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, err := client.GetActivity(t.Context(), 1); !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+
+	if got := sleeps.Load(); got != 0 {
+		t.Errorf("backed off %d times, want 0", got)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Errorf("reached Strava %d times, want 0", got)
+	}
+}
+
+func TestTokenErrorWrapsItsCause(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("refresh rejected")
+	wrapped := &tokenError{err: cause}
+
+	if wrapped.Error() != cause.Error() {
+		t.Errorf("Error() = %q, want %q", wrapped.Error(), cause.Error())
+	}
+	if !errors.Is(wrapped, cause) {
+		t.Error("errors.Is could not see through tokenError")
+	}
+}
