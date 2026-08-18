@@ -38,9 +38,13 @@
   for anything from a webhook body, Strava, a geocoder or an LLM.
 - `cmd/titelheld/` is a shim with no behaviour, and is excluded from coverage.
 
-Not built yet: geocoding, the prompt builder and LLM interface, the sweep and
-writer, and the Cloud Run deployment configuration.
-No Strava push subscription has been created yet.
+- `internal/geo/` decodes the summary polyline and reverse-geocodes samples via
+  Nominatim into verified place names. The privacy allow-list and the 1 req/s
+  limit live there and are enforced in code, not by convention.
+
+Not built yet: the prompt builder and LLM interface, the sweep and writer, and
+the Cloud Run deployment configuration. No Strava push subscription has been
+created yet.
 
 ## Design Rules That Are Not Negotiable
 
