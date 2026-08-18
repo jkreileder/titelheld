@@ -21,11 +21,24 @@ import (
 // this is generous and still bounds what an unauthenticated caller can push.
 const maxBodyBytes = 64 << 10
 
+// processTimeout bounds the work done after the acknowledgement has gone out.
+const processTimeout = 15 * time.Second
+
+// maxEventAge is how far back an event_time is still believed. Beyond it the
+// value is treated as bogus and the delay is measured from arrival instead.
+const maxEventAge = 24 * time.Hour
+
 // Object types and aspect types Strava sends.
 const (
 	objectTypeActivity = "activity"
-	aspectCreate       = "create"
-	aspectUpdate       = "update"
+	objectTypeAthlete  = "athlete"
+
+	// updateAuthorized is the key Strava uses to signal a revoked grant, and
+	// deauthorizedValue the value that means revoked.
+	updateAuthorized  = "authorized"
+	deauthorizedValue = "false"
+	aspectCreate      = "create"
+	aspectUpdate      = "update"
 )
 
 // Event is the JSON body Strava POSTs to the callback URL.
@@ -40,9 +53,12 @@ type Event struct {
 }
 
 // Deauthorized reports whether the event says the athlete revoked access.
-// Strava signals this with updates.authorized == "false".
+//
+// Strava signals this on an *athlete* event with updates.authorized == "false".
+// The object type is part of the test: without it, an activity event carrying
+// the same update would be silently dropped and logged as a deauthorization.
 func (e Event) Deauthorized() bool {
-	return e.Updates["authorized"] == "false"
+	return e.ObjectType == objectTypeAthlete && e.Updates[updateAuthorized] == deauthorizedValue
 }
 
 // Handler serves the subscription validation handshake and the event intake.
@@ -187,7 +203,15 @@ func (h *Handler) intake(w http.ResponseWriter, r *http.Request) {
 		h.logger.Debug("could not flush the acknowledgement", "error", err)
 	}
 
-	h.process(r.Context(), event)
+	// The work below must not run on the request context. Flushing is exactly
+	// what lets the client return from its call and close the body, which
+	// cancels that context while this handler is still working — the store
+	// operations would then fail with context.Canceled and, because the
+	// acknowledgement has already gone out, Strava would never retry.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), processTimeout)
+	defer cancel()
+
+	h.process(ctx, event)
 }
 
 // process decides what to do with an acknowledged event.
@@ -278,11 +302,19 @@ func (h *Handler) process(ctx context.Context, event Event) {
 
 // processAfter anchors the delay on Strava's event time, so a redelivery of the
 // same event lands on the same deadline rather than pushing it back.
+//
+// The event time is only believed when it is in the past and recent. Without
+// the floor, an event_time of 1 would put the deadline in 1970 and the activity
+// would be due on the very next sweep — turning off the wait that is the whole
+// reason this service runs last. A time in the future is ignored for the mirror
+// image of that reason.
 func (h *Handler) processAfter(event Event) time.Time {
-	base := h.now()
+	now := h.now()
+	base := now
 
 	if event.EventTime > 0 {
-		if eventTime := time.Unix(event.EventTime, 0).UTC(); eventTime.Before(base) {
+		eventTime := time.Unix(event.EventTime, 0).UTC()
+		if eventTime.Before(base) && now.Sub(eventTime) <= maxEventAge {
 			base = eventTime
 		}
 	}

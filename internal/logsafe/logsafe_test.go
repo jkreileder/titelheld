@@ -80,3 +80,28 @@ func TestStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestStringNeutralisesNonCcCategories(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "line separator U+2028", in: "a\u2028b", want: "a b"},
+		{name: "paragraph separator U+2029", in: "a\u2029b", want: "a b"},
+		{name: "right-to-left override U+202E", in: "a\u202eb", want: "a b"},
+		{name: "zero width joiner U+200D", in: "a\u200db", want: "a b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := String(tt.in); got != tt.want {
+				t.Errorf("String(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

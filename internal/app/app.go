@@ -62,6 +62,11 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		Tokens:  memory,
 		Webhook: hook,
 		Logger:  logger,
+		Bound: func(ctx context.Context) (int64, bool) {
+			token, err := memory.AnyToken(ctx)
+
+			return token.AthleteID, err == nil
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("build server: %w", err)
@@ -70,7 +75,7 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 	logger.Info("configuration loaded",
 		"process_delay", cfg.ProcessDelay,
 		"athlete_id", cfg.AthleteID,
-		"auth_path", config.AuthPath,
+		"auth_path", cfg.AuthPath,
 		"store", "memory")
 
 	return httpServer.Run(ctx, net.JoinHostPort("", strconv.Itoa(cfg.Port)))

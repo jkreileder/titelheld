@@ -20,6 +20,9 @@ import (
 
 var testNow = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 
+// testAuthPath mirrors what config.Load derives from the path secret.
+const testAuthPath = "/auth/s3cr3t-segment"
+
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -59,6 +62,7 @@ func newServer(t *testing.T, tokenServer *httptest.Server, tokens strava.TokenSt
 	server, err := New(Deps{
 		Config: config.Config{
 			WebhookPath: "/webhook/s3cr3t-segment",
+			AuthPath:    testAuthPath,
 			BaseURL:     "https://namer.example.invalid",
 			AthleteID:   athleteID,
 		},
@@ -90,7 +94,7 @@ func TestNewValidatesDeps(t *testing.T) {
 	}
 
 	server, err := New(Deps{
-		Config:  config.Config{WebhookPath: "/webhook/x"},
+		Config:  config.Config{WebhookPath: "/webhook/x", AuthPath: "/auth/x"},
 		OAuth:   oauth,
 		Tokens:  memory,
 		Webhook: hook,
@@ -150,7 +154,7 @@ func TestAuthStartRedirectsToStrava(t *testing.T) {
 	server, _ := newServer(t, nil, store.NewMemory(), 0)
 
 	recorder := httptest.NewRecorder()
-	server.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, config.AuthPath, nil))
+	server.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, testAuthPath, nil))
 
 	if recorder.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", recorder.Code)
@@ -179,7 +183,7 @@ func startAuth(t *testing.T, server *Server) string {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	server.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, config.AuthPath, nil))
+	server.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, testAuthPath, nil))
 
 	location, err := url.Parse(recorder.Header().Get("Location"))
 	if err != nil {
@@ -540,7 +544,7 @@ func TestAuthStartReportsAStateFailure(t *testing.T) {
 	server.randRead = failingRand
 
 	recorder := httptest.NewRecorder()
-	server.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, config.AuthPath, nil))
+	server.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, testAuthPath, nil))
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", recorder.Code)
@@ -565,5 +569,114 @@ func TestAuthCallbackRejectsAShortToken(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", recorder.Code)
+	}
+}
+
+// With no athlete configured the service binds to whoever authorizes first, and
+// refuses anyone else afterwards: a stranger who reached the start route could
+// otherwise add a second token and leave the store with no single answer to
+// which athlete this service is for.
+func TestAuthCallbackBindsToTheFirstAthlete(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+
+	if err := memory.Save(t.Context(), strava.Token{AthleteID: 4242}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tokens := tokenServer(t, `{"access_token":"a","refresh_token":"r",
+		"scope":"activity:read_all,activity:write","athlete":{"id":99}}`)
+
+	oauth := &strava.OAuth{ClientID: "1", BaseURL: tokens.URL, HTTPClient: tokens.Client()}
+
+	server, err := New(Deps{
+		Config:  config.Config{WebhookPath: "/webhook/x", AuthPath: testAuthPath},
+		OAuth:   oauth,
+		Tokens:  memory,
+		Webhook: &stubWebhook{},
+		Logger:  quietLogger(),
+		Now:     func() time.Time { return testNow },
+		Bound: func(ctx context.Context) (int64, bool) {
+			token, err := memory.AnyToken(ctx)
+
+			return token.AthleteID, err == nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	state := startAuth(t, server)
+
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		config.AuthCallbackPath+"?code=c&state="+state+
+			"&scope=activity:read_all,activity:write", nil))
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 for a second athlete", recorder.Code)
+	}
+}
+
+// Re-authorizing the athlete already bound is fine — tokens expire and scopes
+// change.
+func TestAuthCallbackAllowsTheBoundAthleteAgain(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+
+	if err := memory.Save(t.Context(), strava.Token{AthleteID: 4242}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tokens := tokenServer(t, `{"access_token":"a","refresh_token":"r",
+		"scope":"activity:read_all,activity:write","athlete":{"id":4242}}`)
+
+	oauth := &strava.OAuth{ClientID: "1", BaseURL: tokens.URL, HTTPClient: tokens.Client()}
+
+	server, err := New(Deps{
+		Config:  config.Config{WebhookPath: "/webhook/x", AuthPath: testAuthPath},
+		OAuth:   oauth,
+		Tokens:  memory,
+		Webhook: &stubWebhook{},
+		Logger:  quietLogger(),
+		Now:     func() time.Time { return testNow },
+		Bound: func(ctx context.Context) (int64, bool) {
+			token, err := memory.AnyToken(ctx)
+
+			return token.AthleteID, err == nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	state := startAuth(t, server)
+
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		config.AuthCallbackPath+"?code=c&state="+state+
+			"&scope=activity:read_all,activity:write", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200; body %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+// The bare /auth path must not exist: it is what a stranger would find.
+func TestBareAuthPathIsNotRouted(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newServer(t, nil, store.NewMemory(), 0)
+
+	for _, path := range []string{"/auth", "/auth/", "/auth/guessed"} {
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder,
+			httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, recorder.Code)
+		}
 	}
 }

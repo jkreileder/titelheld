@@ -33,6 +33,10 @@ type Deps struct {
 	Webhook http.Handler
 	Logger  *slog.Logger
 
+	// Bound reports the athlete this service is already bound to, and whether
+	// there is one. Consulted only when no athlete ID is configured. Optional.
+	Bound func(context.Context) (int64, bool)
+
 	// Now defaults to time.Now.
 	Now func() time.Time
 
@@ -57,8 +61,8 @@ func New(deps Deps) (*Server, error) {
 	if deps.OAuth == nil || deps.Tokens == nil || deps.Webhook == nil {
 		return nil, errors.New("server: OAuth, Tokens and Webhook are required")
 	}
-	if deps.Config.WebhookPath == "" {
-		return nil, errors.New("server: Config.WebhookPath is required")
+	if deps.Config.WebhookPath == "" || deps.Config.AuthPath == "" {
+		return nil, errors.New("server: Config.WebhookPath and Config.AuthPath are required")
 	}
 
 	server := &Server{
@@ -84,14 +88,18 @@ func New(deps Deps) (*Server, error) {
 
 // Handler returns the router.
 //
-// The webhook is mounted at its full secret path, so a request that guesses the
-// prefix but not the segment is a 404 from the mux rather than something the
-// handler has to reason about.
+// The webhook and the authorization start are both mounted at their full secret
+// paths, so a request that guesses the prefix but not the segment is a 404 from
+// the mux rather than something a handler has to reason about. Starting the
+// flow is what needs protecting: without it, anyone who found a bare /auth
+// could authorize their own Strava account and have this service store their
+// token. The callback stays at a fixed, registered URL and is guarded by the
+// single-use state that only the start route issues.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET "+config.HealthPath, s.health)
-	mux.HandleFunc("GET "+config.AuthPath, s.authStart)
+	mux.HandleFunc("GET "+s.deps.Config.AuthPath, s.authStart)
 	mux.HandleFunc("GET "+config.AuthCallbackPath, s.authCallback)
 	mux.Handle(s.deps.Config.WebhookPath, s.deps.Webhook)
 
@@ -174,9 +182,8 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if want := s.deps.Config.AthleteID; want != 0 && token.AthleteID != want {
-		s.logger.Error("authorized athlete does not match the configured one",
-			"configured", want, "authorized", token.AthleteID)
+	if err := s.checkAthlete(r.Context(), token.AthleteID); err != nil {
+		s.logger.Error("authorization rejected", "error", err, "authorized", token.AthleteID)
 		http.Error(w, "unexpected athlete", http.StatusForbidden)
 
 		return
@@ -195,6 +202,39 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprintf(w, "Authorized athlete %d. You can close this tab.\n", token.AthleteID)
+}
+
+// checkAthlete decides whether this athlete may be stored.
+//
+// A configured athlete ID is authoritative. With none configured the service
+// binds to whoever authorizes first, and refuses anyone else afterwards: a
+// second athlete would not overwrite the first — it would add an entry and
+// leave the store with no single answer to "which athlete is this service for".
+func (s *Server) checkAthlete(ctx context.Context, authorized int64) error {
+	if want := s.deps.Config.AthleteID; want != 0 {
+		if authorized != want {
+			return fmt.Errorf("athlete %d authorized, but this service is configured for %d",
+				authorized, want)
+		}
+
+		return nil
+	}
+
+	if s.deps.Bound == nil {
+		return nil
+	}
+
+	bound, ok := s.deps.Bound(ctx)
+	if !ok {
+		return nil // nothing bound yet: this authorization does the binding.
+	}
+
+	if bound != authorized {
+		return fmt.Errorf("athlete %d authorized, but this service is already bound to %d",
+			authorized, bound)
+	}
+
+	return nil
 }
 
 // missingScopes reports which required scopes are absent from granted.

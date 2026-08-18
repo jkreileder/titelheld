@@ -474,10 +474,19 @@ func TestEqualSecret(t *testing.T) {
 func TestEventDeauthorized(t *testing.T) {
 	t.Parallel()
 
-	if !(Event{Updates: map[string]string{"authorized": "false"}}).Deauthorized() {
-		t.Error("Deauthorized() = false for an authorized:false event")
+	deauth := Event{ObjectType: "athlete", Updates: map[string]string{"authorized": "false"}}
+	if !deauth.Deauthorized() {
+		t.Error("Deauthorized() = false for an athlete authorized:false event")
 	}
-	if (Event{Updates: map[string]string{"title": "x"}}).Deauthorized() {
+
+	// The same update on an activity event is not a deauthorization. Treating
+	// it as one would silently drop a nameable activity.
+	onActivity := Event{ObjectType: "activity", Updates: map[string]string{"authorized": "false"}}
+	if onActivity.Deauthorized() {
+		t.Error("Deauthorized() = true for an activity event")
+	}
+
+	if (Event{ObjectType: "athlete", Updates: map[string]string{"title": "x"}}).Deauthorized() {
 		t.Error("Deauthorized() = true for a title update")
 	}
 	if (Event{}).Deauthorized() {
@@ -526,5 +535,84 @@ func TestIntakeWithoutFlushSupportStillQueues(t *testing.T) {
 	count, _ := memory.Len(t.Context())
 	if count != 1 {
 		t.Errorf("queue holds %d entries, want 1", count)
+	}
+}
+
+// The acknowledgement is flushed before the work starts, which lets the client
+// return and close the body — cancelling the request context. The queue write
+// must not ride on that context: Strava has already been told 200, so a
+// cancelled write would drop the activity with no retry.
+func TestIntakeSurvivesACancelledRequestContext(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 0)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/webhook/secret",
+		strings.NewReader(`{"object_type":"activity","object_id":5,"aspect_type":"create","owner_id":7}`))
+
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	count, _ := memory.Len(t.Context())
+	if count != 1 {
+		t.Errorf("queue holds %d entries, want 1 — the work must outlive the request", count)
+	}
+}
+
+// A bogus or ancient event_time must not collapse the delay. The wait is the
+// reason this service runs last in the chain.
+func TestAncientEventTimeCannotBypassTheDelay(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		eventTime int64
+	}{
+		{name: "epoch", eventTime: 1},
+		{name: "a year ago", eventTime: testNow.Add(-365 * 24 * time.Hour).Unix()},
+		{name: "just past the trusted window", eventTime: testNow.Add(-25 * time.Hour).Unix()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			memory := store.NewMemory()
+			handler := newHandler(t, memory, 0)
+
+			post(t, handler, `{"object_type":"activity","object_id":5,"aspect_type":"create",
+				"owner_id":7,"event_time":`+strconv.FormatInt(tt.eventTime, 10)+`}`)
+
+			due, _ := memory.Due(t.Context(), testNow)
+			if len(due) != 0 {
+				t.Fatalf("%d entries are already due; the delay was bypassed", len(due))
+			}
+
+			all, _ := memory.Due(t.Context(), testNow.Add(time.Hour))
+			if want := testNow.Add(10 * time.Minute); !all[0].ProcessAfter.Equal(want) {
+				t.Errorf("ProcessAfter = %v, want %v", all[0].ProcessAfter, want)
+			}
+		})
+	}
+}
+
+// A recent event_time is still honoured, so a redelivery keeps its deadline.
+func TestRecentEventTimeIsStillHonoured(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 0)
+
+	eventTime := testNow.Add(-3 * time.Hour)
+
+	post(t, handler, `{"object_type":"activity","object_id":5,"aspect_type":"create",
+		"owner_id":7,"event_time":`+strconv.FormatInt(eventTime.Unix(), 10)+`}`)
+
+	due, _ := memory.Due(t.Context(), testNow.Add(time.Hour))
+	if want := eventTime.Add(10 * time.Minute); !due[0].ProcessAfter.Equal(want) {
+		t.Errorf("ProcessAfter = %v, want %v", due[0].ProcessAfter, want)
 	}
 }

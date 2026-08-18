@@ -272,3 +272,62 @@ func TestNewStoredTokenSourceUsesRealClock(t *testing.T) {
 		t.Error("now() returned the zero time")
 	}
 }
+
+// A refresh whose result cannot be persisted must not leave the source holding
+// the previous refresh token: Strava invalidated that one the instant it issued
+// the new pair, so keeping it would strand every later refresh.
+func TestTokenSourceKeepsTheNewPairWhenPersistFails(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int64
+
+	server := refreshServer(t, &calls)
+	defer server.Close()
+
+	store := &fakeStore{
+		token: Token{
+			AthleteID:    4242,
+			RefreshToken: "refresh-one",
+			ExpiresAt:    fixedNow.Add(-time.Minute),
+		},
+		saveErr: errors.New("firestore unavailable"),
+	}
+
+	source := NewStoredTokenSource(testOAuth(server), store, 4242)
+	source.now = func() time.Time { return fixedNow }
+
+	// The write failure is reported...
+	if _, err := source.Token(t.Context()); err == nil {
+		t.Fatal("Token = nil error, want the persistence failure")
+	}
+
+	// ...but the live pair is retained, so the service can keep serving.
+	source.mu.Lock()
+	cached := source.cached
+	source.mu.Unlock()
+
+	if cached.RefreshToken != "refresh-1" {
+		t.Fatalf("cached refresh token = %q, want the rotated one", cached.RefreshToken)
+	}
+
+	// The store recovers; the next call must persist the pair it is holding
+	// rather than refreshing again against a token Strava already rejected.
+	store.saveErr = nil
+
+	token, err := source.Token(t.Context())
+	if err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+
+	if token.RefreshToken != "refresh-1" {
+		t.Errorf("RefreshToken = %q", token.RefreshToken)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("refresh calls = %d, want 1 — the second call must not re-refresh", got)
+	}
+
+	saved, _ := store.lastSave.Load().(Token)
+	if saved.RefreshToken != "refresh-1" {
+		t.Errorf("persisted refresh token = %q, want the retry to have written it", saved.RefreshToken)
+	}
+}

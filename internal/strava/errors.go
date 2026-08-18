@@ -54,6 +54,15 @@ func (e *StatusError) Is(target error) bool {
 	}
 }
 
+// tokenError marks a failure to obtain an access token, so the transport can
+// tell it apart from a transient network problem and stop retrying.
+type tokenError struct {
+	err error
+}
+
+func (e *tokenError) Error() string { return e.err.Error() }
+func (e *tokenError) Unwrap() error { return e.err }
+
 func statusError(code int) error {
 	return &StatusError{StatusCode: code}
 }

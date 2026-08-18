@@ -44,9 +44,11 @@ func String(s string) string {
 		case r == utf8.RuneError:
 			// Invalid UTF-8; drop it rather than pass the replacement through.
 			continue
-		case unicode.IsControl(r):
-			// Newlines, carriage returns and escape sequences are exactly what
-			// a forged log line needs.
+		case unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp):
+			// Cc covers newlines, carriage returns and escape sequences. Zl and
+			// Zp (U+2028, U+2029) end a line for anything JavaScript-based, and
+			// Cf includes U+202E, which reverses the rendering of everything
+			// after it.
 			b.WriteRune(' ')
 		default:
 			b.WriteRune(r)

@@ -116,9 +116,17 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `GET /webhook/<secret>`  | Strava's subscription validation handshake                  |
 | `POST /webhook/<secret>` | Event intake; queues the activity after the delay           |
 
-The webhook is mounted at its full secret path, so guessing the prefix but not the segment is
-a 404 from the router. The verify token is compared in constant time over hashes, so neither
-its contents nor its length leak.
+Both the webhook and the authorization start are mounted at their full secret paths, so
+guessing the prefix but not the segment is a 404 from the router. Starting the flow is what
+needs protecting: a bare `/auth` would let anyone authorize their own Strava account and have
+this service store their token. The callback stays at a fixed, registered URL and is guarded
+by the single-use state that only the start route issues; with no `STRAVA_ATHLETE_ID` set, the
+service binds to whoever authorizes first and refuses anyone else afterwards.
+
+The verify token is compared in constant time over hashes, so neither its contents nor its
+length leak. `WEBHOOK_PATH_SECRET` is validated at load: a segment containing a space would
+panic the router at registration, and one of the form `{x}` would register as a wildcard and
+remove the unguessable-path defence entirely.
 
 Events are acknowledged before the queue is written, which is the order Strava's two-second
 budget assumes. A delivery that is never acknowledged is retried, and the queue is idempotent,
