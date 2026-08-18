@@ -4,15 +4,21 @@
 A single-athlete backend service that gives Strava activities context-aware titles — and leaves
 everything that should stay boring untouched.
 
-> **Status: early construction.** Only the activity classifier is implemented. The Strava client,
-> webhook, store, geocoding, prompt builder, LLM interface, delay queue and the Cloud Run
-> deployment are not built yet, and there is no runnable binary. Operator documentation (GCP
-> setup, Strava app registration, OAuth bootstrap, config schema, franchises) lands with those
-> phases.
+> **Status: early construction.** The classifier, the configuration loader, the store
+> interfaces and the Strava client with OAuth are implemented. The webhook, the Firestore
+> store, geocoding, the prompt builder, the LLM interface, the sweep and writer, and the Cloud
+> Run deployment are not built yet, and there is no runnable binary. Operator documentation
+> (GCP setup, Strava app registration, OAuth bootstrap, config schema, franchises) lands with
+> those phases.
+>
+> **Nothing can write to Strava yet.** Dry run is the default and the zero value throughout;
+> see [Writes and dry run](#writes-and-dry-run).
 
 - [What it does](#what-it-does)
 - [Repository layout](#repository-layout)
 - [The classifier](#the-classifier)
+- [Writes and dry run](#writes-and-dry-run)
+- [Configuration](#configuration)
 - [Development](#development)
 - [Security and privacy](#security-and-privacy)
 - [License](#license)
@@ -27,9 +33,12 @@ An activity is only ever renamed. Sport type, gear and descriptions are never to
 
 ## Repository layout
 
-| Path                   | Purpose                                                        |
-| ---------------------- | -------------------------------------------------------------- |
-| `internal/classifier/` | Tier rules and the Strava default-title gate. No I/O, no deps. |
+| Path                   | Purpose                                                          |
+| ---------------------- | ---------------------------------------------------------------- |
+| `internal/classifier/` | Tier rules and the Strava default-title gate. No I/O, no deps.   |
+| `internal/config/`     | Runtime configuration, read from the environment only.           |
+| `internal/store/`      | Persistence interfaces plus an in-memory implementation.         |
+| `internal/strava/`     | The only package that talks to Strava: OAuth, client, API calls. |
 
 Core logic lives in packages with no HTTP, Firestore or Strava-SDK imports, so a future
 multi-athlete deployment needs no changes there.
@@ -59,6 +68,37 @@ ActivityFix already wrote is taken at face value whatever the ride's size.
 The **skip gate** runs after tier assignment: unless the activity's current title is a recognised
 Strava default, the action is downgraded to skip. The gate fails closed — an unrecognised title is
 assumed to be authored by a human or another tool.
+
+## Writes and dry run
+
+This service renames real activities on a real account, so the safe state is the one you get
+by doing nothing:
+
+- `config.Config.WritesEnabled` is expressed positively, so a zero-valued config is dry run.
+- `strava.WriteMode`'s zero value is `WriteModeDryRun`, so a client built without thinking
+  about it refuses to write.
+- `DRY_RUN` stays on unless it holds an explicit falsy value (`0`, `false`, `no`, `off`).
+  Anything unrecognised is reported as an error *and* leaves dry run on — a typo must never be
+  what lets the service loose.
+- `UpdateActivityName` refuses with `ErrDryRun` before building a request, and the transport
+  refuses every non-GET method again, so a future write path cannot slip past the first check.
+
+## Configuration
+
+All configuration comes from the environment. Nothing is read from a file, so secrets have no
+route into the working tree; on Cloud Run they are injected from Secret Manager.
+
+| Variable               | Required | Default | Purpose                                      |
+| ---------------------- | -------- | ------- | -------------------------------------------- |
+| `STRAVA_CLIENT_ID`     | yes      | —       | Strava API application ID                    |
+| `STRAVA_CLIENT_SECRET` | yes      | —       | Strava API application secret                |
+| `STRAVA_VERIFY_TOKEN`  | yes      | —       | Shared secret for the subscription handshake |
+| `WEBHOOK_PATH_SECRET`  | yes      | —       | Unguessable segment of the webhook path      |
+| `BASE_URL`             | yes      | —       | Public base URL, used for the OAuth redirect |
+| `STRAVA_ATHLETE_ID`    | no       | any     | Restrict processing to one athlete           |
+| `PROCESS_DELAY`        | no       | `10m`   | How long to wait before naming               |
+| `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
+| `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
 
 ## Development
 

@@ -17,10 +17,19 @@
   - `activity.go` — the transport-neutral `Activity` input.
   - `defaults.go` — the Strava default-title table and `IsDefaultTitle`.
   - `classifier.go` — `Config`, tiers, actions, and `Classify`.
+- `internal/config/` reads every setting from the environment and nothing else,
+  so a secret has no route into the working tree. `DRY_RUN` is parsed here and
+  defaults to on.
+- `internal/strava/` is the only package that talks to Strava: OAuth
+  (`oauth.go`), the auto-refreshing token source (`tokensource.go`), the HTTP
+  client with rate-limit accounting and 429 backoff (`client.go`), and the two
+  API calls this service makes (`activity.go`).
+- `internal/store/` holds the persistence interfaces and an in-memory
+  implementation. The Firestore one lands with the store phase.
 
-Not built yet: the Strava client and OAuth, the webhook, the store, geocoding, the
-prompt builder and LLM interface, the delay queue and writer, and the Cloud Run
-deployment configuration.
+Not built yet: the webhook, the Firestore store, geocoding, the prompt builder
+and LLM interface, the sweep and writer, and the Cloud Run deployment
+configuration.
 
 ## Design Rules That Are Not Negotiable
 
@@ -38,6 +47,11 @@ deployment configuration.
   zero value.
 - **No new dependencies without asking.** Allowed: a polyline decoder, the
   Firestore client, an HTTP router. Everything else needs a decision first.
+  There are still none: OAuth, the HTTP client and routing are standard library.
+- **Dry run is the safe zero value.** `strava.WriteMode` and
+  `config.Config.WritesEnabled` are both written so that an unset or
+  zero-valued configuration cannot write to Strava. Writes are refused in
+  `UpdateActivityName` *and* again in the transport; keep both.
 
 ## Daily Flow
 

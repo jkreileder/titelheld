@@ -1,0 +1,279 @@
+package config
+
+import (
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+// env builds a getenv function over a map, with every required variable set to
+// a valid placeholder unless the caller overrides or clears it.
+func env(overrides map[string]string) func(string) string {
+	values := map[string]string{
+		"STRAVA_CLIENT_ID":     "12345",
+		"STRAVA_CLIENT_SECRET": "test-client-secret",
+		"STRAVA_VERIFY_TOKEN":  "test-verify-token",
+		"BASE_URL":             "https://namer.example.invalid",
+		"WEBHOOK_PATH_SECRET":  "s3cr3t-segment",
+	}
+
+	for key, value := range overrides {
+		values[key] = value
+	}
+
+	return func(key string) string { return values[key] }
+}
+
+func TestLoadDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Port != DefaultPort {
+		t.Errorf("Port = %d, want %d", cfg.Port, DefaultPort)
+	}
+	if cfg.ProcessDelay != DefaultProcessDelay {
+		t.Errorf("ProcessDelay = %v, want %v", cfg.ProcessDelay, DefaultProcessDelay)
+	}
+	if cfg.WebhookPath != "/webhook/s3cr3t-segment" {
+		t.Errorf("WebhookPath = %q", cfg.WebhookPath)
+	}
+	if cfg.RedirectURL() != "https://namer.example.invalid/auth/callback" {
+		t.Errorf("RedirectURL() = %q", cfg.RedirectURL())
+	}
+	if cfg.AthleteID != 0 {
+		t.Errorf("AthleteID = %d, want 0 when unset", cfg.AthleteID)
+	}
+}
+
+// TestDryRunIsTheDefault is the constraint with teeth: nothing about an
+// unconfigured environment may enable writes.
+func TestDryRunIsTheDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.WritesEnabled {
+		t.Error("WritesEnabled = true with DRY_RUN unset, want false")
+	}
+	if !cfg.DryRun() {
+		t.Error("DryRun() = false with DRY_RUN unset, want true")
+	}
+}
+
+func TestZeroConfigIsDryRun(t *testing.T) {
+	t.Parallel()
+
+	if !(Config{}).DryRun() {
+		t.Error("a zero Config must be dry run")
+	}
+}
+
+func TestDryRunParsing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		raw               string
+		wantWritesEnabled bool
+		wantErr           bool
+	}{
+		{raw: "", wantWritesEnabled: false},
+		{raw: "1", wantWritesEnabled: false},
+		{raw: "true", wantWritesEnabled: false},
+		{raw: "TRUE", wantWritesEnabled: false},
+		{raw: " yes ", wantWritesEnabled: false},
+		{raw: "on", wantWritesEnabled: false},
+		{raw: "0", wantWritesEnabled: true},
+		{raw: "false", wantWritesEnabled: true},
+		{raw: "FALSE", wantWritesEnabled: true},
+		{raw: "no", wantWritesEnabled: true},
+		{raw: "off", wantWritesEnabled: true},
+		// Anything unrecognised is an error and leaves writes disabled: a typo
+		// must never be what lets this service write.
+		{raw: "flase", wantWritesEnabled: false, wantErr: true},
+		{raw: "2", wantWritesEnabled: false, wantErr: true},
+		{raw: "disabled", wantWritesEnabled: false, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run("DRY_RUN="+tt.raw, func(t *testing.T) {
+			t.Parallel()
+
+			enabled, err := parseWritesEnabled(tt.raw)
+			if enabled != tt.wantWritesEnabled {
+				t.Errorf("writesEnabled = %v, want %v", enabled, tt.wantWritesEnabled)
+			}
+			if (err != nil) != tt.wantErr {
+				t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			cfg, loadErr := Load(env(map[string]string{"DRY_RUN": tt.raw}))
+			if tt.wantErr {
+				if loadErr == nil {
+					t.Fatal("Load = nil error, want the DRY_RUN error")
+				}
+				// A rejected config must not be usable at all.
+				if cfg.WritesEnabled {
+					t.Error("a failed Load returned a config with writes enabled")
+				}
+
+				return
+			}
+
+			if loadErr != nil {
+				t.Fatalf("Load: %v", loadErr)
+			}
+			if cfg.WritesEnabled != tt.wantWritesEnabled {
+				t.Errorf("cfg.WritesEnabled = %v, want %v", cfg.WritesEnabled, tt.wantWritesEnabled)
+			}
+		})
+	}
+}
+
+func TestRequiredVariables(t *testing.T) {
+	t.Parallel()
+
+	required := []string{
+		"STRAVA_CLIENT_ID",
+		"STRAVA_CLIENT_SECRET",
+		"STRAVA_VERIFY_TOKEN",
+		"BASE_URL",
+		"WEBHOOK_PATH_SECRET",
+	}
+
+	for _, name := range required {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Load(env(map[string]string{name: ""}))
+			if err == nil {
+				t.Fatalf("Load without %s = nil error, want error", name)
+			}
+
+			var missing *ErrMissing
+			if !errors.As(err, &missing) || missing.Name != name {
+				t.Errorf("error = %v, want an ErrMissing for %s", err, name)
+			}
+		})
+	}
+}
+
+func TestErrorsNeverEchoSecretValues(t *testing.T) {
+	t.Parallel()
+
+	_, err := Load(env(map[string]string{
+		"BASE_URL": "",
+		"DRY_RUN":  "nonsense",
+	}))
+	if err == nil {
+		t.Fatal("Load = nil error, want error")
+	}
+
+	for _, secret := range []string{"test-client-secret", "test-verify-token", "s3cr3t-segment"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("error leaked a secret value: %v", err)
+		}
+	}
+}
+
+func TestAllMissingVariablesAreReportedTogether(t *testing.T) {
+	t.Parallel()
+
+	_, err := Load(env(map[string]string{
+		"STRAVA_CLIENT_ID":    "",
+		"STRAVA_VERIFY_TOKEN": "",
+	}))
+	if err == nil {
+		t.Fatal("Load = nil error, want error")
+	}
+
+	for _, name := range []string{"STRAVA_CLIENT_ID", "STRAVA_VERIFY_TOKEN"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error %v does not mention %s", err, name)
+		}
+	}
+}
+
+func TestOptionalOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(map[string]string{
+		"PORT":              "9090",
+		"PROCESS_DELAY":     "90s",
+		"STRAVA_ATHLETE_ID": "4242",
+		"BASE_URL":          "https://namer.example.invalid/",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Port != 9090 {
+		t.Errorf("Port = %d", cfg.Port)
+	}
+	if cfg.ProcessDelay != 90*time.Second {
+		t.Errorf("ProcessDelay = %v", cfg.ProcessDelay)
+	}
+	if cfg.AthleteID != 4242 {
+		t.Errorf("AthleteID = %d", cfg.AthleteID)
+	}
+	if cfg.BaseURL != "https://namer.example.invalid" {
+		t.Errorf("BaseURL = %q, want the trailing slash trimmed", cfg.BaseURL)
+	}
+}
+
+func TestWebhookPathSecretIsNormalised(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(map[string]string{"WEBHOOK_PATH_SECRET": "/wrapped/"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.WebhookPath != "/webhook/wrapped" {
+		t.Errorf("WebhookPath = %q", cfg.WebhookPath)
+	}
+}
+
+func TestInvalidOptionalValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		key  string
+		raw  string
+	}{
+		{name: "port not a number", key: "PORT", raw: "http"},
+		{name: "port out of range", key: "PORT", raw: "70000"},
+		{name: "port zero", key: "PORT", raw: "0"},
+		{name: "athlete id not a number", key: "STRAVA_ATHLETE_ID", raw: "me"},
+		{name: "athlete id negative", key: "STRAVA_ATHLETE_ID", raw: "-1"},
+		{name: "delay not a duration", key: "PROCESS_DELAY", raw: "ten minutes"},
+		{name: "delay negative", key: "PROCESS_DELAY", raw: "-5m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := Load(env(map[string]string{tt.key: tt.raw})); err == nil {
+				t.Fatalf("Load with %s=%q = nil error, want error", tt.key, tt.raw)
+			}
+		})
+	}
+}
+
+func TestErrMissingMessage(t *testing.T) {
+	t.Parallel()
+
+	err := &ErrMissing{Name: "SOME_VAR"}
+	if !strings.Contains(err.Error(), "SOME_VAR") {
+		t.Errorf("Error() = %q", err.Error())
+	}
+}
