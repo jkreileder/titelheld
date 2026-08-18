@@ -30,8 +30,11 @@
   and queues activities. It acknowledges before it touches the store.
 - `internal/server/` assembles the HTTP surface: health, the one-time OAuth
   bootstrap, and the webhook at its unguessable path.
-- `cmd/strava-namer/` is the Cloud Run entry point and nothing else; `run` takes
-  its environment as a parameter so it is testable.
+- `internal/app/` wires everything together and serves; it takes `getenv` as a
+  parameter so the whole service can be started in a test.
+- `internal/logsafe/` neutralises untrusted text before it reaches a log. Use it
+  for anything from a webhook body, Strava, a geocoder or an LLM.
+- `cmd/strava-namer/` is a shim with no behaviour, and is excluded from coverage.
 
 Not built yet: the Firestore store, geocoding, the prompt builder and LLM
 interface, the sweep and writer, and the Cloud Run deployment configuration.

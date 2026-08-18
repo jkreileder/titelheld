@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func env(overrides map[string]string) func(string) string {
 func TestRunRejectsBadConfiguration(t *testing.T) {
 	t.Parallel()
 
-	err := run(t.Context(), quietLogger(), env(map[string]string{"STRAVA_CLIENT_ID": ""}))
+	err := Run(t.Context(), quietLogger(), env(map[string]string{"STRAVA_CLIENT_ID": ""}))
 	if err == nil {
 		t.Fatal("run without a client ID = nil error, want error")
 	}
@@ -71,7 +71,7 @@ func TestRunStartsAndStops(t *testing.T) {
 
 	done := make(chan error, 1)
 
-	go func() { done <- run(ctx, quietLogger(), env(map[string]string{"PORT": freePort(t)})) }()
+	go func() { done <- Run(ctx, quietLogger(), env(map[string]string{"PORT": freePort(t)})) }()
 
 	time.Sleep(50 * time.Millisecond)
 	cancel()
@@ -96,7 +96,7 @@ func TestRunAcceptsWritesEnabled(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		done <- run(ctx, quietLogger(), env(map[string]string{"DRY_RUN": "0", "PORT": freePort(t)}))
+		done <- Run(ctx, quietLogger(), env(map[string]string{"DRY_RUN": "0", "PORT": freePort(t)}))
 	}()
 
 	time.Sleep(50 * time.Millisecond)

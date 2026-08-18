@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jkreileder/strava-namer/internal/config"
+	"github.com/jkreileder/strava-namer/internal/logsafe"
 	"github.com/jkreileder/strava-namer/internal/strava"
 )
 
@@ -121,7 +122,7 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
 	if authErr := query.Get("error"); authErr != "" {
-		s.logger.Warn("authorization declined", "error", authErr)
+		s.logger.Warn("authorization declined", "error", logsafe.String(authErr))
 		http.Error(w, "authorization declined", http.StatusBadRequest)
 
 		return
@@ -146,7 +147,7 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 	// weeks later.
 	granted := strava.ParseScopes(query.Get("scope"))
 	if missing := missingScopes(granted); len(missing) > 0 {
-		s.logger.Error("authorization incomplete", "missing_scopes", missing)
+		s.logger.Error("authorization incomplete", "missing_scopes", logsafe.Strings(missing))
 		http.Error(w,
 			"authorization is missing required scopes: "+strings.Join(missing, ", "),
 			http.StatusBadRequest)
@@ -167,7 +168,7 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if missing := token.MissingScopes(); len(missing) > 0 {
-		s.logger.Error("token is missing required scopes", "missing_scopes", missing)
+		s.logger.Error("token is missing required scopes", "missing_scopes", logsafe.Strings(missing))
 		http.Error(w, "token is missing required scopes", http.StatusBadRequest)
 
 		return
@@ -189,7 +190,7 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("authorization complete",
-		"athlete_id", token.AthleteID, "scopes", token.Scopes)
+		"athlete_id", token.AthleteID, "scopes", logsafe.Strings(token.Scopes))
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

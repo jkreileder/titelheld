@@ -510,3 +510,21 @@ func TestValidationResponseWriteFailureIsLogged(t *testing.T) {
 	// Must not panic when the client has gone away mid-handshake.
 	handler.ServeHTTP(&brokenWriter{}, request)
 }
+
+// A writer that cannot flush must not stop the event being queued.
+func TestIntakeWithoutFlushSupportStillQueues(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 0)
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhook/secret",
+		strings.NewReader(`{"object_type":"activity","object_id":5,"aspect_type":"create","owner_id":7}`))
+
+	handler.ServeHTTP(&brokenWriter{}, request)
+
+	count, _ := memory.Len(t.Context())
+	if count != 1 {
+		t.Errorf("queue holds %d entries, want 1", count)
+	}
+}

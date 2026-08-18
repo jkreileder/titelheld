@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jkreileder/strava-namer/internal/logsafe"
 	"github.com/jkreileder/strava-namer/internal/store"
 )
 
@@ -191,9 +192,12 @@ func (h *Handler) intake(w http.ResponseWriter, r *http.Request) {
 
 // process decides what to do with an acknowledged event.
 func (h *Handler) process(ctx context.Context, event Event) {
+	// object_type and aspect_type come straight off the wire, so they are
+	// sanitised before they reach the log. The numeric fields cannot carry a
+	// forged line.
 	log := h.logger.With(
-		"object_type", event.ObjectType,
-		"aspect_type", event.AspectType,
+		"object_type", logsafe.String(event.ObjectType),
+		"aspect_type", logsafe.String(event.AspectType),
 		"activity_id", event.ObjectID,
 		"owner_id", event.OwnerID,
 	)
@@ -240,7 +244,8 @@ func (h *Handler) process(ctx context.Context, event Event) {
 	}
 
 	if named {
-		log.Info("event ignored", "reason", "activity already named", "title", title)
+		log.Info("event ignored", "reason", "activity already named",
+			"title", logsafe.String(title))
 
 		return
 	}

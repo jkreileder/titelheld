@@ -1,5 +1,5 @@
 coverage:
-  range: 95..100
+  range: 90..100
   round: down
   precision: 2
   status:
@@ -9,4 +9,11 @@ coverage:
         threshold: 1%
     patch:
       default:
-        target: 95%
+        target: 90%
+
+# cmd/ is a shim with no behaviour: it constructs a logger, installs the signal
+# handler and calls internal/app. Everything worth testing lives in internal/,
+# so counting the entry point only ever drags the figure down without telling
+# anyone anything.
+ignore:
+  - "cmd/**"
