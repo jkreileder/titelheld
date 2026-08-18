@@ -147,6 +147,18 @@
             ]
         },
         {
+            "automerge": false,
+            "description": "Renovate disables indirect Go updates by default, which would leave most of the Firestore dependency tree - grpc, the google-api stack, golang.org/x/* - unwatched. They are compiled into the binary and are exactly where govulncheck findings surface, so they are updated too, grouped and reviewed by hand like the direct ones.",
+            "enabled": true,
+            "groupName": "go modules (indirect)",
+            "matchDepTypes": [
+                "indirect"
+            ],
+            "matchManagers": [
+                "gomod"
+            ]
+        },
+        {
             "automerge": true,
             "description": "Patch releases of the Go toolchain itself (the `go` directive in go.mod) carry the security fixes; the spec requires staying on latest stable. Minors and majors fall through to manual review.",
             "matchDatasources": [
@@ -179,6 +191,9 @@
                 "digest"
             ]
         }
+    ],
+    "postUpdateOptions": [
+        "gomodTidy"
     ],
     "semanticCommits": "enabled",
     "timezone": "Europe/Berlin",
