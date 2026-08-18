@@ -28,6 +28,8 @@ everything that should stay boring untouched.
 - [Development](#development)
 - [Security and privacy](#security-and-privacy)
 - [Geography](#geography)
+- [Local development](#local-development)
+- [Infrastructure](#infrastructure)
 - [Attribution](#attribution)
 - [License](#license)
 
@@ -193,6 +195,120 @@ out-and-back does not spend the budget geocoding its start twice.
 
 The naming layer receives a `geo.Summary`, whose fields are all names. There is nowhere in it to
 put a coordinate.
+
+## Local development
+
+Secrets reach the process from the environment, never from the working tree. Keep them in a
+file **outside the repository** so they survive `make clean`, a re-clone and a rename:
+
+```sh
+mkdir -p ~/.config/titelheld && chmod 700 ~/.config/titelheld
+$EDITOR ~/.config/titelheld/env      # export STRAVA_CLIENT_ID=… etc.
+chmod 600 ~/.config/titelheld/env
+
+set -a; . ~/.config/titelheld/env; set +a
+go run ./cmd/titelheld
+```
+
+A gitignored `.env` inside the repository would also work, and `.gitignore` covers one, but it
+is reachable by `git add -f`, by editor plugins and by folder-sync tools — and `git clean -xdf`
+would delete it. `make clean` excludes `/.env` for that reason, but the file outside the tree
+is the safer habit.
+
+`DRY_RUN` defaults to on. Nothing can write to Strava until it is set to an explicit falsy
+value, and the deployed service keeps it on.
+
+## Infrastructure
+
+Everything in GCP is Terraform, under [`infra/`](infra). `make tf-check` runs exactly what CI
+runs: `terraform fmt -check`, `validate` and `tflint`.
+
+**CI never applies.** It formats, validates and lints; applies are run by hand.
+
+### What Terraform manages
+
+| Resource                | Notes                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------- |
+| Enabled APIs            | Run, Firestore, Secret Manager, Scheduler, Artifact Registry, IAM, STS, budgets                |
+| Firestore database      | Native mode, `europe-west3`, named `titelheld`, delete protection on                           |
+| Runtime service account | `roles/datastore.user` conditioned to the one database, plus accessor on five named secrets    |
+| Deploy service account  | Assumed by CI through WIF; deploys revisions, reads no data                                    |
+| Workload Identity pool  | Scoped to `repo:jkreileder/titelheld`, both in the provider condition and in the principal set |
+| Secret Manager          | Secret **resources only** — no versions, no values                                             |
+| Artifact Registry       | Images CI pushes and Cloud Run runs                                                            |
+| Cloud Run service       | min 0 / max 1, `ignore_changes` on the image so CI owns revisions                              |
+| Cloud Scheduler         | The sweep, at an unguessable path and requiring an OIDC token                                  |
+| Budget alert            | €1, at 50/90/100%                                                                              |
+
+Secret **values** never appear in code, in tfvars, or in state. They are added out of band,
+once each.
+
+### One-time bootstrap
+
+Terraform cannot create the project it stores its own state in, so this part is by hand:
+
+```sh
+PROJECT=titelheld-XXXXXX          # project IDs are globally unique; pick a free one
+BILLING=$(gcloud billing accounts list --format='value(name)' | head -1)
+REGION=europe-west3
+
+gcloud projects create "$PROJECT"
+gcloud billing projects link "$PROJECT" --billing-account="$BILLING"
+
+# Terraform needs these two before it can enable the rest.
+gcloud services enable cloudresourcemanager.googleapis.com serviceusage.googleapis.com   --project="$PROJECT"
+
+# State bucket: private, versioned, and never public. State holds no secret
+# values, but it does hold every service-account email, the WIF pool and the
+# generated sweep path.
+gcloud storage buckets create "gs://${PROJECT}-tfstate"   --project="$PROJECT" --location="$REGION"   --uniform-bucket-level-access --public-access-prevention
+gcloud storage buckets update "gs://${PROJECT}-tfstate" --versioning
+```
+
+The budget lives on the **billing account**, not the project, so applying it needs
+billing-account permission that project-level roles do not grant. If `terraform apply` fails on
+`google_billing_budget`, grant yourself `roles/billing.costsManager` on the billing account, or
+create the budget by hand and leave that resource out.
+
+### Apply order
+
+```sh
+cd infra
+terraform init -backend-config="bucket=${PROJECT}-tfstate"
+cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_account
+terraform apply
+```
+
+Then, in this order:
+
+1. **Add the secret values**, once each. They never pass through Terraform:
+
+   ```sh
+   for name in strava-client-id strava-client-secret strava-verify-token                webhook-path-secret llm-api-key; do
+     printf %s "$VALUE" | gcloud secrets versions add "$name" --data-file=- --project="$PROJECT"
+   done
+   ```
+
+   Generate `webhook-path-secret` rather than choosing it: `openssl rand -hex 16`.
+
+2. **Set `base_url` and apply again.** Cloud Run mints the URL, so it cannot be known on the
+   first apply. Read it from the `service_url` output, put it in `terraform.tfvars`, and
+   re-apply.
+
+3. **Wire CI.** Set the repository variables from the outputs:
+
+   ```sh
+   gh variable set WIF_PROVIDER --body "$(terraform output -raw workload_identity_provider)"
+   gh variable set DEPLOY_SERVICE_ACCOUNT --body "$(terraform output -raw deploy_service_account)"
+   gh variable set GCP_PROJECT --body "$PROJECT"
+   gh variable set GCP_REGION --body "$REGION"
+   ```
+
+   Until those exist, the deploy job skips rather than failing.
+
+4. **Deploy.** The first Cloud Run revision runs a placeholder image
+   (`us-docker.pkg.dev/cloudrun/container/hello`) purely so the service can exist. A release
+   replaces it, and Terraform ignores the image from then on.
 
 ## Attribution
 

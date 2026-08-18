@@ -1,0 +1,7 @@
+# Keep the build context to what the binary actually needs.
+*
+!cmd/
+!internal/
+!go.mod
+!go.sum
+!LICENSE

@@ -86,6 +86,19 @@
             "matchStrings": [
                 "version: (?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
             ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "terraform-linters/tflint-ruleset-google",
+            "description": "Keep the tflint google ruleset current; Renovate has no manager for tflint plugin pins.",
+            "extractVersionTemplate": "^v(?<version>.*)$",
+            "managerFilePatterns": [
+                "infra/.tflint.hcl"
+            ],
+            "matchStrings": [
+                "version\\s*=\\s*\"(?<currentValue>[0-9.]+)\"\\s*\\n\\s*source\\s*=\\s*\"github.com/terraform-linters/tflint-ruleset-google\""
+            ]
         }
     ],
     "extends": [
@@ -189,6 +202,26 @@
             ],
             "matchUpdateTypes": [
                 "digest"
+            ]
+        },
+        {
+            "automerge": false,
+            "description": "Terraform providers and modules: grouped, manual review. They describe live infrastructure, and a plan is only as trustworthy as the provider that produced it.",
+            "groupName": "terraform",
+            "matchManagers": [
+                "terraform"
+            ]
+        },
+        {
+            "automerge": true,
+            "description": "Container base images for the runtime image: grouped and automerged on minor/patch, because CI builds and starts the image on every pull request.",
+            "groupName": "docker",
+            "matchManagers": [
+                "dockerfile"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
             ]
         }
     ],

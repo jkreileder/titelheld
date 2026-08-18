@@ -12,8 +12,10 @@ coverage.out
 coverage.html
 test-results.xml
 
-# Local credentials and environment
+# Local credentials and environment. Secrets belong outside the tree entirely
+# (see the README); these entries exist so a stray file cannot be committed.
 .env
+.envrc
 *.pem
 service-account*.json
 
@@ -33,3 +35,14 @@ service-account*.json
 
 # Build handoff/spec: personal working document, not published.
 HANDOFF.md
+
+# Terraform. The lock file is committed on purpose: it is what pins provider
+# versions for everyone. State never lands here — it lives in the GCS bucket.
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+override.tf
+override.tf.json
