@@ -446,3 +446,123 @@ func appendValue(dst []byte, value int) []byte {
 
 	return append(dst, byte(shifted+63))
 }
+
+// A byte outside the polyline alphabet, or a coordinate the format cannot
+// legitimately carry, must fail rather than decode into a plausible position
+// that then gets geocoded.
+func TestDecodePolylineRejectsOutOfRangeInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		encoded string
+	}{
+		{name: "byte above the alphabet", encoded: "_p~iF~ps|U\x7f\x7f"},
+		{name: "utf-8 continuation byte", encoded: "_p~iF~ps|U\xc3\xa9"},
+		{name: "value wider than the format allows", encoded: "\xfe\xfe\xfe\xfe\xfe\xfe\xfe\xfe"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := DecodePolyline(tt.encoded); !errors.Is(err, ErrBadPolyline) {
+				t.Errorf("DecodePolyline(%q) = %v, want ErrBadPolyline", tt.encoded, err)
+			}
+		})
+	}
+}
+
+func TestDecodePolylineRejectsImpossibleCoordinates(t *testing.T) {
+	t.Parallel()
+
+	// A latitude past the pole, encoded legitimately.
+	encoded := encodeForTest([]Point{{Lat: 91, Lon: 0}})
+
+	if _, err := DecodePolyline(encoded); !errors.Is(err, ErrBadPolyline) {
+		t.Errorf("DecodePolyline of a 91° latitude = %v, want ErrBadPolyline", err)
+	}
+
+	// The extremes themselves stay valid.
+	if _, err := DecodePolyline(encodeForTest([]Point{{Lat: 90, Lon: 180}})); err != nil {
+		t.Errorf("DecodePolyline of the coordinate extremes = %v, want nil", err)
+	}
+}
+
+// Eight samples 110 m apart are eight distinct cache keys that routinely
+// resolve to one town. Along must list it once.
+func TestAlongIsDeduplicatedByName(t *testing.T) {
+	t.Parallel()
+
+	reverser := &fakeReverser{}
+	describer, _ := newDescriber(t, reverser)
+
+	points := []Point{
+		{Lat: 0.000, Lon: 0.000},
+		{Lat: 0.010, Lon: 0.005},
+		{Lat: 0.020, Lon: -0.005},
+		{Lat: 0.030, Lon: 0.010},
+	}
+
+	summary, err := describer.Describe(t.Context(), encodeForTest(points))
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+
+	// The fake resolves everything to Musterdorf, which is also the start.
+	if len(summary.Along) != 0 {
+		t.Errorf("Along = %+v, want empty — every sample resolved to the start's name", summary.Along)
+	}
+
+	if names := summary.Names(); len(names) != 1 || names[0] != "Musterdorf" {
+		t.Errorf("Names() = %v, want [Musterdorf]", names)
+	}
+}
+
+// A country-only answer contributes Country but is not a place "along" the
+// route, and Empty() must not claim geography that Names() cannot produce.
+func TestCountryOnlyAnswersAreNotListedAsPlaces(t *testing.T) {
+	t.Parallel()
+
+	reverser := &fakeReverser{places: map[string]store.Place{}}
+	describer, _ := newDescriber(t, reverser)
+
+	// Every key resolves to a country and nothing else.
+	reverser.places = map[string]store.Place{}
+
+	points := []Point{{Lat: 0, Lon: 0}, {Lat: 0.01, Lon: 0.01}}
+	for _, p := range SamplePoints(points) {
+		reverser.places[CacheKey(p)] = store.Place{Country: "Testland"}
+	}
+
+	summary, err := describer.Describe(t.Context(), encodeForTest(points))
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+
+	if len(summary.Along) != 0 {
+		t.Errorf("Along = %+v, want empty — no sample had a name", summary.Along)
+	}
+	if summary.Country != "Testland" {
+		t.Errorf("Country = %q, want Testland", summary.Country)
+	}
+	if len(summary.Names()) != 0 {
+		t.Errorf("Names() = %v, want none", summary.Names())
+	}
+	// Non-empty is correct here: the country did resolve. The doc comment says
+	// so, and callers that need names must check Names().
+	if summary.Empty() {
+		t.Error("Empty() = true, but a country resolved")
+	}
+}
+
+func TestEmptySummary(t *testing.T) {
+	t.Parallel()
+
+	if !(Summary{}).Empty() {
+		t.Error("a zero Summary must be empty")
+	}
+	if (Summary{Country: "Testland"}).Empty() {
+		t.Error("a summary with a country is not empty")
+	}
+}

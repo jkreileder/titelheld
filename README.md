@@ -172,10 +172,17 @@ and reverse-geocodes them through Nominatim.
 
 Two properties are enforced in code rather than documented and hoped for:
 
-- **No points of interest.** Only administrative names (village, town, city, suburb, district,
-  county) and named natural features reach the output. Nominatim's `amenity`, `shop`, `office`,
-  `building`, `road` and `house_number` are dropped, and the free-text `display_name` is never
-  read at all. A title can therefore never reveal the athlete's doctor — or their front door.
+- **No points of interest.** Only administrative names (village, hamlet, town, city,
+  municipality, suburb, district, county) and named natural features reach the output.
+  Nominatim's `amenity`, `shop`, `office`, `building`, `road` and `house_number` are dropped,
+  and the free-text `display_name` is never read at all. A title can therefore never reveal the
+  athlete's doctor — or their front door.
+
+  "Natural feature" is an allow-list of specific OSM *types* — rivers, lakes, woods, peaks,
+  ridges — not of categories. A category is far too coarse: OSM's `leisure` covers
+  `fitness_centre` and `swimming_pool`, and `place` covers `isolated_dwelling`, which on a rural
+  route is the athlete's own house. The naming fallback fires only when no settlement resolved,
+  which is exactly where those would otherwise be the only name on offer.
 - **At most one request per second**, per Nominatim's usage policy, enforced by the client
   itself so no caller can exceed it by looping. The configured interval is clamped *up* to one
   second; a config file may not relax the policy.

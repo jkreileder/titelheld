@@ -166,7 +166,9 @@ func TestNaturalFeatureUsedWhenNoSettlementResolves(t *testing.T) {
 		t.Fatalf("Reverse: %v", err)
 	}
 
-	if place.Name != "Musterfluss" || place.Kind != "waterway" {
+	// Kind is the specific feature type from the allow-list, never the coarse
+	// category and never text the server chose.
+	if place.Name != "Musterfluss" || place.Kind != "river" {
 		t.Errorf("place = %+v, want the river", place)
 	}
 }
@@ -439,5 +441,111 @@ func TestSleepContext(t *testing.T) {
 	}
 	if err := sleepContext(t.Context(), time.Millisecond); err != nil {
 		t.Errorf("sleepContext = %v", err)
+	}
+}
+
+// The naming fallback fires only when no settlement resolved — the rural,
+// isolated-start case where a gym or a solitary dwelling is the only named
+// object Nominatim has. That is precisely where it must not name anything.
+func TestNaturalFallbackRejectsPlacesAndLeisure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "a gym is not a natural feature",
+			body: `{"category":"leisure","type":"fitness_centre","name":"Fitness Musterstadt",
+				"address":{"country":"Testland"}}`,
+		},
+		{
+			name: "a sports centre is not a natural feature",
+			body: `{"category":"leisure","type":"sports_centre","name":"Sportzentrum Muster",
+				"address":{"country":"Testland"}}`,
+		},
+		{
+			name: "a swimming pool is not a natural feature",
+			body: `{"category":"leisure","type":"swimming_pool","name":"Musterbad",
+				"address":{"country":"Testland"}}`,
+		},
+		{
+			name: "a solitary dwelling is where the athlete lives",
+			body: `{"category":"place","type":"isolated_dwelling","name":"Musterhof",
+				"address":{"country":"Testland"}}`,
+		},
+		{
+			name: "a farm is a dwelling too",
+			body: `{"category":"place","type":"farm","name":"Musterbauernhof",
+				"address":{"country":"Testland"}}`,
+		},
+		{
+			name: "a house is the front door",
+			body: `{"category":"place","type":"house","name":"Haus Muster",
+				"address":{"country":"Testland"}}`,
+		},
+		{
+			name: "an unknown natural type is not trusted",
+			body: `{"category":"natural","type":"tree_of_unknown_kind","name":"Musterbaum",
+				"address":{"country":"Testland"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			place, err := newNominatim(t, jsonServer(t, tt.body)).Reverse(t.Context(), testPoint)
+			if err != nil {
+				t.Fatalf("Reverse: %v", err)
+			}
+
+			if place.Name != "" {
+				t.Errorf("Name = %q, want empty — this is not a natural feature", place.Name)
+			}
+			if place.Country != "Testland" {
+				t.Errorf("Country = %q, want the country to survive", place.Country)
+			}
+		})
+	}
+}
+
+// The features that are allowed keep working, and Kind is always one of our own
+// constants rather than text the server chose.
+func TestNaturalFeaturesThatAreAllowed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		body     string
+		wantName string
+		wantKind string
+	}{
+		{
+			body:     `{"category":"waterway","type":"river","name":"Musterfluss","address":{}}`,
+			wantName: "Musterfluss", wantKind: "river",
+		},
+		{
+			body:     `{"category":"natural","type":"peak","name":"Musterberg","address":{}}`,
+			wantName: "Musterberg", wantKind: "peak",
+		},
+		{
+			body:     `{"category":"natural","type":"water","name":"Mustersee","address":{}}`,
+			wantName: "Mustersee", wantKind: "water",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.wantKind, func(t *testing.T) {
+			t.Parallel()
+
+			place, err := newNominatim(t, jsonServer(t, tt.body)).Reverse(t.Context(), testPoint)
+			if err != nil {
+				t.Fatalf("Reverse: %v", err)
+			}
+
+			if place.Name != tt.wantName || place.Kind != tt.wantKind {
+				t.Errorf("place = %+v, want %s/%s", place, tt.wantName, tt.wantKind)
+			}
+		})
 	}
 }

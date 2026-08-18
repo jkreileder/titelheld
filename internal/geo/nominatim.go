@@ -51,14 +51,42 @@ var addressFields = []struct {
 // regionFields name the coarser container, most specific first.
 var regionFields = []string{"state_district", "state", "region", "province"}
 
-// naturalCategories are Nominatim categories whose name may be used directly:
-// rivers, lakes, forests, hills. A route along the Donau should be able to say
-// so.
-var naturalCategories = map[string]string{
-	"waterway": "waterway",
-	"natural":  "natural",
-	"leisure":  "",
-	"place":    "place",
+// naturalFeatures are the only (category, type) pairs whose *name* may be used
+// directly, when no settlement resolved. A route along the Donau should be able
+// to say so.
+//
+// This is an allow-list of types, not of categories, because a category is far
+// too coarse to be safe. OSM's "leisure" covers fitness_centre, sports_centre,
+// swimming_pool and golf_course; "place" covers isolated_dwelling — literally
+// "a solitary dwelling", which on a rural route is the athlete's house and the
+// only named object Nominatim has to offer. Admitting either category would
+// make the naming fallback fire exactly where it is most dangerous.
+//
+// The value is the Kind reported, so Kind is always one of these fixed strings
+// and never text the server chose.
+var naturalFeatures = map[string]map[string]string{
+	"waterway": {
+		"river":  "river",
+		"stream": "stream",
+		"canal":  "canal",
+	},
+	"natural": {
+		"water":     "water",
+		"bay":       "bay",
+		"strait":    "strait",
+		"wood":      "wood",
+		"forest":    "forest",
+		"heath":     "heath",
+		"moor":      "moor",
+		"grassland": "grassland",
+		"beach":     "beach",
+		"cliff":     "cliff",
+		"peak":      "peak",
+		"ridge":     "ridge",
+		"valley":    "valley",
+		"saddle":    "saddle",
+		"glacier":   "glacier",
+	},
 }
 
 // reverseResponse is the subset of Nominatim's jsonv2 reply that is read.
@@ -254,18 +282,16 @@ func placeFrom(payload reverseResponse) store.Place {
 		}
 	}
 
-	// A named natural feature — a river, a lake, a forest — is worth having and
-	// reveals nothing about the athlete. It is only trusted when the category
-	// says so; a name attached to an amenity or a shop is discarded.
+	// A named natural feature — a river, a lake, a ridge — is worth having and
+	// reveals nothing about the athlete. It is trusted only when both the
+	// category and the type are on the allow-list; a name attached to anything
+	// else, including a gym or a solitary dwelling, is discarded.
 	if place.Name == "" && payload.Name != "" {
-		if kind, ok := naturalCategories[payload.Category]; ok {
-			place.Name = payload.Name
-
-			if kind == "" {
-				kind = payload.Type
+		if types, ok := naturalFeatures[payload.Category]; ok {
+			if kind, ok := types[payload.Type]; ok {
+				place.Name = payload.Name
+				place.Kind = kind
 			}
-
-			place.Kind = kind
 		}
 	}
 

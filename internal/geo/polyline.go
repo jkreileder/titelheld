@@ -22,6 +22,13 @@ var ErrBadPolyline = errors.New("geo: malformed polyline")
 // uses, which is what Strava's summary_polyline is encoded with.
 const polylinePrecision = 1e5
 
+// The encoded alphabet, and the widest value the format can legitimately carry.
+const (
+	minPolylineByte = 63
+	maxPolylineByte = 126
+	maxValueBits    = 30
+)
+
 // DecodePolyline decodes Google's encoded polyline format.
 //
 // Implemented here rather than pulled in as a dependency: the algorithm is
@@ -47,10 +54,19 @@ func DecodePolyline(encoded string) ([]Point, error) {
 		lon += deltaLon
 		index = next
 
-		points = append(points, Point{
+		point := Point{
 			Lat: float64(lat) / polylinePrecision,
 			Lon: float64(lon) / polylinePrecision,
-		})
+		}
+
+		// A corrupt polyline that still decodes would otherwise be geocoded:
+		// Nominatim would answer for the wrong hemisphere, and a place name
+		// from nowhere near the ride would become eligible for a title.
+		if point.Lat < -90 || point.Lat > 90 || point.Lon < -180 || point.Lon > 180 {
+			return nil, fmt.Errorf("%w: coordinate %v is out of range", ErrBadPolyline, point)
+		}
+
+		points = append(points, point)
 	}
 
 	return points, nil
@@ -69,15 +85,24 @@ func decodeValue(encoded string, index int) (int, int, error) {
 			return 0, 0, fmt.Errorf("%w: truncated value", ErrBadPolyline)
 		}
 
-		if encoded[index] < 63 {
-			return 0, 0, fmt.Errorf("%w: byte %q is out of range", ErrBadPolyline, encoded[index])
+		// The encoding maps each 5-bit chunk to a byte in 63..126. Anything
+		// outside that is not polyline — a UTF-8 continuation byte from a
+		// mis-transcoded field, say — and folding it in would silently produce
+		// a plausible-looking coordinate.
+		if encoded[index] < minPolylineByte || encoded[index] > maxPolylineByte {
+			return 0, 0, fmt.Errorf("%w: byte %q is outside the polyline alphabet",
+				ErrBadPolyline, encoded[index])
 		}
 
-		if shift >= 32 {
+		// Six chunks carry 30 bits, which is more than a coordinate delta
+		// needs (±180e5 fits in 26 bits once zig-zagged). Checking before the
+		// chunk is consumed is what stops a seventh being folded in and
+		// truncated by the shift.
+		if shift >= maxValueBits {
 			return 0, 0, fmt.Errorf("%w: value does not terminate", ErrBadPolyline)
 		}
 
-		chunk = encoded[index] - 63
+		chunk = encoded[index] - minPolylineByte
 		index++
 		result |= uint32(chunk&0x1f) << shift
 		shift += 5

@@ -36,7 +36,9 @@ type Summary struct {
 	// Start is where the route began.
 	Start store.Place
 
-	// Along holds the other resolved places, in sample order, deduplicated.
+	// Along holds the other resolved places, in sample order, deduplicated by
+	// name. Every entry has a name: a sample that resolved only to a country
+	// contributes to Country and Region and is not listed here.
 	Along []store.Place
 
 	// Region and Country are the coarsest containers seen on the route.
@@ -44,9 +46,13 @@ type Summary struct {
 	Country string
 }
 
-// Empty reports whether nothing was resolved.
+// Empty reports whether nothing at all was resolved.
+//
+// A summary can be non-empty and still have no names — a ride over open water
+// resolves to a country and nothing else. Callers that need names should use
+// [Summary.Names] and check its length rather than inferring it from here.
 func (s Summary) Empty() bool {
-	return s.Start.Empty() && len(s.Along) == 0
+	return s.Start.Empty() && len(s.Along) == 0 && s.Region == "" && s.Country == ""
 }
 
 // Names returns every distinct place name, start first. This is what a prompt
@@ -120,8 +126,9 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 	samples := SamplePoints(points)
 
 	var (
-		summary Summary
-		seen    = make(map[string]struct{}, len(samples))
+		summary   Summary
+		seen      = make(map[string]struct{}, len(samples))
+		seenNames = make(map[string]struct{}, len(samples))
 	)
 
 	for index, point := range samples {
@@ -145,18 +152,34 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 			continue
 		}
 
-		if index == 0 {
-			summary.Start = place
-		} else {
-			summary.Along = append(summary.Along, place)
-		}
-
 		if summary.Region == "" {
 			summary.Region = place.Region
 		}
 		if summary.Country == "" {
 			summary.Country = place.Country
 		}
+
+		if place.Name == "" {
+			continue
+		}
+
+		if index == 0 {
+			summary.Start = place
+			seenNames[place.Name] = struct{}{}
+
+			continue
+		}
+
+		// Deduplicate on the resolved name, not just on the cache key. Eight
+		// samples 110 m apart are eight distinct keys that routinely resolve to
+		// one town, and a caller iterating Along would otherwise render it
+		// eight times.
+		if _, ok := seenNames[place.Name]; ok {
+			continue
+		}
+
+		seenNames[place.Name] = struct{}{}
+		summary.Along = append(summary.Along, place)
 	}
 
 	return summary, nil
