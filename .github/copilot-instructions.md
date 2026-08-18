@@ -26,10 +26,16 @@
   API calls this service makes (`activity.go`).
 - `internal/store/` holds the persistence interfaces and an in-memory
   implementation. The Firestore one lands with the store phase.
+- `internal/webhook/` serves the subscription handshake and the event intake,
+  and queues activities. It acknowledges before it touches the store.
+- `internal/server/` assembles the HTTP surface: health, the one-time OAuth
+  bootstrap, and the webhook at its unguessable path.
+- `cmd/strava-namer/` is the Cloud Run entry point and nothing else; `run` takes
+  its environment as a parameter so it is testable.
 
-Not built yet: the webhook, the Firestore store, geocoding, the prompt builder
-and LLM interface, the sweep and writer, and the Cloud Run deployment
-configuration.
+Not built yet: the Firestore store, geocoding, the prompt builder and LLM
+interface, the sweep and writer, and the Cloud Run deployment configuration.
+No Strava push subscription has been created yet.
 
 ## Design Rules That Are Not Negotiable
 

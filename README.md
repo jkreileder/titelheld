@@ -4,12 +4,14 @@
 A single-athlete backend service that gives Strava activities context-aware titles — and leaves
 everything that should stay boring untouched.
 
-> **Status: early construction.** The classifier, the configuration loader, the store
-> interfaces and the Strava client with OAuth are implemented. The webhook, the Firestore
-> store, geocoding, the prompt builder, the LLM interface, the sweep and writer, and the Cloud
-> Run deployment are not built yet, and there is no runnable binary. Operator documentation
-> (GCP setup, Strava app registration, OAuth bootstrap, config schema, franchises) lands with
-> those phases.
+> **Status: early construction.** The classifier, configuration, store interfaces, Strava
+> client with OAuth, and the webhook with its delay-queue enqueue are implemented, and the
+> binary runs. The Firestore store, geocoding, the prompt builder, the LLM interface, the
+> sweep and writer, and the Cloud Run deployment are not built yet. Operator documentation
+> (GCP setup, Strava app registration, config schema, franchises) lands with those phases.
+>
+> **No Strava push subscription exists yet**, and state is in memory only, so a restart
+> forgets the OAuth token.
 >
 > **Nothing can write to Strava yet.** Dry run is the default and the zero value throughout;
 > see [Writes and dry run](#writes-and-dry-run).
@@ -19,6 +21,7 @@ everything that should stay boring untouched.
 - [The classifier](#the-classifier)
 - [Writes and dry run](#writes-and-dry-run)
 - [Configuration](#configuration)
+- [HTTP surface](#http-surface)
 - [Development](#development)
 - [Security and privacy](#security-and-privacy)
 - [License](#license)
@@ -39,6 +42,9 @@ An activity is only ever renamed. Sport type, gear and descriptions are never to
 | `internal/config/`     | Runtime configuration, read from the environment only.           |
 | `internal/store/`      | Persistence interfaces plus an in-memory implementation.         |
 | `internal/strava/`     | The only package that talks to Strava: OAuth, client, API calls. |
+| `internal/webhook/`    | Subscription handshake, event intake, delay-queue enqueue.       |
+| `internal/server/`     | HTTP surface: health, OAuth bootstrap, webhook route.            |
+| `cmd/strava-namer/`    | Cloud Run entry point; wiring only.                              |
 
 Core logic lives in packages with no HTTP, Firestore or Strava-SDK imports, so a future
 multi-athlete deployment needs no changes there.
@@ -99,6 +105,29 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `PROCESS_DELAY`        | no       | `10m`   | How long to wait before naming               |
 | `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
 | `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
+
+## HTTP surface
+
+| Route                    | Purpose                                                     |
+| ------------------------ | ----------------------------------------------------------- |
+| `GET /healthz`           | Liveness check                                              |
+| `GET /auth`              | Starts the one-time authorization; redirects to Strava      |
+| `GET /auth/callback`     | Completes it, verifies the granted scopes, stores the token |
+| `GET /webhook/<secret>`  | Strava's subscription validation handshake                  |
+| `POST /webhook/<secret>` | Event intake; queues the activity after the delay           |
+
+The webhook is mounted at its full secret path, so guessing the prefix but not the segment is
+a 404 from the router. The verify token is compared in constant time over hashes, so neither
+its contents nor its length leak.
+
+Events are acknowledged before the queue is written, which is the order Strava's two-second
+budget assumes. A delivery that is never acknowledged is retried, and the queue is idempotent,
+so the ordering costs nothing that is not already handled.
+
+The delay is served by a **Cloud Scheduler sweep** rather than Cloud Tasks: it needs no second
+GCP service and no client library, a failed activity simply stays queued until the next sweep
+instead of needing its own retry policy, and ten-minute precision makes the scheduler's coarse
+granularity irrelevant. This phase only enqueues; the sweep endpoint lands with the writer.
 
 ## Development
 
