@@ -209,16 +209,11 @@ func DefaultConfig() Config {
 }
 
 // withDefaults fills unset fields so a zero Config behaves like DefaultConfig
-// rather than treating every ride as a sport ride.
+// rather than treating every ride as a sport ride. ToWorkTitle and ToHomeTitle
+// are deliberately not filled in: empty means the match is disabled.
 func (c Config) withDefaults() Config {
 	if c.ZwiftMode == "" {
 		c.ZwiftMode = ZwiftKeep
-	}
-	if c.ToWorkTitle == "" {
-		c.ToWorkTitle = defaultToWorkTitle
-	}
-	if c.ToHomeTitle == "" {
-		c.ToHomeTitle = defaultToHomeTitle
 	}
 	if c.SportMinDistanceMeters <= 0 {
 		c.SportMinDistanceMeters = defaultSportMinDistanceMeters
@@ -264,7 +259,6 @@ const (
 	reasonErrandsDisabled = "errand naming disabled"
 	reasonSportRide       = "sport ride"
 	reasonBelowThresholds = "ride below the sport-ride thresholds"
-	reasonUnclassified    = "unclassified"
 )
 
 // neverNamedSportTypes are tier-1 sport types: never named, whatever else is
@@ -373,27 +367,37 @@ func Classify(activity Activity, cfg Config) Decision {
 			Reason: reasonSportRide,
 		}
 
-	case TierNone:
-		return Decision{
-			Tier:   tier,
-			Action: ActionSkip,
-			Reason: noTierReason(activity),
-		}
+	case TierNone, TierSkip:
+		// Nothing more to decide: fall through to the skip below. TierSkip is
+		// returned earlier by Classify and cannot arrive here, but naming it
+		// keeps this switch exhaustive over Tier.
+	}
 
-	default:
-		return Decision{Tier: tier, Action: ActionSkip, Reason: reasonUnclassified}
+	return Decision{
+		Tier:   tier,
+		Action: ActionSkip,
+		Reason: noTierReason(activity),
 	}
 }
 
 // classifyTier walks tiers 2 to 5. Tier 1 is handled by [Classify] before this
 // is reached.
 func classifyTier(activity Activity, cfg Config) (Tier, Direction) {
-	if activity.SportType == sportTypeVirtualRide || activity.Trainer {
+	// A virtual ride is virtual whatever else is true of it.
+	if activity.SportType == sportTypeVirtualRide {
 		return TierVirtual, DirectionNone
 	}
 
+	// Every tier below describes a ride, so anything else stops here. Without
+	// this the trainer flag alone would claim a treadmill run for the virtual
+	// tier and, under ZwiftLLMIndoor, put an indoor-cycling title on it.
 	if _, ok := rideSportTypes[activity.SportType]; !ok {
 		return TierNone, DirectionNone
+	}
+
+	// A ride recorded on a trainer: fictional coordinates, never geocoded.
+	if activity.Trainer {
+		return TierVirtual, DirectionNone
 	}
 
 	if direction, ok := commuteDirection(activity, cfg); ok {
@@ -404,12 +408,18 @@ func classifyTier(activity Activity, cfg Config) (Tier, Direction) {
 		return TierErrand, DirectionNone
 	}
 
-	if activity.DistanceMeters >= cfg.SportMinDistanceMeters ||
-		activity.MovingTimeSeconds >= cfg.SportMinMovingTimeSeconds {
+	if meetsSportThresholds(activity, cfg) {
 		return TierSportRide, DirectionNone
 	}
 
 	return TierNone, DirectionNone
+}
+
+// meetsSportThresholds reports whether a ride is big enough for tier 5.
+// Meeting either threshold is enough.
+func meetsSportThresholds(activity Activity, cfg Config) bool {
+	return activity.DistanceMeters >= cfg.SportMinDistanceMeters ||
+		activity.MovingTimeSeconds >= cfg.SportMinMovingTimeSeconds
 }
 
 // commuteDirection recognises a work commute.
@@ -419,14 +429,26 @@ func classifyTier(activity Activity, cfg Config) (Tier, Direction) {
 // the actual safety net: when ActivityFix failed there is no title, no commute
 // tag and no gear to key on, and the start/end positions are all that is left.
 func commuteDirection(activity Activity, cfg Config) (Direction, bool) {
-	switch strings.TrimSpace(activity.Name) {
-	case cfg.ToWorkTitle:
+	// A title ActivityFix wrote is direct evidence, and is taken at face value
+	// whatever the ride's size. An empty configured title disables its match,
+	// which would otherwise swallow every untitled activity.
+	title := strings.TrimSpace(activity.Name)
+
+	switch {
+	case cfg.ToWorkTitle != "" && title == cfg.ToWorkTitle:
 		return DirectionToWork, true
-	case cfg.ToHomeTitle:
+	case cfg.ToHomeTitle != "" && title == cfg.ToHomeTitle:
 		return DirectionToHome, true
 	}
 
-	// ActivityFix rule 3: any ride ending at work is a ride to work.
+	// The geofence path only infers a commute, so it is bounded by the tier-5
+	// thresholds: a long ride that merely happens to finish at work is a sport
+	// ride, not a commute.
+	if meetsSportThresholds(activity, cfg) {
+		return DirectionNone, false
+	}
+
+	// ActivityFix rule 3: a ride ending at work is a ride to work.
 	if activity.End != nil && cfg.Work.contains(*activity.End) {
 		return DirectionToWork, true
 	}

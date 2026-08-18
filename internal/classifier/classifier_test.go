@@ -248,6 +248,38 @@ func TestClassify(t *testing.T) {
 			wantReason: "title is not a Strava default",
 		},
 
+		{
+			name: "tier 2 is ride-scoped: a treadmill run is not a virtual ride",
+			activity: Activity{
+				Name:              "Morning Run",
+				SportType:         "Run",
+				Trainer:           true,
+				DistanceMeters:    8000,
+				MovingTimeSeconds: 2700,
+			},
+			cfg: func() Config {
+				cfg := geofencedConfig()
+				cfg.ZwiftMode = ZwiftLLMIndoor
+
+				return cfg
+			}(),
+			wantTier:   TierNone,
+			wantAction: ActionSkip,
+			wantReason: "sport type Run has no tier rule",
+		},
+		{
+			name: "tier 2 is ride-scoped: a trainer-flagged walk stays in tier 1",
+			activity: Activity{
+				Name:      "Evening Walk",
+				SportType: "Walk",
+				Trainer:   true,
+			},
+			cfg:        geofencedConfig(),
+			wantTier:   TierSkip,
+			wantAction: ActionSkip,
+			wantReason: "sport type Walk is never named",
+		},
+
 		// --- Tier 3: commute safety net. ---
 		{
 			name: "tier 3: ActivityFix failed, ride ends at work",
@@ -313,10 +345,10 @@ func TestClassify(t *testing.T) {
 			wantReason: "commute-tagged errand",
 		},
 		{
-			// Documented consequence of first-match-wins: tier 3 has no
-			// distance or duration ceiling, so a long sport ride that happens
-			// to finish inside the work geofence is treated as a commute.
-			name: "tier 3 outranks tier 5: a 45 km ride ending at work is a commute",
+			// The geofence path only infers a commute, so it is capped by the
+			// tier-5 thresholds: a long ride that merely finishes at work is a
+			// sport ride.
+			name: "tier 5 outranks tier 3: a 45 km ride ending at work is not a commute",
 			activity: Activity{
 				Name:              "Afternoon Ride",
 				SportType:         "GravelRide",
@@ -325,11 +357,43 @@ func TestClassify(t *testing.T) {
 				Start:             elsewhere,
 				End:               atWork,
 			},
+			cfg:        geofencedConfig(),
+			wantTier:   TierSportRide,
+			wantAction: ActionLLM,
+			wantReason: "sport ride",
+		},
+		{
+			// ... but an ActivityFix-written title is direct evidence and is
+			// taken at face value whatever the ride's size.
+			name: "tier 3: a long ride ActivityFix titled is still a commute",
+			activity: Activity{
+				Name:              "Zur Arbeit",
+				SportType:         "Ride",
+				DistanceMeters:    45000,
+				MovingTimeSeconds: 7200,
+				Start:             elsewhere,
+				End:               atWork,
+			},
 			cfg:           geofencedConfig(),
 			wantTier:      TierCommute,
-			wantAction:    ActionCommuteTemplate,
+			wantAction:    ActionSkip,
 			wantDirection: DirectionToWork,
-			wantReason:    "commute safety net (to_work)",
+			wantReason:    "title is not a Strava default",
+		},
+		{
+			name: "tier 3: a ride just over the distance threshold ending at work",
+			activity: Activity{
+				Name:              "Morning Ride",
+				SportType:         "Ride",
+				DistanceMeters:    15000,
+				MovingTimeSeconds: 1800,
+				Start:             atHome,
+				End:               atWork,
+			},
+			cfg:        geofencedConfig(),
+			wantTier:   TierSportRide,
+			wantAction: ActionLLM,
+			wantReason: "sport ride",
 		},
 		{
 			name: "tier 3: a ride that merely passes near work is not a commute",
@@ -345,6 +409,46 @@ func TestClassify(t *testing.T) {
 			wantTier:   TierSportRide,
 			wantAction: ActionLLM,
 			wantReason: "sport ride",
+		},
+
+		{
+			name: "tier 3: an empty commute title does not match an untitled activity",
+			activity: Activity{
+				Name:              "",
+				SportType:         "Ride",
+				DistanceMeters:    42000,
+				MovingTimeSeconds: 6000,
+			},
+			cfg: func() Config {
+				cfg := geofencedConfig()
+				cfg.ToWorkTitle = ""
+				cfg.ToHomeTitle = ""
+
+				return cfg
+			}(),
+			wantTier:   TierSportRide,
+			wantAction: ActionSkip,
+			wantReason: "title is not a Strava default",
+		},
+		{
+			name: "tier 3: clearing the commute titles disables the title match",
+			activity: Activity{
+				Name:              "Zur Arbeit",
+				SportType:         "Ride",
+				Commute:           true,
+				DistanceMeters:    5406,
+				MovingTimeSeconds: 922,
+			},
+			cfg: func() Config {
+				cfg := geofencedConfig()
+				cfg.ToWorkTitle = ""
+				cfg.ToHomeTitle = ""
+
+				return cfg
+			}(),
+			wantTier:   TierErrand,
+			wantAction: ActionSkip,
+			wantReason: "title is not a Strava default",
 		},
 
 		// --- Tier 4: errands. ---
@@ -565,6 +669,20 @@ func TestClassify(t *testing.T) {
 			wantTier:   TierNone,
 			wantAction: ActionSkip,
 			wantReason: "ride below the sport-ride thresholds",
+		},
+		{
+			name: "zero config: commute titles are not filled in, so no tier 3",
+			activity: Activity{
+				Name:              "Nach Hause",
+				SportType:         "Ride",
+				Commute:           true,
+				DistanceMeters:    5836,
+				MovingTimeSeconds: 1062,
+			},
+			cfg:        Config{},
+			wantTier:   TierErrand,
+			wantAction: ActionSkip,
+			wantReason: "title is not a Strava default",
 		},
 		{
 			name: "zero config: virtual rides are kept",
