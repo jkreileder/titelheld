@@ -1,0 +1,56 @@
+name: pre-commit hooks
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:  # no base filter: stacked PRs target another PR's branch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prek:
+    name: Run pre-commit hooks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          # prek pulls hook environments: PyPI (the python hooks), npm + nodejs
+          # (markdownlint), Go proxy + sumdb storage (gitleaks, actionlint),
+          # GitHub, and the Go toolchain itself (go.dev redirect -> dl.google.com
+          # tarball) — actionlint is built from source against a newer Go than
+          # the runner preinstalls.
+          allowed-endpoints: >
+            dl.google.com:443
+            files.pythonhosted.org:443
+            github.com:443
+            go.dev:443
+            nodejs.org:443
+            proxy.golang.org:443
+            pypi.org:443
+            raw.githubusercontent.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run prek
+        uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+        env:
+          # The local Go hooks duplicate the dedicated go.yaml workflow, which
+          # runs them against a properly set-up toolchain.
+          SKIP: gofmt,go-vet,golangci-lint

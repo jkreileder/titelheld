@@ -1,0 +1,35 @@
+# Local configuration (may hold athlete config or tokens)
+config.yaml
+config.local.yaml
+
+# Go build output
+/bin
+/dist
+*.exe
+
+# Test and coverage reports
+coverage.out
+coverage.html
+test-results.xml
+
+# Local credentials and environment
+.env
+*.pem
+service-account*.json
+
+# OS artifacts
+.DS_Store
+
+# IDE and editor files
+.idea
+*.swp
+*~
+\#*#
+.#*
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.claude/settings.local.json
+
+# Build handoff/spec: personal working document, not published.
+HANDOFF.md

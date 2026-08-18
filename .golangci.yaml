@@ -1,0 +1,76 @@
+# golangci-lint configuration.
+#
+# A broad default rule set rather than a hand-picked handful, with exclusions
+# justified in place. The pinned version lives in the workflow and in the
+# Makefile so CI and the local hook cannot disagree.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - exhaustive
+    - gocritic
+    - goconst
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - perfsprint
+    - prealloc
+    - revive
+    - testifylint
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+
+  settings:
+    exhaustive:
+      # Switches over Tier/Action/Direction carry a defensive default; that is
+      # the intended completeness signal.
+      default-signifies-exhaustive: true
+    goconst:
+      # Stringer methods on Tier, Action and Direction legitimately share these
+      # short labels; folding them into one constant would couple three
+      # unrelated enums together.
+      ignore-string-values:
+        - '^(none|skip|unknown)$'
+    revive:
+      rules:
+        - name: exported
+    gosec:
+      excludes:
+        # G115 (integer overflow on conversion) fires on Strava's int fields;
+        # revisit if a conversion is actually introduced.
+        - G115
+
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go$
+        linters:
+          - goconst
+          - gosec
+      # defaults.go is a data table of Strava's default-title vocabulary.
+      # Repeated words there are the data, not a missing constant.
+      - path: internal/classifier/defaults\.go$
+        linters:
+          - goconst
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/jkreileder/strava-namer
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,153 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "automergeStrategy": "squash",
+    "customManagers": [
+        {
+            "customType": "regex",
+            "datasourceTemplate": "go",
+            "depNameTemplate": "github.com/golangci/golangci-lint/v2",
+            "description": "Keep the golangci-lint version pinned in the Makefile current - it is run via `go run <module>@<version>`, so no standard manager sees it.",
+            "managerFilePatterns": [
+                "Makefile"
+            ],
+            "matchStrings": [
+                "GOLANGCI_LINT_VERSION := (?<currentValue>v[^\\s]+)"
+            ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "go",
+            "depNameTemplate": "github.com/golangci/golangci-lint/v2",
+            "description": "Keep the golangci-lint version passed to golangci/golangci-lint-action in step with the Makefile pin.",
+            "managerFilePatterns": [
+                ".github/workflows/go.yaml"
+            ],
+            "matchStrings": [
+                "\\n\\s+version: (?<currentValue>v[0-9][^\\s]*)"
+            ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "go",
+            "depNameTemplate": "golang.org/x/vuln",
+            "description": "Keep the govulncheck version pinned in the Makefile current - it is run via `go run <module>@<version>`, so no standard manager sees it.",
+            "managerFilePatterns": [
+                "Makefile"
+            ],
+            "matchStrings": [
+                "GOVULNCHECK_VERSION := (?<currentValue>v[^\\s]+)"
+            ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "go",
+            "depNameTemplate": "golang.org/x/vuln",
+            "description": "Keep the govulncheck version used by the workflow in step with the Makefile pin.",
+            "managerFilePatterns": [
+                ".github/workflows/go.yaml"
+            ],
+            "matchStrings": [
+                "govulncheck@(?<currentValue>v[^\\s]+)"
+            ]
+        }
+    ],
+    "extends": [
+        "config:best-practices",
+        ":gitSignOff",
+        "schedule:earlyMondays",
+        "schedule:automergeDaily",
+        ":enablePreCommit"
+    ],
+    "internalChecksFilter": "strict",
+    "labels": [
+        "dependencies"
+    ],
+    "minimumReleaseAge": "3 days",
+    "osvVulnerabilityAlerts": true,
+    "packageRules": [
+        {
+            "automerge": true,
+            "description": "Group GitHub Actions minor/patch into one PR; majors get their own PR.",
+            "groupName": "github-actions",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
+            ]
+        },
+        {
+            "automerge": true,
+            "description": "Group all pre-commit hook updates into one automerged PR - lint/validate-only tooling that never ships and is fully CI-gated.",
+            "groupName": "pre-commit",
+            "matchManagers": [
+                "pre-commit"
+            ]
+        },
+        {
+            "automerge": true,
+            "description": "Go dev tooling run via `go run <module>@<version>` (golangci-lint, govulncheck): never shipped, fully CI-gated.",
+            "groupName": "go-tooling",
+            "matchManagers": [
+                "custom.regex"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
+            ]
+        },
+        {
+            "automerge": false,
+            "description": "Runtime Go module dependencies: grouped, manual review. This service writes to a live Strava account, so a dependency bump is never unattended.",
+            "groupName": "go modules",
+            "matchManagers": [
+                "gomod"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
+            ]
+        },
+        {
+            "automerge": true,
+            "description": "Patch releases of the Go toolchain itself (the `go` directive in go.mod) carry the security fixes; the spec requires staying on latest stable. Minors and majors fall through to manual review.",
+            "matchDatasources": [
+                "golang-version"
+            ],
+            "matchDepNames": [
+                "go"
+            ],
+            "matchUpdateTypes": [
+                "patch"
+            ]
+        },
+        {
+            "automerge": true,
+            "description": "Automerge digest-only refreshes and initial digest pins (actions + images).",
+            "groupName": "digests",
+            "matchUpdateTypes": [
+                "digest",
+                "pin"
+            ]
+        },
+        {
+            "automerge": false,
+            "description": "GitHub Actions digest refreshes are reviewed by hand: minimumReleaseAge cannot hold them back. The github-tags datasource ages a digest against the matched version's original release date, so an action tag force-pushed to new commits clears the 3-day check immediately and would otherwise automerge within hours.",
+            "groupName": "github-actions-digests",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "matchUpdateTypes": [
+                "digest"
+            ]
+        }
+    ],
+    "semanticCommits": "enabled",
+    "timezone": "Europe/Berlin",
+    "vulnerabilityAlerts": {
+        "labels": [
+            "security"
+        ]
+    }
+}
