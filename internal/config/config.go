@@ -207,6 +207,15 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 
+	// Failing closed: a database named without a project would otherwise start
+	// cleanly on the in-memory store and drop the rotated refresh token at the
+	// first restart — the one failure this package exists to prevent.
+	if cfg.FirestoreDatabase != "" && cfg.FirestoreProject == "" {
+		errs = append(errs, errors.New(
+			"config: "+EnvFirestoreDatabase+" is set but "+EnvFirestoreProject+
+				" is not; refusing to fall back to the in-memory store"))
+	}
+
 	writesEnabled, err := parseWritesEnabled(getenv(EnvDryRun))
 	if err != nil {
 		errs = append(errs, err)

@@ -340,3 +340,22 @@ func TestFirestoreConfiguration(t *testing.T) {
 		t.Errorf("firestore config = %q/%q", cfg.FirestoreProject, cfg.FirestoreDatabase)
 	}
 }
+
+// A database named without a project would otherwise start cleanly on the
+// in-memory store and drop the rotated refresh token at the first restart.
+func TestFirestoreDatabaseWithoutProjectIsRejected(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(map[string]string{"FIRESTORE_DATABASE": "titelheld"}))
+	if err == nil {
+		t.Fatal("Load with a database but no project = nil error, want error")
+	}
+
+	if !strings.Contains(err.Error(), EnvFirestoreProject) {
+		t.Errorf("error %v does not name %s", err, EnvFirestoreProject)
+	}
+
+	if cfg.PersistentStore() {
+		t.Error("a rejected config reported a persistent store")
+	}
+}

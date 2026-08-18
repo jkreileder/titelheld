@@ -78,15 +78,27 @@ jobs:
             gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators@sha256:25300472f1fa63b4df0e0c3a5dd67bdc6774b39f6dd440605e520a6d04ae0f26 \
             gcloud emulators firestore start --host-port=0.0.0.0:8080
 
-          for _ in $(seq 1 60); do
-            if (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
-              echo "emulator accepting connections"
+          # Wait for the emulator to say it is running, not for the port to be
+          # bound. Docker's userland proxy binds the published port the moment
+          # the container starts, so a TCP probe succeeds immediately and the
+          # test step then races the emulator's ~15 s JVM startup — losing
+          # intermittently, in a way that looks unrelated to the change.
+          for _ in $(seq 1 90); do
+            if docker logs firestore-emulator 2>&1 | grep -q "Dev App Server is now running"; then
+              echo "emulator ready"
               exit 0
             fi
+
+            if [ -z "$(docker ps -q -f name=firestore-emulator)" ]; then
+              echo "::error::the Firestore emulator container exited"
+              docker logs firestore-emulator
+              exit 1
+            fi
+
             sleep 2
           done
 
-          echo "::error::the Firestore emulator never came up"
+          echo "::error::the Firestore emulator never became ready"
           docker logs firestore-emulator
           exit 1
 

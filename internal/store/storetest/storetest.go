@@ -37,6 +37,7 @@ func Suite(t *testing.T, newStore Factory) {
 		"EnqueueIsIdempotent":        enqueueIsIdempotent,
 		"DueRespectsTheDeadline":     dueRespectsTheDeadline,
 		"DueIsOrderedOldestFirst":    dueIsOrderedOldestFirst,
+		"DueBreaksTiesConsistently":  dueBreaksTiesConsistently,
 		"RemoveIsForgiving":          removeIsForgiving,
 		"QueueKeyedByAthlete":        queueKeyedByAthlete,
 		"NamedLogRoundTrip":          namedLogRoundTrip,
@@ -212,6 +213,36 @@ func dueIsOrderedOldestFirst(t *testing.T, s store.Store) {
 	for i := 1; i < len(due); i++ {
 		if due[i].ProcessAfter.Before(due[i-1].ProcessAfter) {
 			t.Fatalf("Due is not ordered oldest first: %v", due)
+		}
+	}
+}
+
+// Two webhook events in the same second share a deadline. Firestore's own
+// tie-break compares document IDs as strings, which puts 1000 before 200, so
+// this is the one dimension where the implementations could quietly disagree.
+func dueBreaksTiesConsistently(t *testing.T, s store.Store) {
+	for _, id := range []int64{1000, 200, 30} {
+		if _, err := s.Enqueue(t.Context(), store.Pending{
+			AthleteID: 1, ActivityID: id, ProcessAfter: Now,
+		}); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+	}
+
+	due, err := s.Due(t.Context(), Now)
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+
+	if len(due) != 3 {
+		t.Fatalf("Due returned %d entries, want 3 (%v)", len(due), ids(due))
+	}
+
+	want := []int64{30, 200, 1000}
+	for i, expected := range want {
+		if due[i].ActivityID != expected {
+			t.Fatalf("Due = %v, want %v — ties order numerically, not as strings",
+				ids(due), want)
 		}
 	}
 }

@@ -115,9 +115,18 @@ func (m *Memory) Due(_ context.Context, now time.Time) ([]Pending, error) {
 		}
 	}
 
-	slices.SortFunc(due, byDeadline)
+	SortPending(due)
 
 	return due, nil
+}
+
+// SortPending orders pending entries the way every implementation must return
+// them: oldest deadline first, ties broken numerically on the activity ID.
+//
+// Exported because Firestore has to apply it too — its own tie-break compares
+// document IDs as strings, which orders 1000 before 200.
+func SortPending(due []Pending) {
+	slices.SortFunc(due, byDeadline)
 }
 
 // byDeadline orders pending entries oldest deadline first, falling back to the

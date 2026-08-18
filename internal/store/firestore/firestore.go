@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -235,6 +236,13 @@ func (s *Store) Enqueue(ctx context.Context, pending store.Pending) (bool, error
 // The inequality and the ordering are on the same field, so Firestore serves
 // this from the automatic single-field index — no composite index to create or
 // keep in sync with the code.
+//
+// The result is re-sorted in memory before it is returned. Firestore breaks
+// ties on the document ID as a *string*, so two events queued in the same
+// second would come back as ["1-1000", "1-200"] while the in-memory store
+// orders them numerically. Sorting here costs nothing at this size and is what
+// makes "same semantics" true for ties as well as for deadlines; the
+// alternative, a secondary OrderBy, would need a composite index.
 func (s *Store) Due(ctx context.Context, now time.Time) ([]store.Pending, error) {
 	snapshots, err := s.collection(CollectionPending).
 		Where("process_after", "<=", now.UTC()).
@@ -260,6 +268,8 @@ func (s *Store) Due(ctx context.Context, now time.Time) ([]store.Pending, error)
 			ProcessAfter: doc.ProcessAfter.UTC(),
 		})
 	}
+
+	store.SortPending(due)
 
 	return due, nil
 }
@@ -423,6 +433,13 @@ const maxDocIDBytes = 1500
 
 func isSafeDocID(key string) bool {
 	if key == "" || key == "." || key == ".." || len(key) > maxDocIDBytes {
+		return false
+	}
+
+	// Firestore reserves IDs matching __.*__ and rejects them outright. The
+	// safe set below accepts "_", so this has to be excluded explicitly or a
+	// key like __proto__ would be passed straight through and fail the write.
+	if strings.HasPrefix(key, "__") && strings.HasSuffix(key, "__") && len(key) >= 4 {
 		return false
 	}
 

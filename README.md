@@ -7,8 +7,8 @@ everything that should stay boring untouched.
 *Titelheld* is German for the character a piece is named after: the one in the title role.
 
 > **Status: early construction.** The classifier, configuration, the store (in-memory *and*
-> Firestore), the Strava client with OAuth, the webhook with its delay-queue enqueue, and
-> geocoding are implemented, and the binary runs. The prompt builder, the LLM interface, the
+> Firestore), the Strava client with OAuth, and the webhook with its delay-queue enqueue are
+> implemented, and the binary runs. Geocoding, the prompt builder, the LLM interface, the
 > sweep and writer, and the Cloud Run deployment are not built yet. Operator documentation
 > (GCP setup, Strava app registration, config schema, franchises) lands with those phases.
 >

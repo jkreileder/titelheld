@@ -278,3 +278,32 @@ func TestCorruptDocumentsAreReported(t *testing.T) {
 		t.Error("AnyToken over a corrupt token = nil error, want a decode failure")
 	}
 }
+
+// Firestore rejects document IDs matching __.*__ outright, and the safe set
+// accepts "_", so the reserved form has to be excluded explicitly.
+func TestReservedDocumentIDFormIsEscaped(t *testing.T) {
+	requireEmulator(t)
+
+	firestoreStore := newStore(t)
+
+	keys := []string{"__proto__", "__a__", "____", "__", "_x_", "a__b"}
+
+	for i, key := range keys {
+		place := store.Place{Name: "Musterdorf" + strconv.Itoa(i), Kind: "village"}
+
+		if err := firestoreStore.SavePlace(t.Context(), key, place); err != nil {
+			t.Fatalf("SavePlace(%q): %v", key, err)
+		}
+	}
+
+	for i, key := range keys {
+		cached, ok, err := firestoreStore.Place(t.Context(), key)
+		if err != nil || !ok {
+			t.Fatalf("Place(%q) = %+v, %v, %v", key, cached, ok, err)
+		}
+
+		if want := "Musterdorf" + strconv.Itoa(i); cached.Name != want {
+			t.Errorf("Place(%q).Name = %q, want %q", key, cached.Name, want)
+		}
+	}
+}
