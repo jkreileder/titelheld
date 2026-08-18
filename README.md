@@ -7,8 +7,8 @@ everything that should stay boring untouched.
 *Titelheld* is German for the character a piece is named after: the one in the title role.
 
 > **Status: early construction.** The classifier, configuration, the store (in-memory *and*
-> Firestore), the Strava client with OAuth, and the webhook with its delay-queue enqueue are
-> implemented, and the binary runs. Geocoding, the prompt builder, the LLM interface, the
+> Firestore), the Strava client with OAuth, the webhook with its delay-queue enqueue, and
+> geocoding are implemented, and the binary runs. The prompt builder, the LLM interface, the
 > sweep and writer, and the Cloud Run deployment are not built yet. Operator documentation
 > (GCP setup, Strava app registration, config schema, franchises) lands with those phases.
 >
@@ -27,6 +27,7 @@ everything that should stay boring untouched.
 - [HTTP surface](#http-surface)
 - [Development](#development)
 - [Security and privacy](#security-and-privacy)
+- [Geography](#geography)
 - [Attribution](#attribution)
 - [License](#license)
 
@@ -162,6 +163,36 @@ Install the pre-commit hooks with `pre-commit install` or `prek install`.
   [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 - Activity titles are never derived from reverse-geocoded points of interest; only an explicit
   whitelist and generic area templates are used.
+
+## Geography
+
+A route becomes place names, never coordinates. `internal/geo` decodes Strava's summary
+polyline, samples the start, the four bounding-box extremes and three evenly spaced waypoints,
+and reverse-geocodes them through Nominatim.
+
+Two properties are enforced in code rather than documented and hoped for:
+
+- **No points of interest.** Only administrative names (village, hamlet, town, city,
+  municipality, suburb, district, county) and named natural features reach the output.
+  Nominatim's `amenity`, `shop`, `office`, `building`, `road` and `house_number` are dropped,
+  and the free-text `display_name` is never read at all. A title can therefore never reveal the
+  athlete's doctor — or their front door.
+
+  "Natural feature" is an allow-list of specific OSM *types* — rivers, lakes, woods, peaks,
+  ridges — not of categories. A category is far too coarse: OSM's `leisure` covers
+  `fitness_centre` and `swimming_pool`, and `place` covers `isolated_dwelling`, which on a rural
+  route is the athlete's own house. The naming fallback fires only when no settlement resolved,
+  which is exactly where those would otherwise be the only name on offer.
+- **At most one request per second**, per Nominatim's usage policy, enforced by the client
+  itself so no caller can exceed it by looping. The configured interval is clamped *up* to one
+  second; a config file may not relax the policy.
+
+Results are cached in the store under a coordinate rounded to three decimals (~110 m), which is
+also the only place a coordinate is persisted. Samples are deduplicated by that key, so an
+out-and-back does not spend the budget geocoding its start twice.
+
+The naming layer receives a `geo.Summary`, whose fields are all names. There is nowhere in it to
+put a coordinate.
 
 ## Attribution
 

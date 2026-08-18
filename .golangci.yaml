@@ -61,6 +61,11 @@ linters:
       - path: internal/classifier/defaults\.go$
         linters:
           - goconst
+      # nominatim.go carries the same kind of table: the allow-list of address
+      # keys that may become part of a title.
+      - path: internal/geo/nominatim\.go$
+        linters:
+          - goconst
 
 formatters:
   enable:

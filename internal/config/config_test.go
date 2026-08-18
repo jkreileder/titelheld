@@ -359,3 +359,28 @@ func TestFirestoreDatabaseWithoutProjectIsRejected(t *testing.T) {
 		t.Error("a rejected config reported a persistent store")
 	}
 }
+
+func TestNominatimUserAgent(t *testing.T) {
+	t.Parallel()
+
+	// Nominatim blocks anonymous clients, so there is always an identity.
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.NominatimUserAgent != "titelheld/1.0 (+https://namer.example.invalid)" {
+		t.Errorf("default User-Agent = %q", cfg.NominatimUserAgent)
+	}
+
+	cfg, err = Load(env(map[string]string{
+		"NOMINATIM_USER_AGENT": "titelheld (jk@example.invalid)",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.NominatimUserAgent != "titelheld (jk@example.invalid)" {
+		t.Errorf("User-Agent = %q, want the override", cfg.NominatimUserAgent)
+	}
+}

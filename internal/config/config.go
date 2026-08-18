@@ -78,6 +78,12 @@ type Config struct {
 	// only appropriate for local runs.
 	FirestoreProject  string
 	FirestoreDatabase string
+
+	// NominatimUserAgent identifies this service to Nominatim, whose usage
+	// policy requires a real, contactable identity. It defaults to the service
+	// name plus BaseURL, which is contactable enough for a single-athlete
+	// deployment; override it to point at a mailbox.
+	NominatimUserAgent string
 }
 
 // PersistentStore reports whether state will survive a restart.
@@ -112,6 +118,7 @@ const (
 	EnvPort               = "PORT"
 	EnvFirestoreProject   = "FIRESTORE_PROJECT"
 	EnvFirestoreDatabase  = "FIRESTORE_DATABASE"
+	EnvNominatimUserAgent = "NOMINATIM_USER_AGENT"
 )
 
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.
@@ -214,6 +221,13 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New(
 			"config: "+EnvFirestoreDatabase+" is set but "+EnvFirestoreProject+
 				" is not; refusing to fall back to the in-memory store"))
+	}
+
+	cfg.NominatimUserAgent = strings.TrimSpace(getenv(EnvNominatimUserAgent))
+	if cfg.NominatimUserAgent == "" && cfg.BaseURL != "" {
+		// Nominatim blocks anonymous clients, so there is always an identity;
+		// the deployment URL is the most useful default available here.
+		cfg.NominatimUserAgent = "titelheld/1.0 (+" + cfg.BaseURL + ")"
 	}
 
 	writesEnabled, err := parseWritesEnabled(getenv(EnvDryRun))
