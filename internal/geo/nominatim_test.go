@@ -383,7 +383,7 @@ func TestReverseErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("cancelled context stops the wait", func(t *testing.T) {
+	t.Run("canceled context stops the wait", func(t *testing.T) {
 		t.Parallel()
 
 		server := jsonServer(t, `{"address":{"village":"Musterdorf"}}`)
@@ -413,7 +413,7 @@ func TestReverseErrors(t *testing.T) {
 		cancel()
 
 		if _, err := client.Reverse(ctx, testPoint); err == nil {
-			t.Error("Reverse with a cancelled context = nil error, want error")
+			t.Error("Reverse with a canceled context = nil error, want error")
 		}
 	})
 }
@@ -444,7 +444,7 @@ func TestSleepContext(t *testing.T) {
 	cancel()
 
 	if err := sleepContext(ctx, time.Hour); err == nil {
-		t.Error("sleepContext with a cancelled context = nil, want error")
+		t.Error("sleepContext with a canceled context = nil, want error")
 	}
 	if err := sleepContext(t.Context(), time.Millisecond); err != nil {
 		t.Errorf("sleepContext = %v", err)

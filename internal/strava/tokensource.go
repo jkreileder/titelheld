@@ -14,7 +14,7 @@ const refreshLeeway = 5 * time.Minute
 // StoredTokenSource hands out access tokens for one athlete, refreshing and
 // persisting them as needed.
 //
-// The mutex serialises refreshes within the process. That is sufficient because
+// The mutex serializes refreshes within the process. That is sufficient because
 // the service runs with max-instances=1; two instances refreshing concurrently
 // would race for the rotating refresh token, and the loser would hold a token
 // Strava has already invalidated.

@@ -65,7 +65,7 @@ func TestRunRejectsBadConfiguration(t *testing.T) {
 	}
 }
 
-// A cancelled context must bring the whole thing up and straight back down,
+// A canceled context must bring the whole thing up and straight back down,
 // which exercises the wiring end to end.
 func TestRunStartsAndStops(t *testing.T) {
 	t.Parallel()
@@ -85,7 +85,7 @@ func TestRunStartsAndStops(t *testing.T) {
 			t.Errorf("run = %v, want nil after a clean shutdown", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("run did not return after the context was cancelled")
+		t.Fatal("run did not return after the context was canceled")
 	}
 }
 
@@ -139,7 +139,7 @@ func TestRunOnFirestore(t *testing.T) {
 			t.Errorf("Run on Firestore = %v, want nil", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("Run did not return after the context was cancelled")
+		t.Fatal("Run did not return after the context was canceled")
 	}
 }
 

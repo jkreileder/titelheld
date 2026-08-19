@@ -430,7 +430,7 @@ func TestCancelledContextStopsRetrying(t *testing.T) {
 	cancel()
 
 	if _, err := client.GetActivity(ctx, 1); err == nil {
-		t.Fatal("GetActivity with a cancelled context = nil error, want error")
+		t.Fatal("GetActivity with a canceled context = nil error, want error")
 	}
 }
 
@@ -565,7 +565,7 @@ func TestSleepContextHonoursCancellation(t *testing.T) {
 	cancel()
 
 	if err := sleepContext(ctx, time.Hour); err == nil {
-		t.Error("sleepContext with a cancelled context = nil, want error")
+		t.Error("sleepContext with a canceled context = nil, want error")
 	}
 
 	if err := sleepContext(t.Context(), time.Millisecond); err != nil {

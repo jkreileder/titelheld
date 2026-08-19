@@ -541,7 +541,7 @@ func TestIntakeWithoutFlushSupportStillQueues(t *testing.T) {
 // The acknowledgement is flushed before the work starts, which lets the client
 // return and close the body — cancelling the request context. The queue write
 // must not ride on that context: Strava has already been told 200, so a
-// cancelled write would drop the activity with no retry.
+// canceled write would drop the activity with no retry.
 func TestIntakeSurvivesACancelledRequestContext(t *testing.T) {
 	t.Parallel()
 
