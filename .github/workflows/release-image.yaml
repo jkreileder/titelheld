@@ -148,9 +148,16 @@ jobs:
           # cache — the same hermetic argument as the cache-free build below.
           cache-binary: false
 
-      # No build cache. A release is built once, from a tag, and a hermetic
-      # commit-to-image chain is worth more here than the couple of minutes a
-      # warm cache would save.
+      # A release build is hermetic: nothing is restored from anywhere. There
+      # is no cache-from or cache-to, so no layer comes from a previous run;
+      # cache-binary is false above, so the builder binary is fetched fresh;
+      # and the Dockerfile's own `RUN --mount=type=cache` mounts start empty
+      # because each run boots its own buildkit container. What ships is built
+      # from the tagged commit and the pinned base images, and nothing else.
+      #
+      # Do not add a cache here for speed. The couple of minutes it would save
+      # is not worth breaking the commit-to-image chain the attestation below
+      # is a claim about.
       - name: Build and push the image
         id: build-and-push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
