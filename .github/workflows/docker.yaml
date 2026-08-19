@@ -41,17 +41,21 @@ jobs:
         with:
           disable-sudo: true
           egress-policy: block
-          # The base images and the Go module proxy, and nothing else. No
-          # registry to push to, no Google endpoints: this job cannot publish
-          # even if it wanted to.
+          # Pulling only: the two base images (gcr.io for distroless, the
+          # docker.io hosts and their CDNs for golang) and the Go module proxy.
+          # Artifact Registry and the Google credential endpoints are absent,
+          # so this job could not publish or authenticate even if it tried.
           allowed-endpoints: >
             *.actions.githubusercontent.com:443
             api.github.com:443
             auth.docker.io:443
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443
             gcr.io:443
+            index.docker.io:443
             github.com:443
             objects.githubusercontent.com:443
             production.cloudflare.docker.com:443
+            production.cloudfront.docker.com:443
             proxy.golang.org:443
             registry-1.docker.io:443
             release-assets.githubusercontent.com:443
