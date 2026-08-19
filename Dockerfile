@@ -1,26 +1,42 @@
-# Build stage. Pinned by digest like every other third-party artifact here;
-# Renovate keeps the pins current.
-FROM golang:1.26.6-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS build
+# syntax=docker/dockerfile:1.26.0@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# check=experimental=all;error=true
+
+# Cross-compiling on the build platform rather than emulating the target: Go
+# needs no toolchain in the target architecture, so emulation would only be
+# slower.
+
+# build compiles the static binary.
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.6-alpine3.24@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS build
+
+# TARGETOS is supplied by BuildKit and names the target operating system.
+ARG TARGETOS
+# TARGETARCH is supplied by BuildKit and names the target architecture.
+ARG TARGETARCH
 
 WORKDIR /src
 
-# Dependencies first, so a source-only change reuses the layer.
-COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+# Nothing is copied into the build stage. The sources are bind-mounted for the
+# duration of the command, so no layer holds them and the build context cannot
+# end up in an image; the module and build caches are mounts too, so a rebuild
+# reuses them without baking them in.
+#
+# CGO off and a static link, because the runtime image has no libc. -trimpath
+# and an empty build id keep the binary reproducible.
+RUN --mount=type=bind,target=/src \
+    --mount=type=cache,id=go-mod,target=/go/pkg/mod \
+    --mount=type=cache,id=go-build,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+    go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o /out/titelheld ./cmd/titelheld
 
-COPY . .
+# No shell, no package manager, no libc, no root user.
 
-# CGO off and a static link, because the runtime image has no libc.
-# -trimpath and an empty build id keep the binary reproducible.
-ENV CGO_ENABLED=0
-RUN go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o /out/titelheld ./cmd/titelheld
+# runtime holds the binary and nothing else.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6 AS runtime
 
-# Runtime stage: no shell, no package manager, no libc, and not root.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a
+# --link keeps this layer independent of the stages above it, so bumping the
+# base image does not invalidate it.
+COPY --link --from=build /out/titelheld /titelheld
 
-COPY --from=build /out/titelheld /titelheld
-
-# Cloud Run sets PORT; this is the documented default the service also uses.
 EXPOSE 8080
 
 USER nonroot:nonroot

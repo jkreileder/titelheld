@@ -1,7 +1,8 @@
-# Keep the build context to what the binary actually needs.
-*
-!cmd/
-!internal/
-!go.mod
-!go.sum
-!LICENSE
+# Deny everything, then allow only what the build actually reads. The build
+# bind-mounts the context rather than copying it, so this is what bounds it.
+**
+!/cmd
+!/internal
+!/go.mod
+!/go.sum
+!/LICENSE
