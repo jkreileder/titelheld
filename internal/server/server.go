@@ -291,7 +291,7 @@ func (s *Server) consumeState(state string) bool {
 	return s.now().Sub(issued) <= stateTTL
 }
 
-// Run serves until the context is cancelled, then shuts down gracefully.
+// Run serves until the context is canceled, then shuts down gracefully.
 func (s *Server) Run(ctx context.Context, addr string) error {
 	httpServer := &http.Server{
 		Addr:              addr,

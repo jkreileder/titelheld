@@ -49,3 +49,8 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Output of local security scans. Reports name file paths and quote source, and
+# a scan is a local artifact of one moment rather than something the repository
+# should carry.
+/security-scan/

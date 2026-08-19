@@ -30,7 +30,7 @@ jobs:
     name: Publish test results
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # A skipped or concurrency-cancelled run has no results worth publishing,
+    # A skipped or concurrency-canceled run has no results worth publishing,
     # and an empty check run only buries the real one. Failed runs still
     # publish: a red test run must report its results.
     if: ${{ github.event.workflow_run.conclusion != 'skipped' && github.event.workflow_run.conclusion != 'cancelled' }}

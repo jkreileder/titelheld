@@ -19,7 +19,7 @@ import (
 	"github.com/jkreileder/titelheld/internal/webhook"
 )
 
-// Run wires the packages together and serves until ctx is cancelled.
+// Run wires the packages together and serves until ctx is canceled.
 //
 // getenv is a parameter rather than a call to os.Getenv so the whole service
 // can be started in a test without touching the process environment.
