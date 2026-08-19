@@ -152,6 +152,12 @@ jobs:
           # this run gates on the result with nowhere to record an exception -
           # one bad match would mean a red run every morning until someone
           # edited this file.
+          #
+          # The action's own default cutoff is medium, which would leave a
+          # fixable low or negligible finding green. only-fixed has already
+          # decided the question this job cares about - a fix exists - so
+          # severity should not filter a second time.
+          severity-cutoff: negligible
           fail-build: true
 
       # Grype failing because an endpoint was blocked or its database would not
