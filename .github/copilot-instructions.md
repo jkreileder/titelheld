@@ -87,9 +87,19 @@ subscription has been created.
   Scorecard, TruffleHog secret scanning, pre-commit hooks, PR-title validation
   and test-result publication.
 - `terraform.yaml` formats, validates and lints `infra/`; it holds no
-  credentials and never applies. `deploy.yaml` authenticates through Workload
-  Identity Federation on release - no exported service-account key exists - and
-  fails if the deployed service does not have `DRY_RUN=1`.
+  credentials and never applies. `docker.yaml` builds the image on every PR and
+  push to main, holds no credentials and publishes nothing.
+- A release is a signed `v*` tag pushed by hand - nothing in CI can start one.
+  `release.yaml` verifies the tag and the changelog, calls `release-image.yaml`
+  to build and attest the image once, deploys that **digest** to Cloud Run
+  through Workload Identity Federation - no exported service-account key
+  exists - and fails if the deployed service does not have `DRY_RUN=1`. Build
+  and attest share one reusable file because signed provenance names the
+  workflow file, which is what makes the SLSA Build L3 claim.
+- No bot may release. release-please was rejected: its commits go through the
+  low-level git data API unsigned and would fail the signed-commits rule, and a
+  PR opened with `GITHUB_TOKEN` never triggers a workflow run so it could not
+  satisfy the required checks on `main`, which have no bypass.
 - Every workflow hardens the runner with a blocked egress policy and pins actions
   by commit SHA. Renovate keeps the pins and the Go toolchain current.
 

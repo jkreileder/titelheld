@@ -150,10 +150,15 @@ jobs:
           # Cloud Run is amd64; the Dockerfile cross-compiles, so this costs a
           # compile rather than an emulated build.
           platforms: linux/amd64
-          # BuildKit's own provenance and SBOM, attached in the registry. This
-          # is not the SLSA claim — that is the signed attestation the attest
-          # job produces — but it costs nothing and tools read it.
-          provenance: true
+          # BuildKit's own provenance and SBOM, attached in the registry.
+          # mode=max records the full build metadata (every step, every
+          # source) rather than the bare minimum, and version=v1 emits it as
+          # SLSA Provenance v1.0 instead of the legacy v0.2 predicate.
+          #
+          # This is not the SLSA claim — that is the signed attestation the
+          # attest job produces — but it is what a consumer inspecting the
+          # image in the registry actually reads.
+          provenance: mode=max,version=v1
           sbom: true
 
   attest:
