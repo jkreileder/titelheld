@@ -298,16 +298,26 @@ create the budget by hand and leave that resource out.
 
 ### Apply order
 
+Cloud Run resolves `version = "latest"` when it creates a revision, so the secrets need
+values **before** the service is created. Applying everything in one go fails: the revision
+cannot start, and the apply fails with it.
+
 ```sh
 cd infra
 terraform init -backend-config="bucket=${PROJECT}-tfstate"
 cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_account
-terraform apply
 ```
 
-Then, in this order:
+1. **Create the APIs and the secret shells first.** Targeting a `for_each` resource without
+   an index covers every instance of it.
 
-1. **Add the secret values**, once each. They never pass through Terraform:
+   ```sh
+   terraform apply \
+     -target=google_project_service.this \
+     -target=google_secret_manager_secret.this
+   ```
+
+2. **Add the secret values**, once each. They never pass through Terraform:
 
    ```sh
    add() { printf %s "$2" | gcloud secrets versions add "$1" --data-file=- --project="$PROJECT"; }
@@ -323,18 +333,26 @@ Then, in this order:
    single variable writes the same value five times, or — if the variable is
    never set — five empty ones.
 
-   Read the generated values back when you need them, for the Strava
-   subscription callback URL and the verify token:
+   Read the two generated values back when you need them: the path segment for the Strava
+   callback URL, and the verify token for the subscription request.
 
    ```sh
    gcloud secrets versions access latest --secret=webhook-path-secret --project="$PROJECT"
+   gcloud secrets versions access latest --secret=strava-verify-token --project="$PROJECT"
    ```
 
-2. **Set `base_url` and apply again.** Cloud Run mints the URL, so it cannot be known on the
+3. **Apply the rest.**
+
+   ```sh
+   terraform apply
+   ```
+
+
+4. **Set `base_url` and apply again.** Cloud Run mints the URL, so it cannot be known on the
    first apply. Read it from the `service_url` output, put it in `terraform.tfvars`, and
    re-apply.
 
-3. **Wire CI.** Set the repository variables from the outputs:
+5. **Wire CI.** Set the repository variables from the outputs:
 
    ```sh
    gh variable set WIF_PROVIDER --body "$(terraform output -raw workload_identity_provider)"
@@ -345,7 +363,7 @@ Then, in this order:
 
    Until those exist, the deploy job skips rather than failing.
 
-4. **Deploy.** The first Cloud Run revision runs a placeholder image
+6. **Deploy.** The first Cloud Run revision runs a placeholder image
    (`us-docker.pkg.dev/cloudrun/container/hello`) purely so the service can exist. A release
    replaces it, and Terraform ignores the image from then on.
 
