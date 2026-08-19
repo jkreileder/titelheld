@@ -363,13 +363,27 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
 
    Until those exist, the deploy job skips rather than failing.
 
-   Create the `production` environment too, and put whatever protection rules you want on
-   it. Federation requires the environment claim, so this is not optional: without the
-   environment, the deploy job cannot assume the deploy identity at all.
+   Create the `production` environment too. Federation requires the environment claim, so
+   this is not optional: without the environment, the deploy job cannot assume the deploy
+   identity at all.
+
+   Create it **with a deployment tag policy**, not bare. The Workload Identity provider
+   accepts any job in this repository that declares this environment, so the environment is
+   what decides who may deploy — and an environment with no rules decides nothing. Restricting
+   it to `v*` tags means a workflow added on a branch cannot mint a deploy token.
 
    ```sh
-   gh api -X PUT "repos/jkreileder/titelheld/environments/production" >/dev/null
+   gh api -X PUT "repos/jkreileder/titelheld/environments/production" \
+     -F "deployment_branch_policy[protected_branches]=false" \
+     -F "deployment_branch_policy[custom_branch_policies]=true" >/dev/null
+
+   gh api -X POST "repos/jkreileder/titelheld/environments/production/deployment-branch-policies" \
+     -f "name=v*" -f "type=tag" >/dev/null
    ```
+
+   Add required reviewers as well if you want a human gate on every release; the provider's
+   condition already limits federation to tag refs, so this is defence in depth rather than
+   the only lock.
 
 6. **Deploy.** The first Cloud Run revision runs a placeholder image
    (`us-docker.pkg.dev/cloudrun/container/hello`) purely so the service can exist. Pushing a

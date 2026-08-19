@@ -35,7 +35,10 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   #
   # It also means the environment protection rules apply: required reviewers on
   # "production" become required reviewers on deploying.
-  attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.environment == \"${var.deploy_environment}\""
+  # The ref clause is the third narrowing: a release only ever runs from a
+  # tag, so a token minted on a branch cannot federate even if it names the
+  # environment.
+  attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.environment == \"${var.deploy_environment}\" && assertion.ref.startsWith(\"refs/tags/v\")"
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
@@ -53,9 +56,17 @@ resource "google_service_account" "deploy" {
   depends_on = [google_project_service.this]
 }
 
-# Only this repository may assume the deploy identity. The condition on the
-# provider and this member are belt and braces: either alone would scope it,
-# and a mistake in one is caught by the other.
+# Only this repository may assume the deploy identity.
+#
+# This member is repository-scoped and nothing more: a principalSet can key on
+# one attribute, so it cannot also require the environment or the ref. The
+# narrowing to the deploy job specifically lives entirely in the provider's
+# attribute_condition above - this binding is not a second, independent gate,
+# and removing that condition would leave every workflow in the repository able
+# to assume this identity.
+#
+# The environment's own protection rules are the remaining layer, and they are
+# set on GitHub rather than here; see README.md, "Wire CI".
 resource "google_service_account_iam_member" "deploy_workload_identity" {
   service_account_id = google_service_account.deploy.name
   role               = "roles/iam.workloadIdentityUser"

@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The tag object itself, so its signature can be verified below.
+          # The tag object itself, so it can be inspected below.
           fetch-depth: 0
 
       # A mistaken tag fails here, before anything is built or deployed.
@@ -77,13 +77,36 @@ jobs:
           fi
 
           # An annotated tag carries a message and a signature; a lightweight
-          # tag carries neither, and the tag ruleset expects a signed one.
+          # tag carries neither.
           if [ "$(git cat-file -t "$TAG")" != "tag" ]; then
             echo "::error::$TAG is a lightweight tag. Release tags must be annotated and signed (git tag -s)."
             exit 1
           fi
 
           echo "Releasing $TAG (version $version)."
+
+      # The Tag v* ruleset requires signatures, but a ruleset can be edited and
+      # a fork has none, so the release verifies the signature itself rather
+      # than inheriting the guarantee. GitHub is asked, not git: verifying
+      # locally would mean shipping the signing key to the runner.
+      - name: Verify the tag is signed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          sha=$(gh api "repos/${GH_REPO}/git/ref/tags/${TAG}" --jq '.object.sha')
+          verified=$(gh api "repos/${GH_REPO}/git/tags/${sha}" --jq '.verification.verified')
+          reason=$(gh api "repos/${GH_REPO}/git/tags/${sha}" --jq '.verification.reason')
+
+          if [ "$verified" != "true" ]; then
+            echo "::error::$TAG is not a verified signed tag (reason: ${reason}). Use git tag -s."
+            exit 1
+          fi
+
+          echo "$TAG carries a verified signature."
 
       - name: Check the changelog has an entry
         env:
@@ -149,15 +172,21 @@ jobs:
         with:
           disable-sudo: true
           egress-policy: block
+          # gcloud is not in the runner's hosted tool cache, so setup-gcloud
+          # resolves its version from raw.githubusercontent.com and downloads
+          # the SDK from dl.google.com on every run. Both are required; without
+          # them this job fails *after* the image has been published.
           allowed-endpoints: >
             *.actions.githubusercontent.com:443
             accounts.google.com:443
             api.github.com:443
             artifactregistry.googleapis.com:443
+            dl.google.com:443
             github.com:443
             iamcredentials.googleapis.com:443
             oauth2.googleapis.com:443
             objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
             run.googleapis.com:443
             storage.googleapis.com:443
@@ -190,6 +219,16 @@ jobs:
           set -euo pipefail
 
           echo "Deploying ${IMAGE}@${DIGEST} (tag ${TAG})."
+
+          # `gcloud run deploy` creates the service when it cannot find one,
+          # so a renamed service or a wrong region would quietly produce a
+          # second, Terraform-less service with the default compute identity
+          # and no DRY_RUN. Require the managed service to exist first.
+          if ! gcloud run services describe titelheld \
+               --project="$PROJECT" --region="$REGION" >/dev/null 2>&1; then
+            echo "::error::no Cloud Run service 'titelheld' in ${PROJECT}/${REGION}. Apply the Terraform first; this job updates a service, it does not create one."
+            exit 1
+          fi
 
           gcloud run deploy titelheld \
             --project="$PROJECT" \
