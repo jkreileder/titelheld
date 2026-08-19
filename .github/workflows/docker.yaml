@@ -68,7 +68,15 @@ jobs:
           persist-credentials: false
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        # This job publishes nothing, so a poisoned cache has no artifact to
+        # reach; the gha scopes are branch-isolated besides.
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0 # zizmor: ignore[cache-poisoning]
+        with:
+          # The driver image is what actually executes the build, so it is
+          # pinned by digest like every other image here. Renovate keeps it
+          # current; see the custom manager in .github/renovate.json.
+          driver-opts: image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+          version: v0.36.1
 
       # `load` rather than `push`: the image goes into the local daemon so the
       # smoke test below can run it, and nowhere else. The gha cache is
@@ -93,8 +101,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          if docker run --rm --network=none titelheld:ci; then
+          if output=$(docker run --rm --network=none titelheld:ci 2>&1); then
             echo "::error::the image started with no configuration; it must fail closed"
+            exit 1
+          fi
+
+          # Any broken image exits non-zero — a missing entrypoint, the wrong
+          # architecture, a segfault. Requiring the actual configuration error
+          # is what makes this a test of failing closed rather than a test of
+          # failing.
+          if ! printf '%s' "$output" | grep -q 'load configuration'; then
+            echo "::error::the image failed, but not with a configuration error:"
+            printf '%s\n' "$output"
             exit 1
           fi
 
