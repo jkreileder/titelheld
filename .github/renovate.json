@@ -118,10 +118,22 @@
             "description": "Pin moby/buildkit (setup-buildx-action driver image) by version + digest.",
             "managerFilePatterns": [
                 ".github/workflows/docker.yaml",
-                ".github/workflows/release-image.yaml"
+                ".github/workflows/release-image.yaml",
+                ".github/workflows/rescan.yaml"
             ],
             "matchStrings": [
                 "image=(?<depName>moby/buildkit):(?<currentValue>v[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+            ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "docker",
+            "description": "Pin docker/buildkit-syft-scanner (buildx SBOM generator) by version + digest.",
+            "managerFilePatterns": [
+                ".github/workflows/release-image.yaml"
+            ],
+            "matchStrings": [
+                "generator=(?<depName>docker/buildkit-syft-scanner):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
             ]
         }
     ],
@@ -161,8 +173,11 @@
         },
         {
             "automerge": true,
-            "description": "Go dev tooling run via `go run <module>@<version>` (golangci-lint, govulncheck): never shipped, fully CI-gated.",
+            "description": "Go dev tooling run via `go run <module>@<version>` (golangci-lint, govulncheck, gotestsum): never shipped, fully CI-gated. Scoped to the go datasource so it cannot also sweep in the custom managers that pin container images - those execute in CI or inside the release build and are reviewed by hand.",
             "groupName": "go-tooling",
+            "matchDatasources": [
+                "go"
+            ],
             "matchManagers": [
                 "custom.regex"
             ],

@@ -1,0 +1,188 @@
+name: Rescan released image
+
+# The scan in docker.yaml sees an image once, against the vulnerability
+# database of the day it ran. Advisories land afterwards, and the released
+# image does not rebuild itself. This rescans the newest release daily.
+#
+# It rebuilds that release rather than pulling it from Artifact Registry.
+# Pulling would need a federated identity, and the deploy identity is
+# deliberately unusable here: its Workload Identity condition requires a
+# refs/tags/v ref, and the production environment accepts only v* tags, so a
+# scheduled run on main cannot assume it. Rather than weaken either, the image
+# is rebuilt from the tag, and because the Dockerfile pins both base images by
+# digest and go.sum is fixed at that tag, the rebuild carries the released
+# package set — which is what a CVE rescan is about.
+#
+# It is not byte-identical to the released image and does not claim to be: it
+# exports through the docker exporter so Grype can scan it locally, without
+# the rewrite-timestamp the release export uses, and it takes the buildkit
+# driver pin from main rather than from the tag. Nothing here compares
+# digests, and nothing should read this as an equality check.
+#
+# Unlike the build-time scan, this one is allowed to fail: a red run is the
+# notification that a fixable advisory now affects the released image.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  rescan:
+    name: Rescan released image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          # The same pulls docker.yaml makes — the two base images and the Go
+          # module proxy — plus Grype's installer and database. No Google
+          # credential endpoints and no registry to push to: this workflow
+          # cannot authenticate to anything.
+          allowed-endpoints: >
+            *.actions.githubusercontent.com:443
+            api.github.com:443
+            auth.docker.io:443
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443
+            gcr.io:443
+            get.anchore.io:443
+            github.com:443
+            grype.anchore.io:443
+            index.docker.io:443
+            objects.githubusercontent.com:443
+            production.cloudflare.docker.com:443
+            production.cloudfront.docker.com:443
+            proxy.golang.org:443
+            raw.githubusercontent.com:443
+            registry-1.docker.io:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            sum.golang.org:443
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # All tags, so the newest release can be found and checked out.
+          fetch-depth: 0
+
+      # Nothing to rescan before the first release, which is a normal state
+      # rather than a failure.
+      - name: Find the newest release
+        id: release
+        run: |
+          set -euo pipefail
+
+          # Match release.yaml's own gate exactly: it refuses anything that is
+          # not final SemVer, so a v1.2.0-rc1 was never built or deployed and
+          # must not be what gets rescanned. The v* glob would also catch a
+          # tag like "vendor-freeze", and git's versionsort ranks a
+          # pre-release above its release without versionsort.suffix set.
+          #
+          # No pipe to head: under `set -o pipefail`, head exiting early can
+          # SIGPIPE git and fail the step for no reason. Take the first line
+          # from the variable instead.
+          tags=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          tag=${tags%%$'\n'*}
+
+          if [ -z "$tag" ]; then
+            echo "No v* tag exists yet; nothing has been released to rescan."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Rescanning $tag."
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the release
+        if: ${{ steps.release.outputs.tag != '' }}
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: git checkout --detach "refs/tags/$TAG"
+
+      - name: Set up Buildx
+        if: ${{ steps.release.outputs.tag != '' }}
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          # Kept in step with docker.yaml and release-image.yaml; Renovate
+          # updates all three together.
+          driver-opts: image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+          version: v0.36.1
+          cache-binary: false
+
+      # Cache-free, like the release build it is reproducing. A restored layer
+      # could hold a package set that is not the released one, which is the
+      # only thing this workflow is trying to establish.
+      - name: Rebuild the released image
+        if: ${{ steps.release.outputs.tag != '' }}
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          tags: titelheld:rescan
+          platforms: linux/amd64
+
+      # fail-build is on here, unlike docker.yaml: this workflow gates nothing,
+      # so failing is how it reports. only-fixed keeps that to advisories with
+      # a fix available, so a red run always has an action attached.
+      - name: Scan the released image with Grype
+        id: grype
+        if: ${{ steps.release.outputs.tag != '' }}
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: titelheld:rescan
+          only-fixed: true
+          # No add-cpes-if-none here, unlike docker.yaml. Guessing a CPE for a
+          # package that has none is the usual source of false positives, and
+          # this run gates on the result with nowhere to record an exception -
+          # one bad match would mean a red run every morning until someone
+          # edited this file.
+          #
+          # The action's own default cutoff is medium, which would leave a
+          # fixable low or negligible finding green. only-fixed has already
+          # decided the question this job cares about - a fix exists - so
+          # severity should not filter a second time.
+          severity-cutoff: negligible
+          fail-build: true
+
+      # Grype failing because an endpoint was blocked or its database would not
+      # download looks identical to Grype failing because it found something.
+      # They call for different responses, so say which happened: a run that
+      # produced no SARIF did not scan.
+      - name: Say why the scan failed
+        if: ${{ always() && steps.grype.outcome == 'failure' }}
+        env:
+          SARIF: ${{ steps.grype.outputs.sarif }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$SARIF" ]; then
+            echo "::error::Grype produced no SARIF, so it did not complete. This is a broken scan, not a finding - check the egress policy and the database download above."
+          else
+            echo "::error::Grype found a fixable advisory against the released image. See the Security tab."
+          fi
+
+      # Runs even when the scan failed — that is exactly when the findings are
+      # worth having in the Security tab.
+      - name: Upload the Grype findings
+        if: ${{ always() && steps.grype.outputs.sarif != '' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype-released

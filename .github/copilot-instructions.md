@@ -88,7 +88,12 @@ subscription has been created.
   and test-result publication.
 - `terraform.yaml` formats, validates and lints `infra/`; it holds no
   credentials and never applies. `docker.yaml` builds the image on every PR and
-  push to main, holds no credentials and publishes nothing.
+  push to main, scans it with Grype, and holds no credentials - it publishes
+  nothing. `rescan.yaml` rebuilds the newest released tag daily and rescans it,
+  so advisories published after a release are noticed. It selects the newest
+  *final* SemVer tag - `v1.2.3`, never `v1.2.3-rc1` - matching what
+  `release.yaml` is willing to build, and fails on any fixable finding, which
+  is how it reports.
 - A release is a signed `v*` tag pushed by hand - nothing in CI can start one.
   `release.yaml` verifies the tag and the changelog, calls `release-image.yaml`
   to build and attest the image once, deploys that **digest** to Cloud Run

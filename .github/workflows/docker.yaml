@@ -34,6 +34,9 @@ jobs:
 
     permissions:
       contents: read
+      # Grype findings are uploaded to the Security tab rather than failing the
+      # build; this is what lets it write them.
+      security-events: write
 
     steps:
       - name: Harden runner
@@ -56,6 +59,8 @@ jobs:
             objects.githubusercontent.com:443
             production.cloudflare.docker.com:443
             production.cloudfront.docker.com:443
+            get.anchore.io:443
+            grype.anchore.io:443
             proxy.golang.org:443
             raw.githubusercontent.com:443
             registry-1.docker.io:443
@@ -118,6 +123,41 @@ jobs:
           fi
 
           echo "The image refuses to start unconfigured, as it should."
+
+      # Reporting, not gating. There is genuinely something to see here: the
+      # scan catalogues the distroless base packages together with the Go
+      # modules read out of the binary, around forty in total.
+      #
+      # govulncheck already covers the Go modules, and covers them better,
+      # because it follows reachability and reports only what the code can
+      # actually reach. What this adds is a second vulnerability database over
+      # the same modules, plus the base-image packages govulncheck never sees.
+      #
+      # only-fixed keeps the report to findings something can be done about.
+      # Matches with no fix available are counted in the log line but kept out
+      # of the Security tab, so drop the flag if you want to see them.
+      # No continue-on-error. fail-build: false already keeps findings from
+      # gating, so continue-on-error would only hide the scanner itself
+      # breaking - a blocked endpoint or a failed database download sets no
+      # outputs, which silently skips the upload below and leaves a green job
+      # with nothing in the Security tab.
+      - name: Scan the image with Grype
+        id: grype
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: titelheld:ci
+          only-fixed: true
+          add-cpes-if-none: true
+          fail-build: false
+
+      # Fork pull requests cannot write security events; do not fail on that.
+      - name: Upload the Grype findings
+        if: ${{ steps.grype.outputs.sarif != '' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype
 
       - name: Report the image
         run: |
