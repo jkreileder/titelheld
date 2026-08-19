@@ -382,8 +382,9 @@ A release is a signed tag you push by hand. Nothing in CI can start one, and the
 with permission to tag this repository.
 
 That is deliberate. The alternative — a bot maintaining a release PR — cannot work here without
-weakening the repository's own rules: commits made through the GitHub API are unsigned, so a
-bot's release branch would fail the signed-commits rule; and a pull request opened with
+weakening the repository's own rules: release-please writes its commits through the low-level
+git data API, which does not sign them, so its release branch would fail the signed-commits
+rule; and a pull request opened with
 `GITHUB_TOKEN` never triggers a workflow run, so it could never satisfy the required checks on
 `main`, which have no bypass. Making it work would mean storing a long-lived token with write
 access to the repository that deploys this service. A tag you sign yourself costs one command
