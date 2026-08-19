@@ -57,6 +57,26 @@ build:
 tidy:
 	$(GO) mod tidy
 
+# --- Infrastructure ---------------------------------------------------------
+# The same three commands CI runs, so a green local run means a green CI run.
+
+.PHONY: tf-fmt
+tf-fmt:
+	terraform -chdir=infra fmt -recursive
+
+.PHONY: tf-validate
+tf-validate:
+	terraform -chdir=infra fmt -check -recursive
+	terraform -chdir=infra init -backend=false -input=false
+	terraform -chdir=infra validate
+
+.PHONY: tf-lint
+tf-lint:
+	cd infra && tflint --init && tflint --format compact
+
+.PHONY: tf-check
+tf-check: tf-validate tf-lint
+
 .PHONY: clean
 clean:
-	git clean -xdf -e /HANDOFF.md -e /config.yaml -e /.claude/settings.local.json   # hard reset; keep the spec, local config and Claude settings
+	git clean -xdf -e /HANDOFF.md -e /config.yaml -e /.env -e /.claude/settings.local.json   # hard reset; keep the spec, local config, any .env and Claude settings

@@ -190,6 +190,27 @@
             "matchUpdateTypes": [
                 "digest"
             ]
+        },
+        {
+            "automerge": false,
+            "description": "Terraform providers and modules, and tflint's plugins: grouped, manual review. They describe live infrastructure, and a plan is only as trustworthy as the provider that produced it.",
+            "groupName": "terraform",
+            "matchManagers": [
+                "terraform",
+                "tflint-plugin"
+            ]
+        },
+        {
+            "automerge": true,
+            "description": "Container base images for the runtime image: grouped and automerged on minor/patch, because CI builds and starts the image on every pull request.",
+            "groupName": "docker",
+            "matchManagers": [
+                "dockerfile"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
+            ]
         }
     ],
     "postUpdateOptions": [
