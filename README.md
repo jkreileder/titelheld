@@ -347,7 +347,6 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
    terraform apply
    ```
 
-
 4. **Set `base_url` and apply again.** Cloud Run mints the URL, so it cannot be known on the
    first apply. Read it from the `service_url` output, put it in `terraform.tfvars`, and
    re-apply.
