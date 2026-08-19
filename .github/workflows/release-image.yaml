@@ -1,0 +1,224 @@
+name: Release image
+
+# Reusable build + attest path for the container image.
+#
+# The buildx build and the artifact attestation live together in this one
+# reusable workflow — in two jobs, `build` and `attest` — so the attestation
+# qualifies for SLSA Build Level 3: the signed provenance records this workflow
+# file as the signer (its job_workflow_ref), which is per-file rather than
+# per-job, so splitting the work across two jobs keeps the claim intact while
+# the calling workflow still cannot influence it beyond invoking this workflow.
+# Verifiers can require it:
+#
+#   gh attestation verify \
+#     oci://REGION-docker.pkg.dev/PROJECT/containers/titelheld@sha256:... \
+#     --repo jkreileder/titelheld \
+#     --signer-workflow jkreileder/titelheld/.github/workflows/release-image.yaml
+#
+# Triggers and concurrency live in the calling workflow (release.yaml).
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: >-
+          GitHub environment to run under. Workload Identity Federation checks
+          the environment claim, so a job without one cannot authenticate.
+        required: true
+        type: string
+    outputs:
+      image:
+        description: The image repository, without a tag or digest.
+        value: ${{ jobs.build.outputs.image }}
+      digest:
+        description: The digest of the pushed image.
+        value: ${{ jobs.build.outputs.digest }}
+      version:
+        description: The version this image was built as, without the leading v.
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      contents: read
+      # Required to mint the OIDC token Workload Identity Federation exchanges.
+      # This is the whole reason no service-account key exists anywhere.
+      id-token: write
+
+    # The digest is the only thing the attest and deploy jobs need from here.
+    # Everything downstream refers to the image by digest, never by tag, so a
+    # tag that is later moved cannot change what runs.
+    outputs:
+      image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/containers/titelheld
+      digest: ${{ steps.build-and-push.outputs.digest }}
+      version: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          # gcr.io and its storage.googleapis.com backend serve the distroless
+          # runtime base; the docker.io hosts serve the golang build base.
+          allowed-endpoints: >
+            *.actions.githubusercontent.com:443
+            accounts.google.com:443
+            api.github.com:443
+            artifactregistry.googleapis.com:443
+            auth.docker.io:443
+            gcr.io:443
+            github.com:443
+            iamcredentials.googleapis.com:443
+            oauth2.googleapis.com:443
+            objects.githubusercontent.com:443
+            production.cloudflare.docker.com:443
+            proxy.golang.org:443
+            registry-1.docker.io:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            sts.googleapis.com:443
+            sum.golang.org:443
+            ${{ vars.GCP_REGION }}-docker.pkg.dev:443
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No exported key: the workflow presents its GitHub OIDC token and gets a
+      # short-lived credential back. The provider only accepts tokens from this
+      # repository and this environment.
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+          # Needed so the registry login below has something to present. It is
+          # a short-lived token, not a stored credential.
+          token_format: access_token
+
+      # The token comes from the Workload Identity exchange above; no registry
+      # password exists.
+      - name: Log in to Artifact Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.auth_token }}
+
+      # The version tags are derived from the git tag that triggered the run.
+      # {{version}} is the whole SemVer, so v0.1.0 also publishes 0.1 and 0 —
+      # convenience aliases for humans. Nothing deploys from them.
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/containers/titelheld
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,format=long
+
+      # buildx rather than plain docker build: the Dockerfile relies on cache
+      # mounts and a pinned BuildKit frontend.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # No build cache. A release is built once, from a tag, and a hermetic
+      # commit-to-image chain is worth more here than the couple of minutes a
+      # warm cache would save.
+      - name: Build and push the image
+        id: build-and-push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          # Cloud Run is amd64; the Dockerfile cross-compiles, so this costs a
+          # compile rather than an emulated build.
+          platforms: linux/amd64
+          # BuildKit's own provenance and SBOM, attached in the registry. This
+          # is not the SLSA claim — that is the signed attestation the attest
+          # job produces — but it costs nothing and tools read it.
+          provenance: true
+          sbom: true
+
+  attest:
+    name: Attest
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          # Sigstore (fulcio/rekor/timestamp/tuf) for signing, api.github.com
+          # for the attestation store, and Artifact Registry for pushing the
+          # attestation as a referrer of the image digest. No layer pulls
+          # happen here, so the base-image registries are absent.
+          allowed-endpoints: >
+            accounts.google.com:443
+            api.github.com:443
+            artifactregistry.googleapis.com:443
+            fulcio.sigstore.dev:443
+            github.com:443
+            iamcredentials.googleapis.com:443
+            oauth2.googleapis.com:443
+            objects.githubusercontent.com:443
+            rekor.sigstore.dev:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            sts.googleapis.com:443
+            timestamp.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
+            ${{ vars.GCP_REGION }}-docker.pkg.dev:443
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Log in to Artifact Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.auth_token }}
+
+      # This is the signature and the SLSA provenance in one step: the
+      # attestation is signed keylessly through Sigstore against this job's
+      # OIDC identity, and its predicate is SLSA provenance naming this
+      # workflow file as the builder. `push-to-registry` additionally stores it
+      # in Artifact Registry as a referrer of the digest, so the image carries
+      # its own provenance wherever it is pulled from.
+      - name: Attest the image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.build.outputs.image }}
+          subject-digest: ${{ needs.build.outputs.digest }}
+          push-to-registry: true
