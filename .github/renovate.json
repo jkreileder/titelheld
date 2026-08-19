@@ -111,6 +111,18 @@
             "matchStrings": [
                 "tflint_version: (?<currentValue>v[0-9.]+)"
             ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "docker",
+            "description": "Pin moby/buildkit (setup-buildx-action driver image) by version + digest.",
+            "managerFilePatterns": [
+                ".github/workflows/docker.yaml",
+                ".github/workflows/release-image.yaml"
+            ],
+            "matchStrings": [
+                "image=(?<depName>moby/buildkit):(?<currentValue>v[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+            ]
         }
     ],
     "extends": [

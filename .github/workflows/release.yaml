@@ -1,0 +1,318 @@
+name: Release
+
+# A release is a signed tag you push by hand. Nothing here can start one.
+#
+#   git tag -s v0.1.0 -m "v0.1.0"
+#   git push origin v0.1.0
+#
+# That tag push builds the image once, signs it with SLSA provenance, deploys
+# that exact digest to Cloud Run, and opens a draft GitHub release for you to
+# edit and publish. See README.md, "Cutting a release".
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a run that publishes. Two tags pushed close together queue
+# rather than race for the same Cloud Run service.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  check-release-version:
+    name: Check release version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The tag object itself, so it can be inspected below.
+          fetch-depth: 0
+
+      # A mistaken tag fails here, before anything is built or deployed.
+      - name: Verify the tag
+        env:
+          TAG: ${{ github.ref_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          case "$REF" in
+            refs/tags/*) ;;
+            *)
+              echo "::error::Release runs from a tag; got '$REF'. Run this workflow on a tag ref."
+              exit 1
+              ;;
+          esac
+
+          version="${TAG#v}"
+
+          # Final SemVer only. A pre-release or build-metadata tag would deploy
+          # to the one production service, so refuse it rather than guess.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Refusing to release non-final version '$version' from tag $TAG"
+            exit 1
+          fi
+
+          # An annotated tag carries a message and a signature; a lightweight
+          # tag carries neither.
+          if [ "$(git cat-file -t "$TAG")" != "tag" ]; then
+            echo "::error::$TAG is a lightweight tag. Release tags must be annotated and signed (git tag -s)."
+            exit 1
+          fi
+
+          echo "Releasing $TAG (version $version)."
+
+      # The Tag v* ruleset requires signatures, but a ruleset can be edited and
+      # a fork has none, so the release verifies the signature itself rather
+      # than inheriting the guarantee. GitHub is asked, not git: verifying
+      # locally would mean shipping the signing key to the runner.
+      - name: Verify the tag is signed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          sha=$(gh api "repos/${GH_REPO}/git/ref/tags/${TAG}" --jq '.object.sha')
+          verified=$(gh api "repos/${GH_REPO}/git/tags/${sha}" --jq '.verification.verified')
+          reason=$(gh api "repos/${GH_REPO}/git/tags/${sha}" --jq '.verification.reason')
+
+          if [ "$verified" != "true" ]; then
+            echo "::error::$TAG is not a verified signed tag (reason: ${reason}). Use git tag -s."
+            exit 1
+          fi
+
+          echo "$TAG carries a verified signature."
+
+      - name: Check the changelog has an entry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md is missing."
+            exit 1
+          fi
+
+          heading=$(grep -F "## [$TAG]" CHANGELOG.md || true)
+
+          if [ -z "$heading" ]; then
+            echo "::error::CHANGELOG.md has no '## [$TAG]' section."
+            exit 1
+          fi
+
+          # The section exists but still carries the placeholder date, so the
+          # release notes were never written. Date it before tagging.
+          if printf '%s' "$heading" | grep -qi 'unreleased'; then
+            echo "::error::CHANGELOG.md still marks $TAG as Unreleased: $heading"
+            exit 1
+          fi
+
+          echo "Changelog entry: $heading"
+
+  image:
+    name: Image
+    needs: check-release-version
+    # Skips rather than fails until the infrastructure exists and the
+    # repository variables are set from the Terraform outputs. A release job
+    # that is permanently red teaches everyone to ignore it.
+    if: ${{ vars.WIF_PROVIDER != '' && vars.DEPLOY_SERVICE_ACCOUNT != '' && vars.GCP_PROJECT != '' && vars.GCP_REGION != '' }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release-image.yaml
+    with:
+      environment: production
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    # Federation requires this environment claim, so naming it here is not
+    # decoration: a workflow that omits it cannot assume the deploy identity
+    # even from this repository. Protection rules on the environment — required
+    # reviewers, say — therefore become protection rules on deploying.
+    environment: production
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          # gcloud is not in the runner's hosted tool cache, so setup-gcloud
+          # resolves its version from raw.githubusercontent.com and downloads
+          # the SDK from dl.google.com on every run. Both are required; without
+          # them this job fails *after* the image has been published.
+          allowed-endpoints: >
+            *.actions.githubusercontent.com:443
+            accounts.google.com:443
+            api.github.com:443
+            artifactregistry.googleapis.com:443
+            dl.google.com:443
+            github.com:443
+            iamcredentials.googleapis.com:443
+            oauth2.googleapis.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            run.googleapis.com:443
+            storage.googleapis.com:443
+            sts.googleapis.com:443
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # By digest, never by tag. The version tags exist for humans; what runs
+      # is the exact image the attestation covers, so a tag moved afterwards
+      # cannot change it.
+      #
+      # Only the image is set here. Everything else about the service — the
+      # service account, the scaling bounds, the environment, the secret
+      # references — belongs to Terraform, which ignores the image in return.
+      - name: Deploy the revision
+        env:
+          PROJECT: ${{ vars.GCP_PROJECT }}
+          REGION: ${{ vars.GCP_REGION }}
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          echo "Deploying ${IMAGE}@${DIGEST} (tag ${TAG})."
+
+          # `gcloud run deploy` creates the service when it cannot find one,
+          # so a renamed service or a wrong region would quietly produce a
+          # second, Terraform-less service with the default compute identity
+          # and no DRY_RUN. Require the managed service to exist first.
+          if ! gcloud run services describe titelheld \
+               --project="$PROJECT" --region="$REGION" >/dev/null 2>&1; then
+            echo "::error::no Cloud Run service 'titelheld' in ${PROJECT}/${REGION}. Apply the Terraform first; this job updates a service, it does not create one."
+            exit 1
+          fi
+
+          gcloud run deploy titelheld \
+            --project="$PROJECT" \
+            --region="$REGION" \
+            --image="${IMAGE}@${DIGEST}" \
+            --quiet
+
+      - name: Report what is running
+        env:
+          PROJECT: ${{ vars.GCP_PROJECT }}
+          REGION: ${{ vars.GCP_REGION }}
+        run: |
+          set -euo pipefail
+
+          gcloud run services describe titelheld \
+            --project="$PROJECT" --region="$REGION" \
+            --format='value(status.url, status.latestReadyRevisionName)'
+
+          # DRY_RUN is Terraform's to set, and it is set to 1. Releasing a
+          # version must never be the thing that turns writes on — there is no
+          # version number that means "now write to Strava" — so this fails the
+          # deploy if it ever is.
+          dry_run=$(gcloud run services describe titelheld \
+            --project="$PROJECT" --region="$REGION" \
+            --format='value(spec.template.spec.containers[0].env.filter("name:DRY_RUN").extract("value"))')
+
+          if [ "$dry_run" != "['1']" ] && [ "$dry_run" != "1" ]; then
+            echo "::error::the deployed service does not have DRY_RUN=1 (got '${dry_run}')"
+            exit 1
+          fi
+
+          echo "DRY_RUN is on; the deployed service cannot write to Strava."
+
+  draft-release:
+    name: Create draft release
+    needs:
+      - check-release-version
+      - image
+      - deploy
+    # Both image and deploy are skipped until the infrastructure variables are
+    # set, and a draft release is still right in that case. `skipped` cannot be
+    # told apart from "an upstream job failed", though, so failure and
+    # cancellation are checked on each of them explicitly — otherwise a build
+    # that never produced an image would still be drafted as a release.
+    if: >-
+      ${{ always()
+      && needs.check-release-version.result == 'success'
+      && needs.image.result != 'failure' && needs.image.result != 'cancelled'
+      && needs.deploy.result != 'failure' && needs.deploy.result != 'cancelled'
+      && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            uploads.github.com:443
+
+      # A draft, not a published release: the last step of a release is yours,
+      # the same way the tag was.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" --json isDraft --jq .isDraft >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --draft \
+            --title "$TAG" \
+            --verify-tag \
+            --generate-notes

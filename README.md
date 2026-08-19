@@ -30,6 +30,7 @@ everything that should stay boring untouched.
 - [Geography](#geography)
 - [Local development](#local-development)
 - [Infrastructure](#infrastructure)
+- [Cutting a release](#cutting-a-release)
 - [Attribution](#attribution)
 - [License](#license)
 
@@ -362,17 +363,101 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
 
    Until those exist, the deploy job skips rather than failing.
 
-   Create the `production` environment too, and put whatever protection rules you want on
-   it. Federation requires the environment claim, so this is not optional: without the
-   environment, the deploy job cannot assume the deploy identity at all.
+   Create the `production` environment too. Federation requires the environment claim, so
+   this is not optional: without the environment, the deploy job cannot assume the deploy
+   identity at all.
+
+   Create it **with a deployment tag policy**, not bare. The Workload Identity provider
+   accepts any job in this repository that declares this environment, so the environment is
+   what decides who may deploy — and an environment with no rules decides nothing. Restricting
+   it to `v*` tags means a workflow added on a branch cannot mint a deploy token.
 
    ```sh
-   gh api -X PUT "repos/jkreileder/titelheld/environments/production" >/dev/null
+   gh api -X PUT "repos/jkreileder/titelheld/environments/production" \
+     -F "deployment_branch_policy[protected_branches]=false" \
+     -F "deployment_branch_policy[custom_branch_policies]=true" >/dev/null
+
+   gh api -X POST "repos/jkreileder/titelheld/environments/production/deployment-branch-policies" \
+     -f "name=v*" -f "type=tag" >/dev/null
    ```
 
+   Add required reviewers as well if you want a human gate on every release; the provider's
+   condition already limits federation to tag refs, so this is defence in depth rather than
+   the only lock.
+
 6. **Deploy.** The first Cloud Run revision runs a placeholder image
-   (`us-docker.pkg.dev/cloudrun/container/hello`) purely so the service can exist. A release
-   replaces it, and Terraform ignores the image from then on.
+   (`us-docker.pkg.dev/cloudrun/container/hello`) purely so the service can exist. Pushing a
+   signed `v*` tag replaces it — see [Cutting a release](#cutting-a-release) — and Terraform
+   ignores the image from then on.
+
+## Cutting a release
+
+A release is a signed tag you push by hand. Nothing in CI can start one, and there is no bot
+with permission to tag this repository.
+
+That is deliberate. The alternative — a bot maintaining a release PR — cannot work here without
+weakening the repository's own rules: release-please writes its commits through the low-level
+git data API, which does not sign them, so its release branch would fail the signed-commits
+rule; and a pull request opened with
+`GITHUB_TOKEN` never triggers a workflow run, so it could never satisfy the required checks on
+`main`, which have no bypass. Making it work would mean storing a long-lived token with write
+access to the repository that deploys this service. A tag you sign yourself costs one command
+and stores nothing.
+
+### The steps
+
+1. **Write the changelog entry.** Replace *Unreleased* in [CHANGELOG.md](CHANGELOG.md) with
+   today's date. The release workflow refuses to run while it still says *Unreleased*, so this
+   is enforced rather than remembered.
+
+2. **Merge that to `main`**, through a pull request like anything else.
+
+3. **Tag it, signed and annotated.**
+
+   ```sh
+   git switch main && git pull
+   git tag -s v0.1.0 -m "v0.1.0"
+   git push origin v0.1.0
+   ```
+
+   The tag must be annotated (`-s` implies it) and the version final — `v0.1.0`, not
+   `v0.1.0-rc1`. The workflow checks both before building anything, because there is one
+   production service and a pre-release tag would deploy straight to it.
+
+4. **Publish the draft release.** The workflow opens it with generated notes; edit and publish
+   when you are happy with them. Nothing downstream depends on it, so there is no rush.
+
+### What the tag push does
+
+| Step | Where | What it produces |
+| ---- | ----- | ---------------- |
+| Check | `release.yaml` | Fails fast on a lightweight tag, a pre-release version, or a stale changelog |
+| Build | `release-image.yaml` | One image, cache-free, tagged `0.1.0`, `0.1`, `0` and `sha-<commit>` |
+| Attest | `release-image.yaml` | Sigstore-signed SLSA provenance, stored in GitHub and pushed to Artifact Registry as a referrer of the digest |
+| Deploy | `release.yaml` | `gcloud run deploy` of that **digest**, via Workload Identity Federation |
+| Draft | `release.yaml` | A draft GitHub release for you to publish |
+
+The image is built exactly once. Everything after it refers to the digest, never to a version
+tag, so moving a tag afterwards cannot change what is running.
+
+The build and attest steps live together in `release-image.yaml` rather than in the calling
+workflow. Signed provenance records the workflow *file* that produced it, so keeping both jobs
+in one reusable file is what lets the attestation name a single trusted builder — the SLSA
+Build Level 3 claim. Verify it:
+
+```sh
+gh attestation verify \
+  "oci://${REGION}-docker.pkg.dev/${PROJECT}/containers/titelheld@${DIGEST}" \
+  --repo jkreileder/titelheld \
+  --signer-workflow jkreileder/titelheld/.github/workflows/release-image.yaml
+```
+
+### Versions do not turn on writes
+
+`DRY_RUN` is Terraform's to set, and it is set to `1`. The deploy step reads it back from the
+running service afterwards and fails the release if it is anything else. There is no version
+number that means *now write to Strava*: turning writes on is a deliberate infrastructure
+change, never a side effect of shipping.
 
 ## Attribution
 

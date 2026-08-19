@@ -1,0 +1,127 @@
+name: Docker
+
+# Builds the image on every pull request and every push to main, and never
+# publishes anything.
+#
+# The release path (release.yaml -> release-image.yaml) is the only thing that
+# pushes, and it runs only from a tag. Without this workflow the first CI build
+# of the Dockerfile would be the release itself, which is a poor moment to
+# discover that it no longer builds.
+#
+# This job holds no credentials and needs none: nothing is pushed, so there is
+# no registry to log in to and no identity to federate. That is why it can run
+# on pull requests without the per-step event guards a publishing workflow
+# would need.
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:  # no base filter: stacked PRs target another PR's branch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          # Pulling only: the two base images (gcr.io for distroless, the
+          # docker.io hosts and their CDNs for golang) and the Go module proxy.
+          # Artifact Registry and the Google credential endpoints are absent,
+          # so this job could not publish or authenticate even if it tried.
+          allowed-endpoints: >
+            *.actions.githubusercontent.com:443
+            api.github.com:443
+            auth.docker.io:443
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443
+            gcr.io:443
+            index.docker.io:443
+            github.com:443
+            objects.githubusercontent.com:443
+            production.cloudflare.docker.com:443
+            production.cloudfront.docker.com:443
+            proxy.golang.org:443
+            raw.githubusercontent.com:443
+            registry-1.docker.io:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            sum.golang.org:443
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        # This job publishes nothing, so a poisoned cache has no artifact to
+        # reach; the gha scopes are branch-isolated besides.
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0 # zizmor: ignore[cache-poisoning]
+        with:
+          # The driver image is what actually executes the build, so it is
+          # pinned by digest like every other image here. Renovate keeps it
+          # current; see the custom manager in .github/renovate.json.
+          driver-opts: image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+          version: v0.36.1
+
+      # `load` rather than `push`: the image goes into the local daemon so the
+      # smoke test below can run it, and nowhere else. The gha cache is
+      # branch-scoped, and this job publishes nothing, so restoring from it
+      # crosses no trust boundary. Release builds run cache-free.
+      - name: Build the image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          tags: titelheld:ci
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Dry run is the safe zero value, and an unconfigured service must refuse
+      # to start rather than come up in some half-configured state. That is a
+      # property of the binary, so it is worth one assertion here: a distroless
+      # or nonroot regression that stopped the binary running at all would
+      # otherwise only show up at release time.
+      - name: Refuse to start without configuration
+        run: |
+          set -euo pipefail
+
+          if output=$(docker run --rm --network=none titelheld:ci 2>&1); then
+            echo "::error::the image started with no configuration; it must fail closed"
+            exit 1
+          fi
+
+          # Any broken image exits non-zero — a missing entrypoint, the wrong
+          # architecture, a segfault. Requiring the actual configuration error
+          # is what makes this a test of failing closed rather than a test of
+          # failing.
+          if ! printf '%s' "$output" | grep -q 'load configuration'; then
+            echo "::error::the image failed, but not with a configuration error:"
+            printf '%s\n' "$output"
+            exit 1
+          fi
+
+          echo "The image refuses to start unconfigured, as it should."
+
+      - name: Report the image
+        run: |
+          set -euo pipefail
+
+          docker image inspect titelheld:ci \
+            --format 'user={{.Config.User}} entrypoint={{.Config.Entrypoint}} size={{.Size}}'

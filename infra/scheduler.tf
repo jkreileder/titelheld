@@ -12,6 +12,13 @@ resource "google_cloud_scheduler_job" "sweep" {
 
   attempt_deadline = "320s"
 
+  # Paused until the sweep handler exists. Left running, this would POST to a
+  # route the service does not serve every five minutes: two 404s per fire,
+  # and an instance woken each time, so min_instance_count = 0 would never
+  # actually mean an idle service - which is what the budget assumes.
+  # Unpause in the same change that ships the handler.
+  paused = true
+
   retry_config {
     retry_count = 1
   }
@@ -20,9 +27,14 @@ resource "google_cloud_scheduler_job" "sweep" {
     http_method = "POST"
     uri         = "${google_cloud_run_v2_service.this.uri}${local.sweep_path}"
 
-    # Two independent gates, the same pattern as the webhook: the path segment
-    # is unguessable, and the request additionally carries an OIDC token that
-    # Cloud Run checks before the request reaches the process.
+    # The token is carried, but nothing on the platform checks it: while
+    # allUsers holds roles/run.invoker, Cloud Run authenticates no one, so
+    # this endpoint is reachable by anybody who learns the path.
+    #
+    # The sweep handler MUST therefore verify this OIDC token itself - issuer,
+    # audience and the service account email below - and reject anything else.
+    # The unguessable path is obfuscation, not authentication. See iam.tf and
+    # README.md, "Why the service is publicly invokable".
     oidc_token {
       service_account_email = google_service_account.scheduler.email
       audience              = google_cloud_run_v2_service.this.uri
