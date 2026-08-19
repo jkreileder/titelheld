@@ -23,6 +23,12 @@ jobs:
     # that is permanently red teaches everyone to ignore it.
     if: ${{ vars.WIF_PROVIDER != '' && vars.DEPLOY_SERVICE_ACCOUNT != '' && vars.GCP_PROJECT != '' }}
 
+    # Federation requires this environment claim, so naming it here is not
+    # decoration: a workflow that omits it cannot assume the deploy identity
+    # even from this repository. Protection rules on the environment - required
+    # reviewers, say - therefore become protection rules on deploying.
+    environment: production
+
     permissions:
       contents: read
       # Required to mint the OIDC token Workload Identity Federation exchanges.
