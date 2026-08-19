@@ -362,6 +362,14 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
 
    Until those exist, the deploy job skips rather than failing.
 
+   Create the `production` environment too, and put whatever protection rules you want on
+   it. Federation requires the environment claim, so this is not optional: without the
+   environment, the deploy job cannot assume the deploy identity at all.
+
+   ```sh
+   gh api -X PUT "repos/jkreileder/titelheld/environments/production" >/dev/null
+   ```
+
 6. **Deploy.** The first Cloud Run revision runs a placeholder image
    (`us-docker.pkg.dev/cloudrun/container/hello`) purely so the service can exist. A release
    replaces it, and Terraform ignores the image from then on.

@@ -8,9 +8,7 @@
 # build compiles the static binary.
 FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.6-alpine3.24@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS build
 
-# TARGETOS is supplied by BuildKit and names the target operating system.
 ARG TARGETOS
-# TARGETARCH is supplied by BuildKit and names the target architecture.
 ARG TARGETARCH
 
 WORKDIR /src
@@ -28,7 +26,6 @@ RUN --mount=type=bind,target=/src \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o /out/titelheld ./cmd/titelheld
 
-# No shell, no package manager, no libc, no root user.
 
 # runtime holds the binary and nothing else.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6 AS runtime
