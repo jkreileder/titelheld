@@ -13,10 +13,10 @@ resource "google_artifact_registry_repository" "containers" {
   # images from deletion, and DELETE is what actually removes anything. A KEEP
   # policy on its own deletes nothing at all, and the repository grows until it
   # costs money.
-  # One release pushes several versions, not one: the OCI index, the amd64
-  # manifest, BuildKit's provenance and SBOM attestations, and the Sigstore
-  # referrer the attest job pushes. A keep_count of 5 therefore protected
-  # barely a single release.
+  # Count releases, not versions. One release pushes several: the OCI index,
+  # the amd64 manifest, BuildKit's provenance and SBOM attestations, and the
+  # Sigstore referrer the attest job pushes. Fifty versions is therefore
+  # roughly ten releases' worth of rollback targets.
   cleanup_policies {
     id     = "keep-recent"
     action = "KEEP"
