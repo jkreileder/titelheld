@@ -24,12 +24,18 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "attribute.actor"            = "assertion.actor"
     "attribute.repository"       = "assertion.repository"
     "attribute.repository_owner" = "assertion.repository_owner"
+    "attribute.environment"      = "assertion.environment"
   }
 
-  # The narrower of the two available scopes: one repository, not one owner.
-  # Without a condition, any GitHub repository anywhere could present a token
-  # this provider would accept.
-  attribute_condition = "assertion.repository == \"${var.github_repository}\""
+  # One repository is not narrow enough on its own. Several workflows in this
+  # repository already request id-token: write - Scorecard, for one - and any
+  # of them could otherwise exchange a token for the deploy identity. The
+  # environment claim is only present when a job declares that environment, so
+  # requiring it means the deploy job, and nothing else, can federate.
+  #
+  # It also means the environment protection rules apply: required reviewers on
+  # "production" become required reviewers on deploying.
+  attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.environment == \"${var.deploy_environment}\""
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"

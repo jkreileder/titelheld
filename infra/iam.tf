@@ -36,8 +36,37 @@ resource "google_project_iam_member" "runtime_firestore" {
   }
 }
 
+# The service must accept unauthenticated requests, because Strava's webhook has
+# no way to present a Google credential. There is no narrower option: Cloud Run
+# invoker permission is service-wide, so this admits anonymous callers to every
+# route, the sweep included.
+#
+# Where the real defences are, given that:
+#
+#   * The webhook is guarded by an unguessable path segment and by the verify
+#     token, compared in constant time.
+#   * The sweep is guarded by an unguessable path segment and by the OIDC token
+#     Cloud Scheduler attaches - but Cloud Run will NOT check that token while
+#     this binding exists. The application has to verify it. That is a hard
+#     requirement for the phase that adds the sweep handler, not a
+#     nice-to-have, and it is why the scheduler keeps its own identity below:
+#     the token has to come from something verifiable.
+#
+# The alternative is two services, one public and one private. That is the right
+# answer if the sweep ever does anything expensive; today it doubles the
+# deployment to protect an endpoint whose only power is draining the queue
+# slightly early.
+resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.this.location
+  name     = google_cloud_run_v2_service.this.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
 # The identity Cloud Scheduler uses to call the sweep endpoint. Separate from
-# the runtime identity so the thing that triggers work cannot read the data.
+# the runtime identity so the thing that triggers work cannot read the data,
+# and it is this account's token the sweep handler will verify.
 resource "google_service_account" "scheduler" {
   project      = var.project_id
   account_id   = "titelheld-scheduler"
@@ -47,6 +76,9 @@ resource "google_service_account" "scheduler" {
   depends_on = [google_project_service.this]
 }
 
+# Redundant while allUsers holds the same role, and kept deliberately: if the
+# public binding ever goes away - because the webhook moved to its own service,
+# say - the sweep still has to work.
 resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
   project  = var.project_id
   location = google_cloud_run_v2_service.this.location

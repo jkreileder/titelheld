@@ -21,9 +21,11 @@ resource "google_cloud_run_v2_service" "this" {
   name     = var.service_name
   location = var.region
 
-  # The webhook is called by Strava, which cannot authenticate, so the service
-  # is reachable. Its defence is the unguessable path plus the verify token,
-  # and the sweep endpoint additionally requires an OIDC token.
+  # Strava cannot present a Google credential, so the webhook has to be
+  # reachable without one. ingress only controls the network path - it is the
+  # allUsers invoker binding in iam.tf that actually admits unauthenticated
+  # requests, and Cloud Run IAM is service-wide, so it admits them to every
+  # route including the sweep.
   ingress = "INGRESS_TRAFFIC_ALL"
 
   deletion_protection = false

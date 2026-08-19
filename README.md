@@ -243,13 +243,39 @@ runs: `terraform fmt -check`, `validate` and `tflint`.
 Secret **values** never appear in code, in tfvars, or in state. They are added out of band,
 once each.
 
+### Why the service is publicly invokable
+
+Strava's webhook cannot present a Google credential, so the service has to accept
+unauthenticated requests. Cloud Run's invoker permission is service-wide, so that admits
+anonymous callers to **every** route, the sweep included. `ingress` controls the network path,
+not authentication, and cannot narrow it.
+
+What actually defends each route:
+
+- **The webhook** — an unguessable path segment, plus the verify token compared in constant
+  time over hashes.
+- **The sweep** — an unguessable path segment, plus the OIDC token Cloud Scheduler attaches.
+  **Cloud Run does not check that token** while the service is publicly invokable, so the
+  application has to. That is a hard requirement for the phase that adds the sweep handler.
+
+Two services, one public and one private, is the right answer if the sweep ever does anything
+expensive. Today it would double the deployment to protect an endpoint whose only power is
+draining the queue slightly early.
+
 ### One-time bootstrap
 
 Terraform cannot create the project it stores its own state in, so this part is by hand:
 
 ```sh
 PROJECT=titelheld-XXXXXX          # project IDs are globally unique; pick a free one
-BILLING=$(gcloud billing accounts list --format='value(name)' | head -1)
+
+# Pick the billing account deliberately rather than taking the first one: the
+# project link and the budget must target the same account, or the budget
+# quietly watches a different bill. `value(name)` yields billingAccounts/XXXXXX
+# while --billing-account wants the bare ID, hence basename().
+gcloud billing accounts list --filter='open=true' \
+  --format='table(name.basename(), displayName, open)'
+BILLING=XXXXXX-XXXXXX-XXXXXX      # the bare ID from the first column, also used in tfvars
 REGION=europe-west3
 
 gcloud projects create "$PROJECT"
@@ -284,12 +310,25 @@ Then, in this order:
 1. **Add the secret values**, once each. They never pass through Terraform:
 
    ```sh
-   for name in strava-client-id strava-client-secret strava-verify-token                webhook-path-secret llm-api-key; do
-     printf %s "$VALUE" | gcloud secrets versions add "$name" --data-file=- --project="$PROJECT"
-   done
+   add() { printf %s "$2" | gcloud secrets versions add "$1" --data-file=- --project="$PROJECT"; }
+
+   add strava-client-id      "<client id from the Strava API settings>"
+   add strava-client-secret  "<client secret>"
+   add strava-verify-token   "$(openssl rand -hex 16)"   # you choose this; Strava echoes it
+   add webhook-path-secret   "$(openssl rand -hex 16)"   # the unguessable path segment
+   add llm-api-key           "<provider API key>"
    ```
 
-   Generate `webhook-path-secret` rather than choosing it: `openssl rand -hex 16`.
+   Each secret gets its own value, so they are added one at a time. A loop over a
+   single variable writes the same value five times, or — if the variable is
+   never set — five empty ones.
+
+   Read the generated values back when you need them, for the Strava
+   subscription callback URL and the verify token:
+
+   ```sh
+   gcloud secrets versions access latest --secret=webhook-path-secret --project="$PROJECT"
+   ```
 
 2. **Set `base_url` and apply again.** Cloud Run mints the URL, so it cannot be known on the
    first apply. Read it from the `service_url` output, put it in `terraform.tfvars`, and

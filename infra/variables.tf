@@ -43,6 +43,12 @@ variable "github_repository" {
   default     = "jkreileder/titelheld"
 }
 
+variable "deploy_environment" {
+  description = "GitHub Actions environment the deploy job must run in. Federation requires it, so a workflow that does not name this environment cannot assume the deploy identity even from this repository."
+  type        = string
+  default     = "production"
+}
+
 variable "base_url" {
   description = "Public base URL of the deployed service, used to build the OAuth redirect. Empty on the first apply: Cloud Run mints the URL, so it is read from the service_url output and set on a second apply. See the apply order in the README."
   type        = string
