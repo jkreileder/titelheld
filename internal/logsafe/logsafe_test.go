@@ -81,7 +81,7 @@ func TestStrings(t *testing.T) {
 	}
 }
 
-func TestStringNeutralisesNonCcCategories(t *testing.T) {
+func TestStringNeutralizesNonCcCategories(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

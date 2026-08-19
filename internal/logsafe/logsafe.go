@@ -1,9 +1,9 @@
-// Package logsafe neutralises untrusted text before it reaches a log.
+// Package logsafe neutralizes untrusted text before it reaches a log.
 //
 // Values that arrive from Strava, from a webhook body, or later from a
 // geocoder or an LLM are attacker-influenced. Structured JSON logging already
 // escapes them, but log output is read through many tools — a text handler, a
-// terminal, a log viewer — and not all of them are as careful. Sanitising at
+// terminal, a log viewer — and not all of them are as careful. Sanitizing at
 // the call site keeps that guarantee independent of which handler is installed.
 package logsafe
 
@@ -13,7 +13,7 @@ import (
 	"unicode/utf8"
 )
 
-// MaxLen bounds a sanitised value. Long enough for a Strava title or sport
+// MaxLen bounds a sanitized value. Long enough for a Strava title or sport
 // type, short enough that a large field cannot flood the log.
 const MaxLen = 256
 
@@ -60,7 +60,7 @@ func String(s string) string {
 	return b.String()
 }
 
-// Strings sanitises every element of a slice.
+// Strings sanitizes every element of a slice.
 func Strings(values []string) []string {
 	if values == nil {
 		return nil

@@ -8,7 +8,7 @@ import "strings"
 // The gate this feeds is deliberately asymmetric: a title that is *not* in the
 // table is treated as human- or app-authored and the activity is skipped. A
 // missing pattern therefore costs a naming opportunity, never a wrong write —
-// which is why best-effort localisation is acceptable here.
+// which is why best-effort localization is acceptable here.
 //
 // English is authoritative: it is the set this athlete's account actually
 // produces and it matches the pattern given in the build spec.
@@ -36,7 +36,7 @@ var (
 	// leading adjective. Only "Gewichtstraining am Abend" has been observed on
 	// real data (Whoop-pushed strength sessions arrive with the German
 	// default); the remaining nouns follow the same construction and are
-	// unverified. They are safe to carry: an unrecognised title fails closed.
+	// unverified. They are safe to carry: an unrecognized title fails closed.
 	germanDayparts = []string{
 		"am Morgen",
 		"am Mittag",
@@ -57,8 +57,8 @@ var (
 	}
 )
 
-// defaultTitles holds every recognised Strava default title. Built once at
-// package initialisation; exact-match lookup replaces an anchored regex.
+// defaultTitles holds every recognized Strava default title. Built once at
+// package initialization; exact-match lookup replaces an anchored regex.
 var defaultTitles = buildDefaultTitles()
 
 func buildDefaultTitles() map[string]struct{} {

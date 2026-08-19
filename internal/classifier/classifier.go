@@ -172,7 +172,7 @@ type Config struct {
 	Work Geofence
 
 	// ToWorkTitle and ToHomeTitle are the titles ActivityFix writes for
-	// commutes. They are matched to recognise an already-titled commute as
+	// commutes. They are matched to recognize an already-titled commute as
 	// [TierCommute] — such an activity is still skipped by the default-title
 	// gate, so this only affects which tier gets reported. Empty disables the
 	// respective match.
@@ -422,7 +422,7 @@ func meetsSportThresholds(activity Activity, cfg Config) bool {
 		activity.MovingTimeSeconds >= cfg.SportMinMovingTimeSeconds
 }
 
-// commuteDirection recognises a work commute.
+// commuteDirection recognizes a work commute.
 //
 // The primary signal is the title ActivityFix writes; that path exists so an
 // already-handled commute is still reported as such. The geofence fallback is

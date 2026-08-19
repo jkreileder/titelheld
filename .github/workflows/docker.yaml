@@ -125,7 +125,7 @@ jobs:
           echo "The image refuses to start unconfigured, as it should."
 
       # Reporting, not gating. There is genuinely something to see here: the
-      # scan catalogues the distroless base packages together with the Go
+      # scan catalogs the distroless base packages together with the Go
       # modules read out of the binary, around forty in total.
       #
       # govulncheck already covers the Go modules, and covers them better,

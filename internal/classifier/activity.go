@@ -23,7 +23,7 @@ type Activity struct {
 	Name string
 
 	// Description is the activity's description. Whoop-sourced activities are
-	// recognised by the word "Strain" appearing here.
+	// recognized by the word "Strain" appearing here.
 	Description string
 
 	// SportType is Strava's sport_type value ("Ride", "GravelRide",
@@ -39,7 +39,7 @@ type Activity struct {
 	// sets for short rides near home.
 	Commute bool
 
-	// DistanceMeters is the recorded distance in metres.
+	// DistanceMeters is the recorded distance in meters.
 	DistanceMeters float64
 
 	// MovingTimeSeconds is Strava's moving_time in seconds.

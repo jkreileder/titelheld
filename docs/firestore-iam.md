@@ -27,7 +27,7 @@ Only `tokens` genuinely has to survive. Strava rotates the refresh token on ever
 invalidates the previous one immediately, so losing that document means re-running the
 authorization flow by hand. The other three are a work queue and two caches.
 
-Location data is minimised, not absent. No coordinate is stored as a *field*: `geocache`
+Location data is minimized, not absent. No coordinate is stored as a *field*: `geocache`
 documents hold place names only. The coordinate that produced a place does survive as the
 document ID, rounded to three decimals — roughly 110 m, and enough to reconstruct the rough
 shape of a route from the cache alone. Nothing finer is retained anywhere.
