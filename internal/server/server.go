@@ -245,7 +245,7 @@ func missingScopes(granted []string) []string {
 // newState issues a single-use CSRF state.
 //
 // States live in memory, which is correct only because the service runs with
-// max-instances=1: a second instance would not recognise a state issued by the
+// max-instances=1: a second instance would not recognize a state issued by the
 // first. The authorization flow is a one-time bootstrap, so this is the cheapest
 // thing that works — but it is the one place a change to max-instances would
 // silently break.

@@ -1,6 +1,6 @@
 // Package app builds and runs the service.
 //
-// It lives here rather than in cmd/ so that everything with behaviour is
+// It lives here rather than in cmd/ so that everything with behavior is
 // testable: the command is a shim with nothing in it worth a test.
 package app
 

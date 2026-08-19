@@ -19,7 +19,7 @@ const DefaultAPIBaseURL = "https://www.strava.com/api/v3"
 //
 // The zero value is [WriteModeDryRun]. That is deliberate: a Client built from
 // a zero-valued config, or a caller that forgets to set the field, gets the
-// safe behaviour rather than the destructive one.
+// safe behavior rather than the destructive one.
 type WriteMode int
 
 const (
@@ -145,7 +145,7 @@ func (c *Client) RateLimit() RateLimit {
 // It is unexported on purpose: [UpdateActivityName] is the only method that
 // builds a mutating request, so keeping the transport private means there is no
 // exported path to a PUT that skips the write guard. The check below is a
-// second, structural line of defence for any future method.
+// second, structural line of defense for any future method.
 func (c *Client) do(ctx context.Context, method, path string, body func() (*strings.Reader, string)) (*http.Response, error) {
 	if method != http.MethodGet && c.writeMode != WriteModeEnabled {
 		return nil, fmt.Errorf("strava: refusing %s %s: %w", method, path, ErrDryRun)

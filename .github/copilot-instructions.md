@@ -34,9 +34,9 @@
   bootstrap, and the webhook at its unguessable path.
 - `internal/app/` wires everything together and serves; it takes `getenv` as a
   parameter so the whole service can be started in a test.
-- `internal/logsafe/` neutralises untrusted text before it reaches a log. Use it
+- `internal/logsafe/` neutralizes untrusted text before it reaches a log. Use it
   for anything from a webhook body, Strava, a geocoder or an LLM.
-- `cmd/titelheld/` is a shim with no behaviour, and is excluded from coverage.
+- `cmd/titelheld/` is a shim with no behavior, and is excluded from coverage.
 - `infra/` is the GCP deployment in Terraform. `make tf-check` runs exactly what
   CI runs. CI never applies: applies are by hand. Secret Manager *values* never
   appear in code, tfvars or state - only the secret resources are managed.
@@ -52,7 +52,7 @@ subscription has been created.
 ## Design Rules That Are Not Negotiable
 
 - **Rename only.** Sport type, gear and descriptions belong to other tools.
-- **Fail closed.** An unrecognised title means someone else named the activity;
+- **Fail closed.** An unrecognized title means someone else named the activity;
   skip it. Never widen the default-title table by guessing.
 - **Tier before gate.** `Classify` assigns a tier regardless of the current title,
   then the default-title gate decides whether an action may write. Keep those two

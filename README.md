@@ -30,7 +30,14 @@ everything that should stay boring untouched.
 - [Geography](#geography)
 - [Local development](#local-development)
 - [Infrastructure](#infrastructure)
+  - [What Terraform manages](#what-terraform-manages)
+  - [Why the service is publicly invocable](#why-the-service-is-publicly-invocable)
+  - [One-time bootstrap](#one-time-bootstrap)
+  - [Apply order](#apply-order)
 - [Cutting a release](#cutting-a-release)
+  - [The steps](#the-steps)
+  - [What the tag push does](#what-the-tag-push-does)
+  - [Versions do not turn on writes](#versions-do-not-turn-on-writes)
 - [Attribution](#attribution)
 - [License](#license)
 
@@ -80,8 +87,8 @@ ride, and a commute-tagged run does not become an errand. Tier 3's geofence matc
 the tier-5 thresholds, so a long ride that merely finishes at work stays a sport ride; a title
 ActivityFix already wrote is taken at face value whatever the ride's size.
 
-The **skip gate** runs after tier assignment: unless the activity's current title is a recognised
-Strava default, the action is downgraded to skip. The gate fails closed — an unrecognised title is
+The **skip gate** runs after tier assignment: unless the activity's current title is a recognized
+Strava default, the action is downgraded to skip. The gate fails closed — an unrecognized title is
 assumed to be authored by a human or another tool.
 
 ## Writes and dry run
@@ -93,7 +100,7 @@ by doing nothing:
 - `strava.WriteMode`'s zero value is `WriteModeDryRun`, so a client built without thinking
   about it refuses to write.
 - `DRY_RUN` stays on unless it holds an explicit falsy value (`0`, `false`, `no`, `off`).
-  Anything unrecognised is reported as an error *and* leaves dry run on — a typo must never be
+  Anything unrecognized is reported as an error *and* leaves dry run on — a typo must never be
   what lets the service loose.
 - `UpdateActivityName` refuses with `ErrDryRun` before building a request, and the transport
   refuses every non-GET method again, so a future write path cannot slip past the first check.
@@ -135,7 +142,7 @@ service binds to whoever authorizes first and refuses anyone else afterwards.
 The verify token is compared in constant time over hashes, so neither its contents nor its
 length leak. `WEBHOOK_PATH_SECRET` is validated at load: a segment containing a space would
 panic the router at registration, and one of the form `{x}` would register as a wildcard and
-remove the unguessable-path defence entirely.
+remove the unguessable-path defense entirely.
 
 Events are acknowledged before the queue is written, which is the order Strava's two-second
 budget assumes. A delivery that is never acknowledged is retried, and the queue is idempotent,
@@ -149,9 +156,9 @@ granularity irrelevant. This phase only enqueues; the sweep endpoint lands with 
 ## Development
 
 ```sh
-make          # lint, test, build
-make test     # go test -race with coverage
-make lint     # go vet + golangci-lint
+make           # lint, test, build
+make test      # go test -race with coverage
+make lint      # go vet + golangci-lint
 make vulncheck # govulncheck
 ```
 
@@ -244,7 +251,7 @@ runs: `terraform fmt -check`, `validate` and `tflint`.
 Secret **values** never appear in code, in tfvars, or in state. They are added out of band,
 once each.
 
-### Why the service is publicly invokable
+### Why the service is publicly invocable
 
 Strava's webhook cannot present a Google credential, so the service has to accept
 unauthenticated requests. Cloud Run's invoker permission is service-wide, so that admits
@@ -382,7 +389,7 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
    ```
 
    Add required reviewers as well if you want a human gate on every release; the provider's
-   condition already limits federation to tag refs, so this is defence in depth rather than
+   condition already limits federation to tag refs, so this is defense in depth rather than
    the only lock.
 
 6. **Deploy.** The first Cloud Run revision runs a placeholder image

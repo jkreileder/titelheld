@@ -112,7 +112,7 @@ type Store interface {
 // NamedLog records what this service has written.
 //
 // It serves two purposes: an activity is named at most once ever, and the
-// webhook update event caused by our own rename is recognised and dropped
+// webhook update event caused by our own rename is recognized and dropped
 // rather than treated as a human retitling the activity.
 type NamedLog interface {
 	// MarkNamed records that an activity was given a title by this service.

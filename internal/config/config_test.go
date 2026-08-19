@@ -98,7 +98,7 @@ func TestDryRunParsing(t *testing.T) {
 		{raw: "FALSE", wantWritesEnabled: true},
 		{raw: "no", wantWritesEnabled: true},
 		{raw: "off", wantWritesEnabled: true},
-		// Anything unrecognised is an error and leaves writes disabled: a typo
+		// Anything unrecognized is an error and leaves writes disabled: a typo
 		// must never be what lets this service write.
 		{raw: "flase", wantWritesEnabled: false, wantErr: true},
 		{raw: "2", wantWritesEnabled: false, wantErr: true},
@@ -231,7 +231,7 @@ func TestOptionalOverrides(t *testing.T) {
 	}
 }
 
-func TestWebhookPathSecretIsNormalised(t *testing.T) {
+func TestWebhookPathSecretIsNormalized(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Load(env(map[string]string{"WEBHOOK_PATH_SECRET": "/wrapped-segment/"}))

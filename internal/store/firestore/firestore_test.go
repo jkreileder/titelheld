@@ -142,7 +142,7 @@ func TestAnyToken(t *testing.T) {
 }
 
 // The cache key comes from another package, so document IDs Firestore rejects
-// must be neutralised rather than assumed away.
+// must be neutralized rather than assumed away.
 func TestGeocodeKeysThatAreNotValidDocumentIDs(t *testing.T) {
 	requireEmulator(t)
 

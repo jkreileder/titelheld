@@ -41,7 +41,7 @@ resource "google_project_iam_member" "runtime_firestore" {
 # invoker permission is service-wide, so this admits anonymous callers to every
 # route, the sweep included.
 #
-# Where the real defences are, given that:
+# Where the real defenses are, given that:
 #
 #   * The webhook is guarded by an unguessable path segment and by the verify
 #     token, compared in constant time.

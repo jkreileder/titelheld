@@ -21,7 +21,7 @@ import (
 // This is not cosmetic. http.ServeMux parses its patterns: a segment containing
 // a space registers as a malformed pattern and panics, and a segment of the
 // form {x} registers as a *wildcard*, which would match any path and remove the
-// unguessable-path defence entirely. Both would surface as a crash loop or a
+// unguessable-path defense entirely. Both would surface as a crash loop or a
 // silent hole after the service had already logged a healthy start.
 var pathSecretPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{8,128}$`)
 

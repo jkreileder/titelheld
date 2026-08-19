@@ -217,7 +217,7 @@ func (h *Handler) intake(w http.ResponseWriter, r *http.Request) {
 // process decides what to do with an acknowledged event.
 func (h *Handler) process(ctx context.Context, event Event) {
 	// object_type and aspect_type come straight off the wire, so they are
-	// sanitised before they reach the log. The numeric fields cannot carry a
+	// sanitized before they reach the log. The numeric fields cannot carry a
 	// forged line.
 	log := h.logger.With(
 		"object_type", logsafe.String(event.ObjectType),

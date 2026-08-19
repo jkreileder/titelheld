@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// fakeStore is a minimal TokenStore whose behaviour tests can steer.
+// fakeStore is a minimal TokenStore whose behavior tests can steer.
 type fakeStore struct {
 	token    Token
 	loadErr  error

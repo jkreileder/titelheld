@@ -11,7 +11,7 @@ coverage:
       default:
         target: 90%
 
-# cmd/ is a shim with no behaviour: it constructs a logger, installs the signal
+# cmd/ is a shim with no behavior: it constructs a logger, installs the signal
 # handler and calls internal/app. Everything worth testing lives in internal/,
 # so counting the entry point only ever drags the figure down without telling
 # anyone anything.
