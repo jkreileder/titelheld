@@ -118,7 +118,8 @@
             "description": "Pin moby/buildkit (setup-buildx-action driver image) by version + digest.",
             "managerFilePatterns": [
                 ".github/workflows/docker.yaml",
-                ".github/workflows/release-image.yaml"
+                ".github/workflows/release-image.yaml",
+                ".github/workflows/rescan.yaml"
             ],
             "matchStrings": [
                 "image=(?<depName>moby/buildkit):(?<currentValue>v[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"

@@ -98,6 +98,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # Timestamps come from the tagged commit rather than the clock, so
+      # rebuilding this tag reproduces this image. The default fetch-depth of
+      # 1 is enough for the tip commit's date.
+      - name: Set SOURCE_DATE_EPOCH from the commit
+        run: |
+          set -euo pipefail
+
+          epoch="$(git log -1 --pretty=%ct)"
+
+          if ! printf '%s' "$epoch" | grep -Eq '^[0-9]+$'; then
+            echo "::error::could not read a commit timestamp for SOURCE_DATE_EPOCH"
+            exit 1
+          fi
+
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$epoch"
+
       # No exported key: the workflow presents its GitHub OIDC token and gets a
       # short-lived credential back. The provider only accepts tokens from this
       # repository and this environment.
@@ -159,12 +176,26 @@ jobs:
       # Do not add a cache here for speed. The couple of minutes it would save
       # is not worth breaking the commit-to-image chain the attestation below
       # is a claim about.
+      #
+      # Reproducible, with one caveat worth knowing: the per-platform image is
+      # what reproduces. The index digest above it does not, because buildx
+      # provenance carries a fresh invocationId and start/finish times per
+      # build. That is deliberate upstream - provenance describes an
+      # invocation, and a third party rebuilding is meant to arrive at the same
+      # subject while signing their own provenance over it.
       - name: Build and push the image
         id: build-and-push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        env:
+          SOURCE_DATE_EPOCH: ${{ env.SOURCE_DATE_EPOCH }}
         with:
           context: .
-          push: true
+          # Spelled as `outputs` rather than `push` because rewrite-timestamp
+          # is an image-exporter attribute and the `push` input cannot carry
+          # one. SOURCE_DATE_EPOCH alone pins only the config, history and
+          # index timestamps; rewrite-timestamp is what rewrites file mtimes
+          # inside the layers, and without it the image is not reproducible.
+          outputs: type=image,push=true,rewrite-timestamp=true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
