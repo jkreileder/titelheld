@@ -136,9 +136,13 @@ jobs:
       # only-fixed keeps the report to findings something can be done about.
       # Matches with no fix available are counted in the log line but kept out
       # of the Security tab, so drop the flag if you want to see them.
+      # No continue-on-error. fail-build: false already keeps findings from
+      # gating, so continue-on-error would only hide the scanner itself
+      # breaking - a blocked endpoint or a failed database download sets no
+      # outputs, which silently skips the upload below and leaves a green job
+      # with nothing in the Security tab.
       - name: Scan the image with Grype
         id: grype
-        continue-on-error: true
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
           image: titelheld:ci

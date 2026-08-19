@@ -9,14 +9,15 @@ name: Rescan released image
 # deliberately unusable here: its Workload Identity condition requires a
 # refs/tags/v ref, and the production environment accepts only v* tags, so a
 # scheduled run on main cannot assume it. Rather than weaken either, the image
-# is rebuilt from the tag — and because the Dockerfile pins both base images
-# by digest, go.sum is fixed at that tag, and the release build is reproducible
-# (SOURCE_DATE_EPOCH from the commit, rewrite-timestamp on the exporter), the
-# rebuild reproduces the released image rather than merely resembling it.
+# is rebuilt from the tag, and because the Dockerfile pins both base images by
+# digest and go.sum is fixed at that tag, the rebuild carries the released
+# package set — which is what a CVE rescan is about.
 #
-# It does not compare digests: the released one is only in Artifact Registry,
-# which this workflow deliberately cannot reach. What it establishes is the
-# package set, which is what a CVE rescan is about.
+# It is not byte-identical to the released image and does not claim to be: it
+# exports through the docker exporter so Grype can scan it locally, without
+# the rewrite-timestamp the release export uses, and it takes the buildkit
+# driver pin from main rather than from the tag. Nothing here compares
+# digests, and nothing should read this as an equality check.
 #
 # Unlike the build-time scan, this one is allowed to fail: a red run is the
 # notification that a fixable advisory now affects the released image.
@@ -87,10 +88,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Match release.yaml's own gate exactly: it refuses anything that is
+          # not final SemVer, so a v1.2.0-rc1 was never built or deployed and
+          # must not be what gets rescanned. The v* glob would also catch a
+          # tag like "vendor-freeze", and git's versionsort ranks a
+          # pre-release above its release without versionsort.suffix set.
+          #
           # No pipe to head: under `set -o pipefail`, head exiting early can
           # SIGPIPE git and fail the step for no reason. Take the first line
           # from the variable instead.
-          tags=$(git tag -l 'v*' --sort=-v:refname)
+          tags=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
           tag=${tags%%$'\n'*}
 
           if [ -z "$tag" ]; then
@@ -108,23 +115,6 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
         run: git checkout --detach "refs/tags/$TAG"
 
-      # Same commit timestamp the release build used, so the rebuild sees the
-      # inputs the release saw rather than today's clock.
-      - name: Set SOURCE_DATE_EPOCH from the release commit
-        if: ${{ steps.release.outputs.tag != '' }}
-        run: |
-          set -euo pipefail
-
-          epoch="$(git log -1 --pretty=%ct)"
-
-          if ! printf '%s' "$epoch" | grep -Eq '^[0-9]+$'; then
-            echo "::error::could not read a commit timestamp for SOURCE_DATE_EPOCH"
-            exit 1
-          fi
-
-          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
-          echo "SOURCE_DATE_EPOCH=$epoch"
-
       - name: Set up Buildx
         if: ${{ steps.release.outputs.tag != '' }}
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -141,8 +131,6 @@ jobs:
       - name: Rebuild the released image
         if: ${{ steps.release.outputs.tag != '' }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        env:
-          SOURCE_DATE_EPOCH: ${{ env.SOURCE_DATE_EPOCH }}
         with:
           context: .
           load: true
@@ -159,8 +147,29 @@ jobs:
         with:
           image: titelheld:rescan
           only-fixed: true
-          add-cpes-if-none: true
+          # No add-cpes-if-none here, unlike docker.yaml. Guessing a CPE for a
+          # package that has none is the usual source of false positives, and
+          # this run gates on the result with nowhere to record an exception -
+          # one bad match would mean a red run every morning until someone
+          # edited this file.
           fail-build: true
+
+      # Grype failing because an endpoint was blocked or its database would not
+      # download looks identical to Grype failing because it found something.
+      # They call for different responses, so say which happened: a run that
+      # produced no SARIF did not scan.
+      - name: Say why the scan failed
+        if: ${{ always() && steps.grype.outcome == 'failure' }}
+        env:
+          SARIF: ${{ steps.grype.outputs.sarif }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$SARIF" ]; then
+            echo "::error::Grype produced no SARIF, so it did not complete. This is a broken scan, not a finding - check the egress policy and the database download above."
+          else
+            echo "::error::Grype found a fixable advisory against the released image. See the Security tab."
+          fi
 
       # Runs even when the scan failed — that is exactly when the findings are
       # worth having in the Security tab.
