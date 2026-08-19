@@ -154,7 +154,7 @@ jobs:
       # buildx rather than plain docker build: the Dockerfile relies on cache
       # mounts and a pinned BuildKit frontend.
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           # The driver image is what actually executes the build, so it is
           # pinned by digest like every other image here. Renovate keeps it
