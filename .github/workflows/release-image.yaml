@@ -85,6 +85,7 @@ jobs:
             production.cloudflare.docker.com:443
             production.cloudfront.docker.com:443
             proxy.golang.org:443
+            raw.githubusercontent.com:443
             registry-1.docker.io:443
             release-assets.githubusercontent.com:443
             storage.googleapis.com:443
@@ -117,7 +118,7 @@ jobs:
         with:
           registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
           username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.auth_token }}
+          password: ${{ steps.auth.outputs.access_token }}
 
       # The version tags are derived from the git tag that triggered the run.
       # {{version}} is the whole SemVer, so v0.1.0 also publishes 0.1 and 0 —
@@ -233,7 +234,7 @@ jobs:
         with:
           registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
           username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.auth_token }}
+          password: ${{ steps.auth.outputs.access_token }}
 
       # This is the signature and the SLSA provenance in one step: the
       # attestation is signed keylessly through Sigstore against this job's
