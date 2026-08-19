@@ -180,7 +180,12 @@ jobs:
           # attest job produces — but it is what a consumer inspecting the
           # image in the registry actually reads.
           provenance: mode=max,version=v1
-          sbom: true
+          # Pin the SBOM generator rather than letting buildx pull its default
+          # by a floating tag: it runs during the build, so it is as much a
+          # build input as the base images. Renovate keeps it current; see the
+          # custom manager in .github/renovate.json. Note the Docker Hub tag
+          # carries no leading v, unlike the GitHub release it is cut from.
+          sbom: generator=docker/buildkit-syft-scanner:1.12.0@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
 
   attest:
     name: Attest

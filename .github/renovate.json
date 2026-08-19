@@ -123,6 +123,17 @@
             "matchStrings": [
                 "image=(?<depName>moby/buildkit):(?<currentValue>v[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
             ]
+        },
+        {
+            "customType": "regex",
+            "datasourceTemplate": "docker",
+            "description": "Pin docker/buildkit-syft-scanner (buildx SBOM generator) by version + digest.",
+            "managerFilePatterns": [
+                ".github/workflows/release-image.yaml"
+            ],
+            "matchStrings": [
+                "generator=(?<depName>docker/buildkit-syft-scanner):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+            ]
         }
     ],
     "extends": [
