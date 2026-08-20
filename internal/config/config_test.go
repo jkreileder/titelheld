@@ -384,3 +384,114 @@ func TestNominatimUserAgent(t *testing.T) {
 		t.Errorf("User-Agent = %q, want the override", cfg.NominatimUserAgent)
 	}
 }
+
+func TestLLMDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(map[string]string{"FIRESTORE_PROJECT": "titelheld-test"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.LLM.Provider != ProviderVertex {
+		t.Errorf("provider = %q, want %q", cfg.LLM.Provider, ProviderVertex)
+	}
+
+	if cfg.LLM.VertexProject != "titelheld-test" {
+		t.Errorf("vertex project = %q, want the Firestore project", cfg.LLM.VertexProject)
+	}
+
+	if cfg.LLM.VertexLocation != DefaultVertexLocation {
+		t.Errorf("vertex location = %q, want %q", cfg.LLM.VertexLocation, DefaultVertexLocation)
+	}
+
+	// The default provider is keyless; nothing should have been read.
+	if cfg.LLM.APIKey != "" {
+		t.Errorf("an API key was loaded for the keyless provider: %q", cfg.LLM.APIKey)
+	}
+}
+
+func TestLLMAnthropicRequiresAKey(t *testing.T) {
+	t.Parallel()
+
+	_, err := Load(env(map[string]string{"LLM_PROVIDER": "anthropic"}))
+	if err == nil {
+		t.Fatal("anthropic without a key = nil error, want error")
+	}
+
+	if !strings.Contains(err.Error(), EnvLLMAPIKey) {
+		t.Errorf("error does not name the missing variable: %v", err)
+	}
+}
+
+func TestLLMAnthropicWithAKey(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(map[string]string{"LLM_PROVIDER": "anthropic", "LLM_API_KEY": "k"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.LLM.Provider != ProviderAnthropic || cfg.LLM.APIKey != "k" {
+		t.Errorf("llm = %+v", cfg.LLM)
+	}
+}
+
+func TestLLMRejectsAnUnknownProvider(t *testing.T) {
+	t.Parallel()
+
+	if _, err := Load(env(map[string]string{"LLM_PROVIDER": "openai"})); err == nil {
+		t.Error("an unknown provider = nil error, want error")
+	}
+}
+
+// Machine-title patterns are newline-separated because they are regular
+// expressions, and a comma inside one is ordinary rather than a separator.
+func TestLLMListsAreParsed(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(map[string]string{
+		"BANNED_WORDS":           "Epic, Crushing ,, Beast",
+		"MACHINE_TITLE_PATTERNS": "^A{1,3} Ride$\n\n^B Ride$",
+		"VERTEX_LOCATION":        "europe-west3",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := len(cfg.LLM.BannedWords); got != 3 {
+		t.Errorf("banned words = %v, want 3 entries", cfg.LLM.BannedWords)
+	}
+
+	if got := cfg.LLM.MachineTitlePatterns; len(got) != 2 || got[0] != "^A{1,3} Ride$" {
+		t.Errorf("machine-title patterns = %q, want the comma inside the pattern preserved", got)
+	}
+
+	if cfg.LLM.VertexLocation != "europe-west3" {
+		t.Errorf("vertex location = %q", cfg.LLM.VertexLocation)
+	}
+}
+
+// VERTEX_LOCATION is interpolated into the request host, so a malformed value
+// would send the runtime account's credentials somewhere this deployment never
+// meant to reach.
+func TestLLMRejectsAMalformedVertexLocation(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{"evil.example/x", "europe west3", "EUROPE-WEST3", "-west3", ""} {
+		vars := map[string]string{"VERTEX_LOCATION": bad}
+		if bad == "" {
+			continue // empty falls back to the default, which is covered elsewhere
+		}
+
+		if _, err := Load(env(vars)); err == nil {
+			t.Errorf("VERTEX_LOCATION=%q was accepted", bad)
+		}
+	}
+
+	for _, good := range []string{"europe-west3", "europe-west4", "us-central1", "global"} {
+		if _, err := Load(env(map[string]string{"VERTEX_LOCATION": good})); err != nil {
+			t.Errorf("VERTEX_LOCATION=%q was rejected: %v", good, err)
+		}
+	}
+}

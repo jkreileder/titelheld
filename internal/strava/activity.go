@@ -36,9 +36,22 @@ type Activity struct {
 	Private bool `json:"private"`
 	Manual  bool `json:"manual"`
 
+	// StartDateLocal is the athlete's local wall-clock time, and it is what a
+	// title should be built from: a ride at 23:30 local on a Saturday is
+	// Sunday in UTC, and Strava's own default titles ("Morning Ride") come
+	// from local time too.
+	//
+	// Strava sends it with a "Z" suffix despite it not being UTC, so this
+	// parses to a time whose Hour and Weekday are the local ones but whose
+	// location says UTC. Read the fields; do not convert. Calling UTC or In on
+	// it moves the ride to a different clock than the one it happened on.
 	StartDateLocal time.Time `json:"start_date_local"`
-	StartDate      time.Time `json:"start_date"`
-	Timezone       string    `json:"timezone"`
+
+	// StartDate is the real instant, in UTC.
+	StartDate time.Time `json:"start_date"`
+
+	// Timezone is Strava's descriptive form, e.g. "(GMT+01:00) Europe/Berlin".
+	Timezone string `json:"timezone"`
 
 	StartLatLng []float64 `json:"start_latlng"`
 	EndLatLng   []float64 `json:"end_latlng"`

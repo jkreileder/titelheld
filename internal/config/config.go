@@ -79,6 +79,10 @@ type Config struct {
 	FirestoreProject  string
 	FirestoreDatabase string
 
+	// LLM configures the naming layer: which provider, which model, and the
+	// lists that shape a title. See llm.go.
+	LLM LLM
+
 	// NominatimUserAgent identifies this service to Nominatim, whose usage
 	// policy requires a real, contactable identity. It defaults to the service
 	// name plus BaseURL, which is contactable enough for a single-athlete
@@ -184,6 +188,8 @@ func Load(getenv func(string) string) (Config, error) {
 		cfg.WebhookPath = "/webhook/" + pathSecret
 		cfg.AuthPath = "/auth/" + pathSecret
 	}
+
+	cfg.LLM = loadLLM(getenv, cfg.FirestoreProject, &errs)
 
 	if raw := strings.TrimSpace(getenv(EnvPort)); raw != "" {
 		port, err := strconv.Atoi(raw)
