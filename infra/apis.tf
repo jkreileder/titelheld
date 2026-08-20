@@ -3,6 +3,7 @@
 # project might rely on.
 locals {
   services = [
+    "aiplatform.googleapis.com",
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
     "cloudbilling.googleapis.com",

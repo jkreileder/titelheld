@@ -130,6 +130,54 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
 | `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
 
+Naming. The default provider is keyless — Gemini is called through Vertex AI with the runtime
+service account's own credentials, so `LLM_API_KEY` exists only for the Anthropic alternative
+and is required only when that is selected.
+
+| Variable                 | Required     | Default              | Purpose                                       |
+| ------------------------ | ------------ | -------------------- | --------------------------------------------- |
+| `LLM_PROVIDER`           | no           | `gemini`             | `gemini` (Vertex, keyless) or `anthropic`     |
+| `LLM_MODEL`              | no           | provider default     | Overrides the shipped, pinned model ID        |
+| `LLM_API_KEY`            | for Anthropic| —                    | Never read when the provider is `gemini`      |
+| `VERTEX_PROJECT`         | no           | `FIRESTORE_PROJECT`  | Project the Vertex call bills to              |
+| `VERTEX_LOCATION`        | no           | `europe-west3`       | Vertex region — see below                     |
+| `BANNED_WORDS`           | no           | shipped list         | Comma-separated; rejected in a title          |
+| `MACHINE_TITLE_PATTERNS` | no           | Xert's pattern       | Newline-separated regexes; see below          |
+
+`MACHINE_TITLE_PATTERNS` is newline-separated rather than comma-separated because the entries
+are regular expressions, and a comma inside `{1,3}` is not a separator.
+
+The shipped model IDs are pinned, and each is recorded in the source next to the documentation
+URL it was verified against and the date — `internal/naming/vertex.go` and
+`internal/naming/anthropic.go`. They are not taken from a model's training data.
+
+### Confirming the Vertex region
+
+Gemini model availability is regional, and it does not follow the documentation's model index.
+That index lists `gemini-3.7-flash` as the newest Flash model; reading the publisher metadata in
+this project's own regions returns `404` for it in both `europe-west3` and `europe-west4`, while
+`gemini-3.5-flash` answers `200` and reports `launchStage: GA` in both. The shipped default is
+therefore `gemini-3.5-flash` in `europe-west3`, the same region as Firestore.
+
+Recheck it the same way when a newer model lands — a metadata read, not an inference call, so it
+costs nothing and generates no tokens:
+
+```sh
+PROJECT=titelheld-XXXXXX
+MODEL=gemini-3.5-flash
+
+for region in europe-west3 europe-west4; do
+  printf '%s: ' "$region"
+  curl -s -o /dev/null -w '%{http_code}\n' \
+    -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    -H "x-goog-user-project: ${PROJECT}" \
+    "https://${region}-aiplatform.googleapis.com/v1/publishers/google/models/${MODEL}"
+done
+```
+
+`200` means the model is served there, `404` that it is not. The `x-goog-user-project` header is
+required: without it the call returns `403`, which says nothing about the model.
+
 ## HTTP surface
 
 | Route                    | Purpose                                                     |
@@ -245,18 +293,18 @@ plugins named by files in the pull request, so they wait until the change is on 
 
 ### What Terraform manages
 
-| Resource                | Notes                                                                                       |
-| ----------------------- | ------------------------------------------------------------------------------------------- |
-| Enabled APIs            | Run, Firestore, Secret Manager, Scheduler, Artifact Registry, IAM, STS, budgets             |
-| Firestore database      | Native mode, `europe-west3`, named `titelheld`, delete protection on                        |
-| Runtime service account | `roles/datastore.user` on the one database, plus an authoritative accessor on five secrets  |
-| Deploy service account  | Assumed by CI through WIF; `roles/run.developer` on the one service, not the project        |
-| Workload Identity pool  | Provider condition requires the repository, the `production` environment and a `v*` tag ref |
-| Secret Manager          | Secret **resources only** — no versions, no values                                          |
-| Artifact Registry       | Images CI pushes and Cloud Run runs                                                         |
-| Cloud Run service       | min 0 / max 1, `ignore_changes` on the image so CI owns revisions                           |
-| Cloud Scheduler         | The sweep, at an unguessable path, with an OIDC token the handler itself must verify        |
-| Budget alert            | €1, at 50/90/100%                                                                           |
+| Resource                | Notes                                                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Enabled APIs            | Run, Firestore, Secret Manager, Scheduler, Artifact Registry, Vertex AI, IAM, STS, budgets                                  |
+| Firestore database      | Native mode, `europe-west3`, named `titelheld`, delete protection on                                                        |
+| Runtime service account | `roles/datastore.user` on the one database, an accessor on five secrets, and `roles/aiplatform.user` so Gemini needs no key |
+| Deploy service account  | Assumed by CI through WIF; `roles/run.developer` on the one service, not the project                                        |
+| Workload Identity pool  | Provider condition requires the repository, the `production` environment and a `v*` tag ref                                 |
+| Secret Manager          | Secret **resources only** — no versions, no values                                                                          |
+| Artifact Registry       | Images CI pushes and Cloud Run runs                                                                                         |
+| Cloud Run service       | min 0 / max 1, `ignore_changes` on the image so CI owns revisions                                                           |
+| Cloud Scheduler         | The sweep, at an unguessable path, with an OIDC token the handler itself must verify                                        |
+| Budget alert            | €1, at 50/90/100%                                                                                                           |
 
 Secret **values** never appear in code, in tfvars, or in state. They are added out of band,
 once each.

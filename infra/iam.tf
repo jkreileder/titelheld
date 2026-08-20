@@ -86,3 +86,18 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.scheduler.email}"
 }
+
+# Naming runs on Vertex AI, and the runtime account calls it with the ambient
+# credentials Cloud Run gives it — there is no Gemini API key anywhere, which
+# is the whole reason this binding exists instead of a sixth secret.
+#
+# roles/aiplatform.user is the predefined role for *calling* models. It grants
+# no training, no tuning, no model or endpoint administration, and no access to
+# any data this project holds. Project-level rather than resource-conditioned
+# because a publisher model is not a resource in this project: it belongs to
+# Google, and there is nothing here to scope the binding to.
+resource "google_project_iam_member" "runtime_vertex" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+}
