@@ -36,12 +36,15 @@ const (
 
 // DefaultVertexLocation is where the Vertex call goes.
 //
-// It is configuration rather than a constant because Gemini model availability
-// is regional and the documentation did not state whether this model is served
-// in europe-west3, where Firestore lives. Frankfurt is not assumed: the value
-// here is the one the operator confirms once with the metadata probe in
-// README.md, and changing it needs no code change.
-const DefaultVertexLocation = "europe-west4"
+// europe-west3, the same region as Firestore, Cloud Run and the rest of this
+// deployment — and confirmed by reading the publisher-model metadata there
+// rather than assumed, because model availability is regional and does not
+// follow the documentation's model index.
+//
+// "global" is also accepted, and reaches models that no European region
+// serves, at the cost of routing the request wherever there is capacity. The
+// trade-off and the probe are in README.md.
+const DefaultVertexLocation = "europe-west3"
 
 // LLM is the naming layer's configuration.
 type LLM struct {
