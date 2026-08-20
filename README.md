@@ -235,18 +235,18 @@ runs: `terraform fmt -check`, `validate` and `tflint`.
 
 ### What Terraform manages
 
-| Resource                | Notes                                                                                          |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| Enabled APIs            | Run, Firestore, Secret Manager, Scheduler, Artifact Registry, IAM, STS, budgets                |
-| Firestore database      | Native mode, `europe-west3`, named `titelheld`, delete protection on                           |
-| Runtime service account | `roles/datastore.user` conditioned to the one database, plus accessor on five named secrets    |
-| Deploy service account  | Assumed by CI through WIF; deploys revisions, reads no data                                    |
-| Workload Identity pool  | Scoped to `repo:jkreileder/titelheld`, both in the provider condition and in the principal set |
-| Secret Manager          | Secret **resources only** — no versions, no values                                             |
-| Artifact Registry       | Images CI pushes and Cloud Run runs                                                            |
-| Cloud Run service       | min 0 / max 1, `ignore_changes` on the image so CI owns revisions                              |
-| Cloud Scheduler         | The sweep, at an unguessable path and requiring an OIDC token                                  |
-| Budget alert            | €1, at 50/90/100%                                                                              |
+| Resource                | Notes                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------- |
+| Enabled APIs            | Run, Firestore, Secret Manager, Scheduler, Artifact Registry, IAM, STS, budgets             |
+| Firestore database      | Native mode, `europe-west3`, named `titelheld`, delete protection on                        |
+| Runtime service account | `roles/datastore.user` on the one database, plus an authoritative accessor on five secrets  |
+| Deploy service account  | Assumed by CI through WIF; `roles/run.developer` on the one service, not the project        |
+| Workload Identity pool  | Provider condition requires the repository, the `production` environment and a `v*` tag ref |
+| Secret Manager          | Secret **resources only** — no versions, no values                                          |
+| Artifact Registry       | Images CI pushes and Cloud Run runs                                                         |
+| Cloud Run service       | min 0 / max 1, `ignore_changes` on the image so CI owns revisions                           |
+| Cloud Scheduler         | The sweep, at an unguessable path, with an OIDC token the handler itself must verify        |
+| Budget alert            | €1, at 50/90/100%                                                                           |
 
 Secret **values** never appear in code, in tfvars, or in state. They are added out of band,
 once each.
