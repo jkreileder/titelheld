@@ -191,9 +191,12 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check and bind as one step. Cloud Run runs at most one instance, so a
-	// mutex is the whole fix; it would not be if this ever scaled out, and the
-	// store would then have to do the check itself.
+	// Check and bind as one step: the decision below is sound only while no
+	// other callback can bind between the check and the write.
+	//
+	// A process-level lock carries that only because Cloud Run runs at most
+	// one instance. Raise max_instance_count and it stops holding — the check
+	// would have to move into the store, as a conditional write.
 	s.bind.Lock()
 	defer s.bind.Unlock()
 
