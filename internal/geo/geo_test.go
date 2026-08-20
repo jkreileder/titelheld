@@ -707,3 +707,82 @@ func TestEveryAllowedKindPassesTheReadSideCheck(t *testing.T) {
 		}
 	}
 }
+
+// A Reverser that answers with a point of interest is filtered on the way in.
+//
+// Reverser is an interface this package publishes and does not implement
+// alone, so the allow-list cannot live only inside the Nominatim client.
+// Filtering on the way out of the cache is not enough either: the first
+// request for a coordinate is a cache miss, so an unfiltered name would reach
+// the prompt once and then be stored next to the athlete's coordinates —
+// exactly what the privacy rule exists to prevent.
+func TestAGeocoderCannotIntroduceAPointOfInterest(t *testing.T) {
+	t.Parallel()
+
+	poi := store.Place{
+		Name:    "Dr Müller's Praxis",
+		Kind:    "doctors",
+		Region:  "Musterregion",
+		Country: "Musterland",
+	}
+
+	cache := store.NewMemory()
+
+	describer, err := NewDescriber(fixedReverser{poi}, cache, quietLogger())
+	if err != nil {
+		t.Fatalf("NewDescriber: %v", err)
+	}
+
+	// The first request, which is a cache miss.
+	got, err := describer.resolve(t.Context(), "k", Point{})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if got.Name != "" {
+		t.Errorf("a point of interest reached the caller on a cache miss: %q", got.Name)
+	}
+
+	if got.Region != "Musterregion" || got.Country != "Musterland" {
+		t.Errorf("the coarse fields were lost: %+v", got)
+	}
+
+	// And it was never written to the cache, so it is not sitting in Firestore
+	// next to the coordinate it describes.
+	cached, ok, err := cache.Place(t.Context(), "k")
+	if err != nil || !ok {
+		t.Fatalf("the answer was not cached (ok=%v, err=%v)", ok, err)
+	}
+
+	if cached.Name != "" {
+		t.Errorf("a point of interest was persisted: %q", cached.Name)
+	}
+}
+
+// An allowed name from a custom Reverser still comes through.
+func TestAGeocodersAllowedNameSurvives(t *testing.T) {
+	t.Parallel()
+
+	village := store.Place{Name: "Musterdorf", Kind: "village", Region: "Musterregion"}
+
+	describer, err := NewDescriber(fixedReverser{village}, store.NewMemory(), quietLogger())
+	if err != nil {
+		t.Fatalf("NewDescriber: %v", err)
+	}
+
+	got, err := describer.resolve(t.Context(), "k", Point{})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if got.Name != "Musterdorf" || got.Kind != "village" {
+		t.Errorf("an allowed place was altered: %+v", got)
+	}
+}
+
+// fixedReverser answers with the same place every time.
+type fixedReverser struct{ place store.Place }
+
+func (f fixedReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
+	return f.place, nil
+}
