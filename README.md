@@ -385,6 +385,16 @@ gcloud billing projects link "$PROJECT" --billing-account="$BILLING"
 # Terraform needs these two before it can enable the rest.
 gcloud services enable cloudresourcemanager.googleapis.com serviceusage.googleapis.com   --project="$PROJECT"
 
+# GCP creates a "default" VPC with every project and opens SSH and RDP on it
+# to 0.0.0.0/0 — two HIGH findings in Security Command Center, for a network
+# nothing here uses. Cloud Run is fully managed and Firestore, Secret Manager,
+# Artifact Registry and Scheduler never touch a VPC, so the whole network goes.
+# Terraform does not manage this: the network is created by GCP at project
+# creation, not by any resource here.
+gcloud compute firewall-rules delete default-allow-ssh default-allow-rdp \
+  default-allow-icmp default-allow-internal --project="$PROJECT" --quiet
+gcloud compute networks delete default --project="$PROJECT" --quiet
+
 # State bucket: private, versioned, and never public. State holds no secret
 # values, but it does hold every service-account email, the WIF pool and the
 # generated sweep path.
