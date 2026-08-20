@@ -605,3 +605,33 @@ func TestVertexGlobalEndpoint(t *testing.T) {
 		t.Errorf("global endpoint = %q, want %q", got, want)
 	}
 }
+
+// Thinking is off, and the request has to say so explicitly.
+//
+// The model reasons by default and those tokens are billed inside
+// maxOutputTokens, so a real call spent 241 of 256 thinking and returned a
+// truncated fragment. This is the one field whose absence produced a
+// well-formed request that could never produce a title.
+func TestVertexDisablesThinking(t *testing.T) {
+	t.Parallel()
+
+	var gotBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		gotBody = string(body)
+
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"{}"}]}}]}`)
+	}))
+	defer server.Close()
+
+	provider := &Vertex{Client: server.Client(), ProjectID: "p", Location: "l", BaseURL: server.URL}
+
+	if _, err := provider.Complete(t.Context(), Prompt{}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	if !strings.Contains(gotBody, `"thinkingConfig":{"thinkingBudget":0}`) {
+		t.Errorf("request does not disable thinking: %s", gotBody)
+	}
+}

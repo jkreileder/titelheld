@@ -125,6 +125,22 @@ type vertexPart struct {
 	Text string `json:"text"`
 }
 
+// vertexThinkingConfig turns the model's reasoning off.
+//
+// gemini-3.5-flash thinks by default, and thinking tokens are billed inside
+// maxOutputTokens. With a 256-token ceiling sized for "a title is a few dozen
+// bytes", a real call spent 241 tokens reasoning, produced 11, and stopped at
+// MAX_TOKENS mid-sentence — the answer crowded out by the deliberation about
+// it.
+//
+// It also fixed the output shape. Thinking-on, the model prefixed prose and a
+// markdown fence despite responseMimeType; thinking-off, the same request
+// returns bare JSON. Naming a ride needs no chain of reasoning, so this is not
+// a budget trade — it is removing something the task never wanted.
+type vertexThinkingConfig struct {
+	ThinkingBudget int `json:"thinkingBudget"`
+}
+
 type vertexGenerConfig struct {
 	Temperature float64 `json:"temperature"`
 	// A title is short; this bounds a runaway response rather than shaping
@@ -133,6 +149,8 @@ type vertexGenerConfig struct {
 	// The API is asked for JSON, but the validator is what enforces it —
 	// see the package comment.
 	ResponseMimeType string `json:"responseMimeType,omitempty"`
+
+	ThinkingConfig *vertexThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type vertexResponse struct {
@@ -161,6 +179,7 @@ func (v *Vertex) Complete(ctx context.Context, prompt Prompt) (string, error) {
 			Temperature:      v.temperature(),
 			MaxOutputTokens:  maxOutputTokens,
 			ResponseMimeType: "application/json",
+			ThinkingConfig:   &vertexThinkingConfig{ThinkingBudget: 0},
 		},
 	}
 
