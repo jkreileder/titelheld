@@ -9,11 +9,14 @@ name: Release
 # that exact digest to Cloud Run, and opens a draft GitHub release for you to
 # edit and publish. See README.md, "Cutting a release".
 
+# No workflow_dispatch. A dispatch on an existing tag would build a fresh
+# image and deploy it without a new tag ever being signed, which is the one
+# property this workflow exists to guarantee. Re-running a failed deploy is
+# what "Re-run failed jobs" is for, and that reuses the same tag.
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: read
