@@ -274,7 +274,18 @@ draining the queue slightly early.
 
 ### One-time bootstrap
 
-Terraform cannot create the project it stores its own state in, so this part is by hand:
+Terraform cannot create the project it stores its own state in, so this part is by hand.
+
+First, credentials. `gcloud auth login` authenticates the CLI; Terraform's provider reads
+*application default credentials*, which are separate, and without them the first `apply` fails
+on authentication rather than on anything to do with the configuration:
+
+```sh
+gcloud auth login                        # if not already logged in
+gcloud auth application-default login    # what Terraform itself uses
+```
+
+Then the project:
 
 ```sh
 PROJECT=titelheld-XXXXXX          # project IDs are globally unique; pick a free one
