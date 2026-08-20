@@ -85,8 +85,12 @@ startup.
 - Import and export (`datastore.databases.import` / `.export`) — no bulk extraction of the
   athlete's data.
 - Index administration — the queries here need no composite index, see below.
-- Any other Google Cloud service. The runtime account needs Secret Manager access for the
-  Strava and LLM credentials; that is a separate binding and is documented with the deployment.
+- Any other Google Cloud service beyond the two the naming pipeline needs. The runtime account
+  also holds a Secret Manager accessor on five named secrets, and `roles/aiplatform.user` so it
+  can call Gemini on Vertex AI — which is what lets Gemini be keyless, since the call
+  authenticates as this account rather than with an API key. `aiplatform.user` grants calling
+  models and nothing else: no tuning, no training, no model or endpoint administration, and no
+  access to data in this project. Both are separate bindings, documented with the deployment.
 
 ## The limit worth knowing
 

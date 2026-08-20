@@ -130,6 +130,98 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
 | `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
 
+Naming. The default provider is keyless — Gemini is called through Vertex AI with the runtime
+service account's own credentials, so `LLM_API_KEY` exists only for the Anthropic alternative
+and is required only when that is selected.
+
+| Variable                 | Required     | Default              | Purpose                                       |
+| ------------------------ | ------------ | -------------------- | --------------------------------------------- |
+| `LLM_PROVIDER`           | no           | `gemini`             | `gemini` (Vertex, keyless) or `anthropic`     |
+| `LLM_MODEL`              | no           | provider default     | Overrides the shipped, pinned model ID        |
+| `LLM_API_KEY`            | for Anthropic| —                    | Never read when the provider is `gemini`      |
+| `VERTEX_PROJECT`         | no           | `FIRESTORE_PROJECT`  | Project the Vertex call bills to              |
+| `VERTEX_LOCATION`        | no           | `europe-west3`       | Vertex region, or `global` — see below        |
+| `BANNED_WORDS`           | no           | shipped list         | Comma-separated; rejected in a title          |
+| `MACHINE_TITLE_PATTERNS` | no           | Xert's pattern       | Newline-separated regexes; see below          |
+
+`MACHINE_TITLE_PATTERNS` is newline-separated rather than comma-separated because the entries
+are regular expressions, and a comma inside `{1,3}` is not a separator.
+
+The shipped model IDs are pinned, and each is recorded in the source next to the documentation
+URL it was verified against and the date — `internal/naming/vertex.go` and
+`internal/naming/anthropic.go`. They are not taken from a model's training data.
+
+### Choosing the Vertex model and region
+
+Gemini model availability is regional, and the documentation's model index does not describe it —
+an index is a catalogue of models, not a statement about where each one is served. Reading the
+publisher metadata per host does:
+
+| Model              | `global` | `europe-west3` | `europe-west4` |
+| ------------------ | -------- | -------------- | -------------- |
+| `gemini-3.7-flash` | 200      | 404            | 404            |
+| `gemini-3.6-flash` | 200      | 404            | 404            |
+| `gemini-3.5-flash` | 200      | 200 (GA)       | 200 (GA)       |
+
+The newest Flash models are real, but only behind the **global** endpoint, which routes the
+request to whichever region has capacity. The prompt carries place names derived from your GPS
+traces, and the rest of this deployment is `europe-west3`, so the shipped default is the newest
+model served **in region**:
+
+```sh
+VERTEX_LOCATION=europe-west3   # default
+LLM_MODEL=                     # unset -> gemini-3.5-flash
+```
+
+To use a newer model instead, at the cost of regional routing:
+
+```sh
+VERTEX_LOCATION=global
+LLM_MODEL=gemini-3.7-flash
+```
+
+Both work with no code change. `global` is the one location whose host is unprefixed —
+`aiplatform.googleapis.com`, not `global-aiplatform.googleapis.com`, which does not resolve.
+
+Recheck availability the same way when a newer model lands — a metadata read, not an inference
+call, so it costs nothing and generates no tokens:
+
+```sh
+PROJECT=titelheld-XXXXXX
+MODEL=gemini-3.5-flash
+
+for host in aiplatform.googleapis.com europe-west3-aiplatform.googleapis.com; do
+  printf '%s: ' "$host"
+  curl -s -o /dev/null -w '%{http_code}\n' \
+    -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    -H "x-goog-user-project: ${PROJECT}" \
+    "https://${host}/v1/publishers/google/models/${MODEL}"
+done
+```
+
+`200` means the model is served there, `404` that it is not. The `x-goog-user-project` header is
+required: without it the call returns `403`, which says nothing about the model.
+
+### Checking the naming path for real
+
+The probe above proves a model exists. This proves the whole path — credentials, request shape,
+response parsing and validation — with the same code the service runs. It sits behind a build tag,
+so CI never runs it and no live call happens there:
+
+```sh
+VERTEX_PROJECT=titelheld-XXXXXX go test -tags smoke ./internal/naming/ -run TestLiveVertex -v
+```
+
+It needs application default credentials and spends a few tokens. A pass logs the validated title;
+a failure names the step that broke, which is the point of running the real code rather than a
+`curl` that resembles it.
+
+That distinction is not academic. `gemini-3.5-flash` reasons by default and those tokens are
+billed inside `maxOutputTokens`, so an early hand-written `curl` spent 241 of 256 thinking,
+returned a truncated fragment, and stopped at `MAX_TOKENS`. The provider therefore sends
+`thinkingConfig: {thinkingBudget: 0}` — naming a ride needs no chain of reasoning. Any hand-run
+`curl` needs that field too, or it reproduces the original failure.
+
 ## HTTP surface
 
 | Route                    | Purpose                                                     |
@@ -245,18 +337,18 @@ plugins named by files in the pull request, so they wait until the change is on 
 
 ### What Terraform manages
 
-| Resource                | Notes                                                                                       |
-| ----------------------- | ------------------------------------------------------------------------------------------- |
-| Enabled APIs            | Run, Firestore, Secret Manager, Scheduler, Artifact Registry, IAM, STS, budgets             |
-| Firestore database      | Native mode, `europe-west3`, named `titelheld`, delete protection on                        |
-| Runtime service account | `roles/datastore.user` on the one database, plus an authoritative accessor on five secrets  |
-| Deploy service account  | Assumed by CI through WIF; `roles/run.developer` on the one service, not the project        |
-| Workload Identity pool  | Provider condition requires the repository, the `production` environment and a `v*` tag ref |
-| Secret Manager          | Secret **resources only** — no versions, no values                                          |
-| Artifact Registry       | Images CI pushes and Cloud Run runs                                                         |
-| Cloud Run service       | min 0 / max 1, `ignore_changes` on the image so CI owns revisions                           |
-| Cloud Scheduler         | The sweep, at an unguessable path, with an OIDC token the handler itself must verify        |
-| Budget alert            | €1, at 50/90/100%                                                                           |
+| Resource                | Notes                                                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Enabled APIs            | Run, Firestore, Secret Manager, Scheduler, Artifact Registry, Vertex AI, IAM, STS, budgets                                  |
+| Firestore database      | Native mode, `europe-west3`, named `titelheld`, delete protection on                                                        |
+| Runtime service account | `roles/datastore.user` on the one database, an accessor on five secrets, and `roles/aiplatform.user` so Gemini needs no key |
+| Deploy service account  | Assumed by CI through WIF; `roles/run.developer` on the one service, not the project                                        |
+| Workload Identity pool  | Provider condition requires the repository, the `production` environment and a `v*` tag ref                                 |
+| Secret Manager          | Secret **resources only** — no versions, no values                                                                          |
+| Artifact Registry       | Images CI pushes and Cloud Run runs                                                                                         |
+| Cloud Run service       | min 0 / max 1, `ignore_changes` on the image so CI owns revisions                                                           |
+| Cloud Scheduler         | The sweep, at an unguessable path, with an OIDC token the handler itself must verify                                        |
+| Budget alert            | €1, at 50/90/100%                                                                                                           |
 
 Secret **values** never appear in code, in tfvars, or in state. They are added out of band,
 once each.
@@ -312,6 +404,16 @@ gcloud billing projects link "$PROJECT" --billing-account="$BILLING"
 
 # Terraform needs these two before it can enable the rest.
 gcloud services enable cloudresourcemanager.googleapis.com serviceusage.googleapis.com   --project="$PROJECT"
+
+# GCP creates a "default" VPC with every project and opens SSH and RDP on it
+# to 0.0.0.0/0 — two HIGH findings in Security Command Center, for a network
+# nothing here uses. Cloud Run is fully managed and Firestore, Secret Manager,
+# Artifact Registry and Scheduler never touch a VPC, so the whole network goes.
+# Terraform does not manage this: the network is created by GCP at project
+# creation, not by any resource here.
+gcloud compute firewall-rules delete default-allow-ssh default-allow-rdp \
+  default-allow-icmp default-allow-internal --project="$PROJECT" --quiet
+gcloud compute networks delete default --project="$PROJECT" --quiet
 
 # State bucket: private, versioned, and never public. State holds no secret
 # values, but it does hold every service-account email, the WIF pool and the

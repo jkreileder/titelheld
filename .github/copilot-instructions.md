@@ -41,6 +41,16 @@
   CI runs. CI never applies: applies are by hand. Secret Manager *values* never
   appear in code, tfvars or state - only the secret resources are managed.
 
+- `internal/naming/` builds the prompt, validates what comes back, and holds
+  the two LLM implementations behind one interface it defines itself. No HTTP
+  client of its own beyond the providers, no Firestore: a caller assembles a
+  `Ride` and supplies a `Provider`. The prompt states constraints; the
+  validator enforces them, because an instruction to a model is a request and
+  the ride description is text this service did not write. Gemini goes through
+  Vertex AI with the runtime SA's ambient credentials and has no key at all.
+  Model IDs are pinned and carry the doc URL and date they were verified
+  against.
+
 - `internal/geo/` decodes the summary polyline and reverse-geocodes samples via
   Nominatim into verified place names. The privacy allow-list and the 1 req/s
   limit live there and are enforced in code, not by convention.
