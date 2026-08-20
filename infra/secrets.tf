@@ -35,11 +35,18 @@ resource "google_secret_manager_secret" "this" {
 # rather than as a project-wide accessor, because that distinction is one IAM
 # can actually express here — unlike Firestore, where the database is the
 # finest grain available.
-resource "google_secret_manager_secret_iam_member" "runtime_accessor" {
+#
+# A binding rather than a member, so this list is the whole truth: an accessor
+# added by hand, or left behind by an experiment, is removed on the next apply
+# instead of persisting unnoticed. That is worth having on the secrets holding
+# the OAuth tokens, and it is safe here because Terraform is the only thing
+# that grants access to them. Project-level grants elsewhere stay additive -
+# an authoritative binding there would strip roles Terraform never granted.
+resource "google_secret_manager_secret_iam_binding" "runtime_accessor" {
   for_each = google_secret_manager_secret.this
 
   project   = var.project_id
   secret_id = each.value.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.runtime.email}"
+  members   = ["serviceAccount:${google_service_account.runtime.email}"]
 }

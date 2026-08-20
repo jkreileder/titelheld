@@ -73,10 +73,17 @@ resource "google_service_account_iam_member" "deploy_workload_identity" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
 }
 
-resource "google_project_iam_member" "deploy_run" {
-  project = var.project_id
-  role    = "roles/run.developer"
-  member  = "serviceAccount:${google_service_account.deploy.email}"
+# Updating this one service, not every Cloud Run service in the project. The
+# deploy job only ever pushes a revision of titelheld, and release.yaml refuses
+# to deploy when the service does not already exist, so it never needs the
+# project-level permission that would let it create one - or replace a
+# different workload that happens to share the project.
+resource "google_cloud_run_v2_service_iam_member" "deploy_run" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.this.location
+  name     = google_cloud_run_v2_service.this.name
+  role     = "roles/run.developer"
+  member   = "serviceAccount:${google_service_account.deploy.email}"
 }
 
 # Deploying a service that runs as the runtime account requires acting as it.

@@ -124,6 +124,6 @@ resource "google_cloud_run_v2_service" "this" {
 
   depends_on = [
     google_project_service.this,
-    google_secret_manager_secret_iam_member.runtime_accessor,
+    google_secret_manager_secret_iam_binding.runtime_accessor,
   ]
 }
