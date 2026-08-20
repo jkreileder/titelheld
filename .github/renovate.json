@@ -215,7 +215,7 @@
             ]
         },
         {
-            "description": "Propose go-directive updates at all. Renovate leaves the directive alone by default, because `go 1.x` means \"compatible with this version or later\" rather than \"built with this version\", so without rangeStrategy: bump no update is ever generated and the rule below has nothing to act on. This repository does treat it as a pin: CI reads it through `go-version-file: go.mod`, and the Dockerfile's golang tag is bumped by the docker manager, so a directive left behind drifts away from both.",
+            "description": "Propose go-directive updates at all. Renovate leaves the directive alone by default, because `go 1.x` means \"compatible with this version or later\" rather than \"built with this version\", so without rangeStrategy: bump no update is ever generated and the rule below has nothing to act on. This repository does treat it as a pin: CI reads it through `go-version-file: go.mod`, and the Dockerfile's golang tag is bumped by the docker manager, so a directive left behind drifts away from both. A minor bump has to land with golangci-lint: the action installs a prebuilt binary, and golangci-lint refuses a module whose language version is newer than the Go it was itself built with. Read that from the binary, not from its go.mod, which is only a floor - `go version <binary>` gives it. v2.12.2 is built on go1.26.2 and fails against a 1.27 directive; v2.13.0 is built on go1.27.0 and passes. `make lint` cannot catch this, because it runs golangci-lint through `go run` and so compiles it with the local toolchain.",
             "matchDepNames": [
                 "go"
             ],
