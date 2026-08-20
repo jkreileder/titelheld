@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidate(t *testing.T) {
@@ -158,8 +159,7 @@ func TestBuildPrompt(t *testing.T) {
 		DistanceKm:          67.6,
 		MovingTimeMinutes:   181,
 		ElevationGainMeters: 540,
-		Weekday:             "Saturday",
-		StartHour:           intPtr(9),
+		StartLocal:          time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC),
 		GearName:            "Pink Panther",
 		Places:              []string{"Musterdorf", "Musterbach"},
 		Region:              "Musterregion",
@@ -636,20 +636,40 @@ func TestVertexDisablesThinking(t *testing.T) {
 	}
 }
 
-func intPtr(v int) *int { return &v }
-
-// Zero is midnight, not "unknown". An int field put "00:00" in the prompt for
-// every ride whose start time the caller never set, and the model would have
-// read a night ride that did not happen.
-func TestBuildPromptOmitsAnUnsetStartHour(t *testing.T) {
+// The zero time is unknown and omits both fields; midnight is a real hour and
+// is stated. An hour-shaped int could not tell those apart.
+func TestBuildPromptStartTime(t *testing.T) {
 	t.Parallel()
 
-	if got := BuildPrompt(Ride{SportType: "Ride", DistanceKm: 20}, Context{}); strings.Contains(got.User, "Start hour") {
-		t.Errorf("an unset start hour reached the prompt:\n%s", got.User)
+	if got := BuildPrompt(Ride{SportType: "Ride", DistanceKm: 20}, Context{}); strings.Contains(got.User, "Start hour") ||
+		strings.Contains(got.User, "Weekday") {
+		t.Errorf("an unset start time reached the prompt:\n%s", got.User)
 	}
 
-	if got := BuildPrompt(Ride{SportType: "Ride", DistanceKm: 20, StartHour: intPtr(0)}, Context{}); !strings.Contains(got.User, "00:00") {
-		t.Errorf("midnight was dropped:\n%s", got.User)
+	midnight := BuildPrompt(Ride{SportType: "Ride", DistanceKm: 20,
+		StartLocal: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)}, Context{})
+	if !strings.Contains(midnight.User, "00:00") {
+		t.Errorf("midnight was dropped:\n%s", midnight.User)
+	}
+}
+
+// The weekday and the hour are the athlete's local ones. Strava sends
+// start_date_local with a "Z" suffix despite it being local, so the value
+// carries local wall-clock time in a UTC location — reading it must not
+// convert, or a late Saturday ride becomes Sunday.
+func TestBuildPromptUsesLocalWallClock(t *testing.T) {
+	t.Parallel()
+
+	// 23:30 on Saturday, as Strava would deliver it.
+	saturdayNight := time.Date(2026, 8, 15, 23, 30, 0, 0, time.UTC)
+	if saturdayNight.Weekday() != time.Saturday {
+		t.Fatalf("fixture is %s, expected Saturday", saturdayNight.Weekday())
+	}
+
+	got := BuildPrompt(Ride{SportType: "Ride", DistanceKm: 20, StartLocal: saturdayNight}, Context{})
+
+	if !strings.Contains(got.User, "Saturday") || !strings.Contains(got.User, "23:00") {
+		t.Errorf("the local weekday or hour did not survive:\n%s", got.User)
 	}
 }
 

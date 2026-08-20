@@ -3,6 +3,7 @@ package naming
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Ride is everything the prompt is allowed to know about one activity.
@@ -27,14 +28,22 @@ type Ride struct {
 	// AverageSpeedKmh is the average moving speed.
 	AverageSpeedKmh float64
 
-	// Weekday places the ride in the week. Empty is omitted.
-	Weekday string
-
-	// StartHour is the hour the ride began, 0–23. It is a pointer because 0 is
-	// midnight and not "unknown": an int field would have put "00:00" in the
-	// prompt for every ride whose start time the caller did not set, and the
-	// model would have read a night ride that never happened. Nil is omitted.
-	StartHour *int
+	// StartLocal is when the ride began, in the athlete's local time. The
+	// weekday and the hour are both derived from it; the zero value is
+	// unknown and omits both.
+	//
+	// One field rather than a weekday and an hour, because two fields cannot
+	// say which clock they are on and this is a question with a wrong answer.
+	// A ride starting 23:30 local on a Saturday is Sunday in UTC, and an 07:00
+	// UTC start is 09:00 in Germany in summer — enough to turn a morning ride
+	// into a night ride in the prompt, silently, in a title nobody would think
+	// to question.
+	//
+	// Strava's start_date_local is the source. It carries a "Z" suffix despite
+	// being local time, so Go parses it as UTC holding local wall-clock
+	// values: Hour and Weekday read correctly, and converting with UTC or In
+	// would move the ride to a different day.
+	StartLocal time.Time
 
 	// GearName is the bike, which some franchises key on.
 	GearName string
@@ -170,10 +179,9 @@ func BuildPrompt(ride Ride, ctx Context) Prompt {
 	writeInt(&b, "Moving time", ride.MovingTimeMinutes, "min")
 	writeNumber(&b, "Climbing", ride.ElevationGainMeters, "m")
 	writeNumber(&b, "Average speed", ride.AverageSpeedKmh, "km/h")
-	writeField(&b, "Weekday", ride.Weekday)
-
-	if ride.StartHour != nil && *ride.StartHour >= 0 && *ride.StartHour <= 23 {
-		writeField(&b, "Start hour", fmt.Sprintf("%02d:00", *ride.StartHour))
+	if !ride.StartLocal.IsZero() {
+		writeField(&b, "Weekday", ride.StartLocal.Weekday().String())
+		writeField(&b, "Start hour", fmt.Sprintf("%02d:00", ride.StartLocal.Hour()))
 	}
 
 	writeField(&b, "Bike", ride.GearName)

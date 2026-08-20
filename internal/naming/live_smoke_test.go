@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"google.golang.org/api/option"
 	htransport "google.golang.org/api/transport/http"
@@ -36,7 +37,7 @@ func TestLiveVertex(t *testing.T) {
 
 	prompt := BuildPrompt(
 		Ride{SportType: "GravelRide", DistanceKm: 67.6, MovingTimeMinutes: 181,
-			ElevationGainMeters: 540, Weekday: "Saturday", StartHour: intPtr(9),
+			ElevationGainMeters: 540, StartLocal: time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC),
 			GearName: "Pink Panther", Places: []string{"Musterdorf", "Musterbach"},
 			Region: "Musterregion", Country: "Testland"},
 		Context{RecentTitles: []string{"Musterrunde"}, Examples: SyntheticExamples()},
