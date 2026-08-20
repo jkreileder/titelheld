@@ -103,7 +103,12 @@ jobs:
           # PR, where they already control title, body and diff.
           # check_run_annotations_branch cannot narrow it — the action matches
           # that list against GITHUB_REF, which a workflow_run job always
-          # reports as the default branch, so any value matches. The lever that
-          # would work is `check_run_annotations: none`, at the cost of inline
-          # annotations on every PR.
+          # reports as the default branch, so any value matches.
           check_run_annotations_branch: "*"
+          # Annotations are built from the XML, so they carry text the fork
+          # wrote. Suppressed for forks only: a same-repository pull request
+          # keeps the inline annotations, which is the reason to run this at
+          # all, and nothing renders text this repository has not reviewed.
+          check_run_annotations: >-
+            ${{ github.event.workflow_run.head_repository.full_name == github.repository
+            && 'all tests, skipped tests' || 'none' }}

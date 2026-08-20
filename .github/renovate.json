@@ -165,10 +165,14 @@
         },
         {
             "automerge": true,
-            "description": "Group all pre-commit hook updates into one automerged PR - lint/validate-only tooling that never ships and is fully CI-gated.",
+            "description": "Group all pre-commit hook updates into one automerged PR - lint/validate-only tooling that never ships and is fully CI-gated. Minor and patch only: a hook is an executable that runs on a developer machine at commit time, so a major bump - which is where a hook changes hands or changes what it runs - is read first.",
             "groupName": "pre-commit",
             "matchManagers": [
                 "pre-commit"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
             ]
         },
         {

@@ -94,7 +94,9 @@ subscription has been created.
   *final* SemVer tag - `v1.2.3`, never `v1.2.3-rc1` - matching what
   `release.yaml` is willing to build, and fails on any fixable finding, which
   is how it reports.
-- A release is a signed `v*` tag pushed by hand - nothing in CI can start one.
+- A release is a signed `v*` tag pushed by hand - nothing in CI can start one,
+  and `release.yaml` has no `workflow_dispatch`, so no run can deploy without a
+  tag behind it.
   `release.yaml` verifies the tag and the changelog, calls `release-image.yaml`
   to build and attest the image once, deploys that **digest** to Cloud Run
   through Workload Identity Federation - no exported service-account key

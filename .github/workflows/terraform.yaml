@@ -52,6 +52,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # head.repo.fork is null outside a pull_request event, so this reports
+      # false for pushes to main as well as for same-repository pull requests.
+      - name: Identify a fork pull request
+        id: fork
+        env:
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+        run: echo "is_fork=$IS_FORK" >> "$GITHUB_OUTPUT"
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -69,12 +77,20 @@ jobs:
       - name: Validate
         run: terraform -chdir=infra validate
 
+      # tflint --init reads .tflint.hcl from the tree being linted and downloads
+      # whatever plugins it declares, as executables it then runs. On a fork
+      # pull request that file is the fork author's, so linting one would be
+      # running code chosen by whoever opened it. Skipped there instead: fmt
+      # and validate still cover the change, and .tflint.hcl itself is part of
+      # the diff a human reads before merging.
       - name: Set up tflint
+        if: ${{ !fromJSON(steps.fork.outputs.is_fork) }}
         uses: terraform-linters/setup-tflint@6e1e0642c0289bd619021bf6b34e3c08ed1e005a # v6.3.0
         with:
           tflint_version: v0.64.0
 
       - name: Lint
+        if: ${{ !fromJSON(steps.fork.outputs.is_fork) }}
         run: |
           cd infra
           tflint --init
@@ -82,3 +98,8 @@ jobs:
         env:
           # tflint downloads its google ruleset from GitHub releases.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Note the skipped lint
+        if: ${{ fromJSON(steps.fork.outputs.is_fork) }}
+        run: |
+          echo "::notice::tflint was skipped: a fork pull request supplies its own .tflint.hcl, and --init would run plugins it names. Format and validate still ran."
