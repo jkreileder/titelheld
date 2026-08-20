@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -10,6 +11,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -679,4 +682,160 @@ func TestBareAuthPathIsNotRouted(t *testing.T) {
 			t.Errorf("GET %s = %d, want 404", path, recorder.Code)
 		}
 	}
+}
+
+// Two athletes authorizing at the same moment must not both bind. checkAthlete
+// asks whether anything is bound and Tokens.Save does the binding, so without
+// a lock spanning the pair both callbacks can observe an empty store and both
+// proceed — leaving the service with no single answer to which athlete it is
+// for. Exactly one must win.
+func TestAuthCallbackBindsOnlyOneAthleteUnderRace(t *testing.T) {
+	t.Parallel()
+
+	const (
+		firstAthlete  = 8001
+		secondAthlete = 8002
+	)
+
+	memory := store.NewMemory()
+
+	// Waiting for the check-then-write window to be hit by chance tests
+	// nothing: it is a few instructions wide, and twenty unlocked runs never
+	// reproduced it. Hold the *write* until both callbacks have completed
+	// their check, which is precisely the interleaving the lock prevents.
+	//
+	// Gating the check instead does not work — whichever goroutine releases
+	// the barrier runs on while the other waits to be rescheduled, so the
+	// releaser writes first and the loser is correctly rejected even with no
+	// lock at all, and the test passes for the wrong reason.
+	//
+	// With the lock the second callback cannot reach the check until the
+	// first has written, so the first write waits out this timeout once.
+	const writeGate = 2 * time.Second
+
+	var checked atomic.Int32
+
+	gated := &gatedTokenStore{
+		TokenStore: memory,
+		release:    func() bool { return checked.Load() >= 2 },
+		timeout:    writeGate,
+	}
+
+	// A distinct athlete per exchange, so the two callbacks race to bind two
+	// different identities rather than the same one.
+	var issued atomic.Int64
+
+	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		athlete := firstAthlete
+		if issued.Add(1) > 1 {
+			athlete = secondAthlete
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"a","refresh_token":"r",
+			"scope":"activity:read_all,activity:write","athlete":{"id":%d}}`, athlete)
+	}))
+	t.Cleanup(tokens.Close)
+
+	server, err := New(Deps{
+		Config:  config.Config{WebhookPath: "/webhook/x", AuthPath: testAuthPath},
+		OAuth:   &strava.OAuth{ClientID: "1", BaseURL: tokens.URL, HTTPClient: tokens.Client()},
+		Tokens:  gated,
+		Webhook: &stubWebhook{},
+		Logger:  quietLogger(),
+		Now:     func() time.Time { return testNow },
+		Bound: func(ctx context.Context) (int64, bool) {
+			token, err := memory.AnyToken(ctx)
+			checked.Add(1)
+
+			return token.AthleteID, err == nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Both states are minted before either callback runs, so the two requests
+	// differ only in when they arrive.
+	states := []string{startAuth(t, server), startAuth(t, server)}
+
+	var (
+		start     sync.WaitGroup
+		done      sync.WaitGroup
+		codes     = make([]int, len(states))
+		handler   = server.Handler()
+		scopeArgs = "&scope=activity:read_all,activity:write"
+	)
+
+	start.Add(1)
+
+	for i, state := range states {
+		done.Add(1)
+
+		go func() {
+			defer done.Done()
+
+			start.Wait()
+
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+				config.AuthCallbackPath+"?code=c&state="+state+scopeArgs, nil))
+			codes[i] = recorder.Code
+		}()
+	}
+
+	start.Done()
+	done.Wait()
+
+	var accepted, rejected int
+
+	for _, code := range codes {
+		switch code {
+		case http.StatusOK:
+			accepted++
+		case http.StatusForbidden:
+			rejected++
+		default:
+			t.Errorf("unexpected status %d", code)
+		}
+	}
+
+	if accepted != 1 || rejected != 1 {
+		t.Errorf("accepted %d and rejected %d, want exactly one of each (codes %v)",
+			accepted, rejected, codes)
+	}
+
+	var bound int
+
+	for _, athlete := range []int64{firstAthlete, secondAthlete} {
+		if _, err := memory.Load(t.Context(), athlete); err == nil {
+			bound++
+		} else if !errors.Is(err, strava.ErrTokenNotFound) {
+			t.Fatalf("Load(%d): %v", athlete, err)
+		}
+	}
+
+	if bound != 1 {
+		t.Errorf("%d athletes bound, want exactly 1", bound)
+	}
+}
+
+// gatedTokenStore delays Save until release reports true, or until timeout. It
+// exists so a test can pin the interleaving of a check-then-write rather than
+// hoping the scheduler produces it.
+type gatedTokenStore struct {
+	strava.TokenStore
+
+	release func() bool
+	timeout time.Duration
+}
+
+func (g *gatedTokenStore) Save(ctx context.Context, token strava.Token) error {
+	deadline := time.Now().Add(g.timeout)
+
+	for !g.release() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	return g.TokenStore.Save(ctx, token)
 }

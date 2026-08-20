@@ -78,10 +78,16 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		return fmt.Errorf("build server: %w", err)
 	}
 
+	// Not auth_path, and not webhook_path. Both are WEBHOOK_PATH_SECRET with a
+	// prefix, and that secret is the only thing standing in front of the
+	// webhook intake — Strava does not sign its POSTs, so the unguessable path
+	// is the authentication. Logging it hands the URL to anyone who can read
+	// the logs, which on Cloud Run is a much wider set than anyone who can
+	// read the environment. Say whether it is configured, never what it is.
 	logger.Info("configuration loaded",
 		"process_delay", cfg.ProcessDelay,
 		"athlete_id", cfg.AthleteID,
-		"auth_path", cfg.AuthPath,
+		"auth_path_configured", cfg.AuthPath != "",
 		"store", storeKind(cfg))
 
 	return httpServer.Run(ctx, net.JoinHostPort("", strconv.Itoa(cfg.Port)))

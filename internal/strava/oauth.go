@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
+
+// maxTokenBytes caps what a decode will read from a token response.
+const maxTokenBytes = 1 << 16
 
 // OAuth request parameter names.
 const (
@@ -148,7 +152,10 @@ func (o *OAuth) token(ctx context.Context, form url.Values) (Token, error) {
 	}
 
 	var payload tokenResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	// A token response is two opaque strings, an integer and a short scope
+	// list, so this ceiling is far above anything legitimate. It is here
+	// because the decode runs before drainAndClose can bound the body.
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxTokenBytes)).Decode(&payload); err != nil {
 		return Token{}, fmt.Errorf("strava: decode token response: %w", err)
 	}
 

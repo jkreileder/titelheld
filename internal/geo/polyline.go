@@ -18,6 +18,11 @@ type Point struct {
 // ErrBadPolyline means the encoded string is not a valid polyline.
 var ErrBadPolyline = errors.New("geo: malformed polyline")
 
+// maxEncodedPolylineBytes bounds an encoded summary polyline. Strava's summary
+// polyline is a simplified track: half a megabyte is orders of magnitude more
+// than a long ride encodes to, and still small enough to allocate freely.
+const maxEncodedPolylineBytes = 512 << 10
+
 // polylinePrecision is the 1e-5 scaling Google's encoded polyline algorithm
 // uses, which is what Strava's summary_polyline is encoded with.
 const polylinePrecision = 1e5
@@ -35,6 +40,14 @@ const (
 // forty lines and the spec allows a polyline decoder, but not needing one at
 // all is better.
 func DecodePolyline(encoded string) ([]Point, error) {
+	// The capacity below is sized from the input, so the input needs a bound
+	// of its own: the polyline arrives from Strava and nothing upstream
+	// promises it is the length a real ride produces.
+	if len(encoded) > maxEncodedPolylineBytes {
+		return nil, fmt.Errorf("%w: %d bytes exceeds the %d-byte limit",
+			ErrBadPolyline, len(encoded), maxEncodedPolylineBytes)
+	}
+
 	points := make([]Point, 0, len(encoded)/4)
 
 	var lat, lon int

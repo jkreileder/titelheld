@@ -54,6 +54,15 @@ type Server struct {
 
 	mu     sync.Mutex
 	states map[string]time.Time
+
+	// bind serializes the first-bind decision. checkAthlete asks whether
+	// anything is bound and Tokens.Save then binds it, and between those two
+	// steps a second callback can ask the same question and get the same
+	// answer — so two athletes both pass a check that only one should, and the
+	// store ends up with no single answer to which athlete this service is
+	// for. Kept separate from mu, which guards the OAuth state map and is held
+	// only for map access; this one is held across a store write.
+	bind sync.Mutex
 }
 
 // New builds the server and its routes.
@@ -181,6 +190,12 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+
+	// Check and bind as one step. Cloud Run runs at most one instance, so a
+	// mutex is the whole fix; it would not be if this ever scaled out, and the
+	// store would then have to do the check itself.
+	s.bind.Lock()
+	defer s.bind.Unlock()
 
 	if err := s.checkAthlete(r.Context(), token.AthleteID); err != nil {
 		s.logger.Error("authorization rejected", "error", err, "authorized", token.AthleteID)
