@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -45,6 +46,16 @@ const (
 // serves, at the cost of routing the request wherever there is capacity. The
 // trade-off and the probe are in README.md.
 const DefaultVertexLocation = "europe-west3"
+
+// vertexLocationPattern bounds VERTEX_LOCATION to the shape of a GCP location.
+//
+// The value is interpolated into the request host, so "evil.example/x" would
+// produce https://evil.example/x-aiplatform.googleapis.com and carry the
+// runtime account's credentials to a host this deployment never meant to
+// reach. The value is operator-supplied, so this is defense in depth rather
+// than a hole being closed — and it costs a startup error instead of a failure
+// on the first ride worth naming.
+var vertexLocationPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`)
 
 // LLM is the naming layer's configuration.
 type LLM struct {
@@ -115,6 +126,12 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 	// mode — and requiring a GCP project there would make the service refuse
 	// to start on a laptop. The Vertex provider refuses the call instead, at
 	// the point where the project is actually needed.
+
+	if !vertexLocationPattern.MatchString(llm.VertexLocation) {
+		*errs = append(*errs, fmt.Errorf(
+			"config: %s must be a GCP location such as europe-west3 or global, got %q",
+			EnvVertexLocation, llm.VertexLocation))
+	}
 
 	llm.BannedWords = splitList(getenv(EnvBannedWords))
 

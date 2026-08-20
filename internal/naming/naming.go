@@ -1,10 +1,14 @@
 // Package naming turns everything known about a ride into a title.
 //
 // It holds the prompt builder, the validator every candidate title must pass,
-// and the provider interface the LLM implementations satisfy. It imports no
-// HTTP client and no Firestore: a [Request] is assembled by the caller, and the
-// provider is an interface the caller supplies. That is what lets the whole
-// pipeline be exercised in a test with no network.
+// and the [Provider] interface the LLM implementations satisfy.
+//
+// The boundary runs inside the package, not around it. Nothing that decides a
+// title touches a network: [BuildPrompt] and [Validator] work on values, and a
+// caller supplies the provider, so the whole pipeline can be exercised with no
+// network at all. The two shipped transports live here too and do import
+// net/http — the same shape as geo, where the Describer is pure and Nominatim
+// is not, and strava, where the client sits beside the types it returns.
 //
 // The division of labor between the prompt and the validator is deliberate.
 // The prompt asks for a title of a certain shape; the validator decides whether
@@ -172,14 +176,43 @@ func checkShape(text string) error {
 			return fmt.Errorf("%w: quotation mark %q", ErrTitleShape, string(r))
 		case unicode.IsControl(r):
 			return fmt.Errorf("%w: control character", ErrTitleShape)
-		case r > unicode.MaxASCII && (unicode.Is(unicode.So, r) || unicode.Is(unicode.Cs, r)):
-			// So covers pictographic symbols and Cs the surrogate halves of
-			// anything outside the BMP, which together are what "no emoji"
-			// means in practice. Letters and marks are untouched, so German
-			// and other accented text passes.
+		case isEmojiPart(r):
 			return fmt.Errorf("%w: emoji or symbol %q", ErrTitleShape, string(r))
 		}
 	}
 
 	return nil
+}
+
+// isEmojiPart reports whether the rune is an emoji or a piece used to build
+// one.
+//
+// So alone is not enough. An emoji is frequently a sequence rather than a
+// character: "1️⃣" is a digit, a variation selector and a keycap, and a
+// skin-toned or joined emoji adds a modifier or a zero-width joiner. Each of
+// those pieces sits in a different Unicode category, and a title made of them
+// passed a check that looked only at So.
+//
+// The pieces are named individually rather than by category, because the
+// categories they belong to also hold things a German title legitimately uses:
+// Mn holds the combining diaeresis that makes a decomposed "ö", so rejecting
+// Mn wholesale would reject the language this service mostly writes in.
+func isEmojiPart(r rune) bool {
+	switch r {
+	case '\uFE0F', // variation selector-16, which makes a character an emoji
+		'\uFE0E', // variation selector-15, its text counterpart
+		'\u200D', // zero width joiner, which builds compound emoji
+		'\u20E3': // combining enclosing keycap
+		return true
+	}
+
+	// Skin-tone modifiers.
+	if r >= '\U0001F3FB' && r <= '\U0001F3FF' {
+		return true
+	}
+
+	// Pictographic symbols. Sk would also catch the modifiers above, but it
+	// holds ordinary characters like the circumflex accent too, so only the
+	// modifier block is taken from it.
+	return r > unicode.MaxASCII && unicode.Is(unicode.So, r)
 }

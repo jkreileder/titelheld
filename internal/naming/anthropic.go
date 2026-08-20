@@ -39,6 +39,10 @@ const DefaultAnthropicModel = "claude-haiku-4-5-20251001"
 // anthropicVersion is the API version header value.
 const anthropicVersion = "2023-06-01"
 
+// stopReasonMaxTokens is the stop reason for a response cut off by the
+// max_tokens ceiling rather than finished.
+const stopReasonMaxTokens = "max_tokens"
+
 // maxAnthropicResponseBytes caps what a decode reads from a response.
 const maxAnthropicResponseBytes = 1 << 20
 
@@ -172,6 +176,15 @@ func (a *Anthropic) Complete(ctx context.Context, prompt Prompt) (string, error)
 
 	if text.Len() == 0 {
 		return "", ErrNoTitle
+	}
+
+	// A truncated response is valid JSON's problem only by accident: the text
+	// block holds half an object, and the parser then reports "response is not
+	// JSON", naming the wrong cause. Say what actually happened — the same
+	// house rule that applies to a blocked DNS request.
+	if decoded.StopReason == stopReasonMaxTokens {
+		return "", fmt.Errorf("naming: anthropic: response truncated at max_tokens (%d); the title did not fit",
+			maxOutputTokens)
 	}
 
 	return text.String(), nil

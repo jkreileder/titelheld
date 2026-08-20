@@ -471,3 +471,27 @@ func TestLLMListsAreParsed(t *testing.T) {
 		t.Errorf("vertex location = %q", cfg.LLM.VertexLocation)
 	}
 }
+
+// VERTEX_LOCATION is interpolated into the request host, so a malformed value
+// would send the runtime account's credentials somewhere this deployment never
+// meant to reach.
+func TestLLMRejectsAMalformedVertexLocation(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{"evil.example/x", "europe west3", "EUROPE-WEST3", "-west3", ""} {
+		vars := map[string]string{"VERTEX_LOCATION": bad}
+		if bad == "" {
+			continue // empty falls back to the default, which is covered elsewhere
+		}
+
+		if _, err := Load(env(vars)); err == nil {
+			t.Errorf("VERTEX_LOCATION=%q was accepted", bad)
+		}
+	}
+
+	for _, good := range []string{"europe-west3", "europe-west4", "us-central1", "global"} {
+		if _, err := Load(env(map[string]string{"VERTEX_LOCATION": good})); err != nil {
+			t.Errorf("VERTEX_LOCATION=%q was rejected: %v", good, err)
+		}
+	}
+}

@@ -27,9 +27,14 @@ type Ride struct {
 	// AverageSpeedKmh is the average moving speed.
 	AverageSpeedKmh float64
 
-	// Weekday and StartHour place the ride in the week and the day.
-	Weekday   string
-	StartHour int
+	// Weekday places the ride in the week. Empty is omitted.
+	Weekday string
+
+	// StartHour is the hour the ride began, 0–23. It is a pointer because 0 is
+	// midnight and not "unknown": an int field would have put "00:00" in the
+	// prompt for every ride whose start time the caller did not set, and the
+	// model would have read a night ride that never happened. Nil is omitted.
+	StartHour *int
 
 	// GearName is the bike, which some franchises key on.
 	GearName string
@@ -167,8 +172,8 @@ func BuildPrompt(ride Ride, ctx Context) Prompt {
 	writeNumber(&b, "Average speed", ride.AverageSpeedKmh, "km/h")
 	writeField(&b, "Weekday", ride.Weekday)
 
-	if ride.StartHour >= 0 && ride.StartHour <= 23 {
-		writeField(&b, "Start hour", fmt.Sprintf("%02d:00", ride.StartHour))
+	if ride.StartHour != nil && *ride.StartHour >= 0 && *ride.StartHour <= 23 {
+		writeField(&b, "Start hour", fmt.Sprintf("%02d:00", *ride.StartHour))
 	}
 
 	writeField(&b, "Bike", ride.GearName)

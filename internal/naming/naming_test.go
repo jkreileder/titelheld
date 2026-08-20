@@ -159,7 +159,7 @@ func TestBuildPrompt(t *testing.T) {
 		MovingTimeMinutes:   181,
 		ElevationGainMeters: 540,
 		Weekday:             "Saturday",
-		StartHour:           9,
+		StartHour:           intPtr(9),
 		GearName:            "Pink Panther",
 		Places:              []string{"Musterdorf", "Musterbach"},
 		Region:              "Musterregion",
@@ -633,5 +633,51 @@ func TestVertexDisablesThinking(t *testing.T) {
 
 	if !strings.Contains(gotBody, `"thinkingConfig":{"thinkingBudget":0}`) {
 		t.Errorf("request does not disable thinking: %s", gotBody)
+	}
+}
+
+func intPtr(v int) *int { return &v }
+
+// Zero is midnight, not "unknown". An int field put "00:00" in the prompt for
+// every ride whose start time the caller never set, and the model would have
+// read a night ride that did not happen.
+func TestBuildPromptOmitsAnUnsetStartHour(t *testing.T) {
+	t.Parallel()
+
+	if got := BuildPrompt(Ride{SportType: "Ride", DistanceKm: 20}, Context{}); strings.Contains(got.User, "Start hour") {
+		t.Errorf("an unset start hour reached the prompt:\n%s", got.User)
+	}
+
+	if got := BuildPrompt(Ride{SportType: "Ride", DistanceKm: 20, StartHour: intPtr(0)}, Context{}); !strings.Contains(got.User, "00:00") {
+		t.Errorf("midnight was dropped:\n%s", got.User)
+	}
+}
+
+// So alone missed emoji built from sequences; the pieces live in categories a
+// German title also uses, so they are named individually.
+func TestValidateRejectsEmojiSequences(t *testing.T) {
+	t.Parallel()
+
+	for _, title := range []string{
+		"1\uFE0F\u20E3 Musterrunde",              // keycap sequence
+		"Musterrunde \U0001F468\u200D\U0001F4BB", // zero-width-joined
+		"Musterrunde \U0001F44D\U0001F3FB",       // skin-tone modifier
+		"Musterrunde \u2764\uFE0F",               // variation selector
+	} {
+		if _, err := NewValidator(nil).Validate(title, German); !errors.Is(err, ErrTitleShape) {
+			t.Errorf("Validate(%q) = %v, want ErrTitleShape", title, err)
+		}
+	}
+}
+
+// The emoji checks must not reject the language this service mostly writes in.
+func TestValidateAcceptsDecomposedGerman(t *testing.T) {
+	t.Parallel()
+
+	// "Musterhöhe" with a combining diaeresis rather than a precomposed ö.
+	title := "Musterho\u0308he"
+
+	if _, err := NewValidator(nil).Validate(title, German); err != nil {
+		t.Errorf("a decomposed umlaut was rejected: %v", err)
 	}
 }
