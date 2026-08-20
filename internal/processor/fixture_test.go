@@ -185,6 +185,14 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 	if provider.calls != 1 {
 		t.Errorf("the model was called %d times, want 1", provider.calls)
 	}
+
+	// Two GETs for a named activity, and exactly two: the classifier's fetch,
+	// and the re-read immediately before the write that merges the description.
+	// Pinned because Strava allows 100 requests per 15 minutes and an
+	// accidental third fetch in this path would not otherwise show up anywhere.
+	if getCalls != 2 {
+		t.Errorf("%d GETs for one named activity, want 2", getCalls)
+	}
 }
 
 // parseForm decodes an application/x-www-form-urlencoded body.

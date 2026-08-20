@@ -351,6 +351,18 @@ func TestFlippingWritesOnNamesWhatDryRunDescribed(t *testing.T) {
 		t.Fatalf("dry run wrote to Strava: %+v", writes)
 	}
 
+	// One GET per sweep, not two. Dry run keeps the activity queued, so the
+	// pipeline reruns on every sweep for as long as the window is open; a
+	// second fetch per activity per sweep would spend the Strava budget on a
+	// log line.
+	h.strava.mu.Lock()
+	gets := h.strava.getCalls
+	h.strava.mu.Unlock()
+
+	if gets != 3 {
+		t.Errorf("%d GETs across 3 dry-run sweeps, want 3", gets)
+	}
+
 	// The operator flips DRY_RUN off.
 	h.proc.deps.WritesEnabled = true
 

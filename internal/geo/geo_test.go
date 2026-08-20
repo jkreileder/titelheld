@@ -615,3 +615,95 @@ func TestEmptySummary(t *testing.T) {
 		t.Error("a summary with a country is not empty")
 	}
 }
+
+// A cached place name that is not on the allow-list never reaches a title.
+//
+// The cache is written from filtered output today, so this is defense in
+// depth rather than a live leak — but the allow-list is the privacy contract,
+// and a contract enforced only where the value goes in is enforced by
+// convention at the point it comes out. Tighten the list and every entry
+// already cached would otherwise keep the old answer until it aged out.
+func TestACachedPlaceIsRecheckedAgainstTheAllowList(t *testing.T) {
+	t.Parallel()
+
+	cache := store.NewMemory()
+
+	// Seeded directly, as an entry written under older rules would be.
+	for key, place := range map[string]store.Place{
+		"poi":     {Name: "Dr Müller's Praxis", Kind: "doctors", Region: "Musterregion", Country: "Musterland"},
+		"noKind":  {Name: "Somewhere", Region: "Musterregion", Country: "Musterland"},
+		"village": {Name: "Musterdorf", Kind: "village", Region: "Musterregion", Country: "Musterland"},
+		"river":   {Name: "Musterbach", Kind: "river", Region: "Musterregion", Country: "Musterland"},
+	} {
+		if err := cache.SavePlace(t.Context(), key, place); err != nil {
+			t.Fatalf("SavePlace(%q): %v", key, err)
+		}
+	}
+
+	describer, err := NewDescriber(refusingReverser{t}, cache, quietLogger())
+	if err != nil {
+		t.Fatalf("NewDescriber: %v", err)
+	}
+
+	for _, tc := range []struct {
+		key      string
+		wantName string
+	}{
+		{key: "poi", wantName: ""},
+		{key: "noKind", wantName: ""},
+		{key: "village", wantName: "Musterdorf"},
+		{key: "river", wantName: "Musterbach"},
+	} {
+		got, err := describer.resolve(t.Context(), tc.key, Point{})
+		if err != nil {
+			t.Fatalf("resolve(%q): %v", tc.key, err)
+		}
+
+		if got.Name != tc.wantName {
+			t.Errorf("resolve(%q).Name = %q, want %q", tc.key, got.Name, tc.wantName)
+		}
+
+		// The coarse fields survive either way: they are what a title falls
+		// back to when there is no usable place name.
+		if got.Region != "Musterregion" || got.Country != "Musterland" {
+			t.Errorf("resolve(%q) lost its region or country: %+v", tc.key, got)
+		}
+	}
+}
+
+// refusingReverser fails if it is called, so the test can only be exercising
+// the cache path.
+type refusingReverser struct{ t *testing.T }
+
+func (r refusingReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
+	r.t.Error("the geocoder was called for a cached key")
+
+	return store.Place{}, errors.New("must not be called")
+}
+
+// Every kind the allow-list can produce is accepted by the read-side check,
+// so the two cannot drift into disagreeing about what is allowed.
+func TestEveryAllowedKindPassesTheReadSideCheck(t *testing.T) {
+	t.Parallel()
+
+	for _, field := range addressFields {
+		if !IsAllowedKind(field.kind) {
+			t.Errorf("kind %q is produced by the allow-list but rejected on read", field.kind)
+		}
+	}
+
+	for category, types := range naturalFeatures {
+		for _, kind := range types {
+			if !IsAllowedKind(kind) {
+				t.Errorf("kind %q (%s) is produced by the allow-list but rejected on read",
+					kind, category)
+			}
+		}
+	}
+
+	for _, kind := range []string{"", "doctors", "shop", "amenity", "building", "office"} {
+		if IsAllowedKind(kind) {
+			t.Errorf("kind %q is accepted on read but is not on the allow-list", kind)
+		}
+	}
+}

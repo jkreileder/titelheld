@@ -194,6 +194,24 @@ func (d *Describer) resolve(ctx context.Context, key string, point Point) (store
 	}
 
 	if ok {
+		// The allow-list is applied again on the way out, not trusted from
+		// when the entry went in. A cached place was filtered by the rules in
+		// force at the time it was written, and those rules are the privacy
+		// contract: tighten them and every already-cached name would otherwise
+		// keep the old, now-disallowed answer until the cache aged out. It
+		// also holds for a Reverser this package did not write, since the
+		// interface is the caller's to implement.
+		//
+		// Only the name is dropped. Region and Country are coarse by
+		// construction and are what a title falls back to.
+		if cached.Name != "" && !IsAllowedKind(cached.Kind) {
+			d.logger.Warn("dropped a cached place name that is not on the allow-list",
+				"kind", logsafe.String(cached.Kind))
+
+			cached.Name = ""
+			cached.Kind = ""
+		}
+
 		return cached, nil
 	}
 

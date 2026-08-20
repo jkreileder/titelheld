@@ -29,15 +29,20 @@ func (p *Processor) write(
 	ctx context.Context, athleteID int64, activity *strava.Activity,
 	title string, logger *slog.Logger,
 ) (bool, error) {
-	description, attribute := p.description(ctx, activity, logger)
-
 	if !p.deps.WritesEnabled {
+		// No re-read here. Dry run leaves the activity queued, so the pipeline
+		// runs again on every sweep for as long as the review window is open,
+		// and a second GET per activity per sweep would spend the 100-per-15-
+		// minutes budget on a line in a log. The copy the classifier fetched
+		// answers the only question the log asks.
 		logger.Info("dry run: not writing",
 			"would_title", logsafe.String(title),
-			"would_attribute", attribute)
+			"would_attribute", p.wouldAttribute(activity))
 
 		return false, nil
 	}
+
+	description, attribute := p.description(ctx, activity, logger)
 
 	// Recorded before the write. See the note above.
 	//
@@ -63,6 +68,16 @@ func (p *Processor) write(
 	logger.Info("wrote the title", "title", logsafe.String(title), "attributed", attribute)
 
 	return true, nil
+}
+
+// wouldAttribute reports what a real write would have done about the
+// description, from the copy already in hand.
+//
+// It can differ from what the write would actually find — another tool may add
+// the line in the seconds a naming takes — but this is a dry-run log line, and
+// being right about it is not worth a Strava request on every sweep.
+func (p *Processor) wouldAttribute(activity *strava.Activity) bool {
+	return !p.deps.DisableAttribution && !naming.HasAttribution(activity.Description)
 }
 
 // description decides what description to send, if any.
