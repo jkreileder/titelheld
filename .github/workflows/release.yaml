@@ -177,8 +177,15 @@ jobs:
           egress-policy: block
           # gcloud is not in the runner's hosted tool cache, so setup-gcloud
           # resolves its version from raw.githubusercontent.com and downloads
-          # the SDK from dl.google.com on every run. Both are required; without
-          # them this job fails *after* the image has been published.
+          # the SDK from dl.google.com on every run.
+          #
+          # REGION-run.googleapis.com is where `gcloud run` actually goes;
+          # run.googleapis.com alone is not enough. Without the regional host
+          # the DNS request is dropped, gcloud retries for half a minute, and
+          # the failure surfaces as though the service were missing.
+          #
+          # All three are required, and this job runs *after* the image has
+          # been published, so getting them wrong strands a released image.
           allowed-endpoints: >
             *.actions.githubusercontent.com:443
             accounts.google.com:443
@@ -194,7 +201,15 @@ jobs:
             run.googleapis.com:443
             storage.googleapis.com:443
             sts.googleapis.com:443
+            ${{ vars.GCP_REGION }}-run.googleapis.com:443
 
+      # This job never checks the repository out - it deploys an image that
+      # already exists and needs no source - so the action warns that the
+      # workspace is empty and suggests create_credentials_file: false. Leave
+      # it on: gcloud below reads the file it writes, through
+      # GOOGLE_APPLICATION_CREDENTIALS. The warning is about where the file
+      # lands, not whether it works, and adding a checkout to silence it would
+      # be clone traffic for nothing.
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
@@ -227,9 +242,15 @@ jobs:
           # so a renamed service or a wrong region would quietly produce a
           # second, Terraform-less service with the default compute identity
           # and no DRY_RUN. Require the managed service to exist first.
-          if ! gcloud run services describe titelheld \
-               --project="$PROJECT" --region="$REGION" >/dev/null 2>&1; then
-            echo "::error::no Cloud Run service 'titelheld' in ${PROJECT}/${REGION}. Apply the Terraform first; this job updates a service, it does not create one."
+          #
+          # Report what gcloud said rather than naming a cause: "missing" and
+          # "not allowed to look" fail this check identically, and the first
+          # time it fired the service existed and the permission did not.
+          if ! found=$(gcloud run services describe titelheld \
+               --project="$PROJECT" --region="$REGION" --format='value(name)' 2>&1); then
+            echo "::error::cannot read the Cloud Run service 'titelheld' in ${PROJECT}/${REGION}; gcloud reported:"
+            printf '%s\n' "$found"
+            echo "::error::If the service is genuinely absent, apply the Terraform first - this job updates a service, it does not create one."
             exit 1
           fi
 
