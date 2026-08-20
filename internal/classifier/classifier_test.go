@@ -70,7 +70,7 @@ func TestClassify(t *testing.T) {
 			wantTier:      TierCommute,
 			wantAction:    ActionSkip,
 			wantDirection: DirectionToWork,
-			wantReason:    "title is not a Strava default",
+			wantReason:    "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "tier 4: 0.96 km commute-tagged errand at its Strava default",
@@ -129,7 +129,7 @@ func TestClassify(t *testing.T) {
 			cfg:        geofencedConfig(),
 			wantTier:   TierSportRide,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 
 		// --- Tier 1: never named. ---
@@ -245,7 +245,7 @@ func TestClassify(t *testing.T) {
 			}(),
 			wantTier:   TierVirtual,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 
 		{
@@ -326,7 +326,7 @@ func TestClassify(t *testing.T) {
 			wantTier:      TierCommute,
 			wantAction:    ActionSkip,
 			wantDirection: DirectionToHome,
-			wantReason:    "title is not a Strava default",
+			wantReason:    "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "tier 3 is not reached without geofences: falls through to tier 4",
@@ -378,7 +378,7 @@ func TestClassify(t *testing.T) {
 			wantTier:      TierCommute,
 			wantAction:    ActionSkip,
 			wantDirection: DirectionToWork,
-			wantReason:    "title is not a Strava default",
+			wantReason:    "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "tier 3: a ride just over the distance threshold ending at work",
@@ -428,7 +428,7 @@ func TestClassify(t *testing.T) {
 			}(),
 			wantTier:   TierSportRide,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "tier 3: clearing the commute titles disables the title match",
@@ -448,7 +448,7 @@ func TestClassify(t *testing.T) {
 			}(),
 			wantTier:   TierErrand,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 
 		// --- Tier 4: errands. ---
@@ -614,7 +614,7 @@ func TestClassify(t *testing.T) {
 			cfg:        geofencedConfig(),
 			wantTier:   TierSportRide,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "skip gate: surrounding whitespace does not defeat the default match",
@@ -640,7 +640,7 @@ func TestClassify(t *testing.T) {
 			cfg:        geofencedConfig(),
 			wantTier:   TierSportRide,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "skip gate: a localized default title still qualifies",
@@ -682,7 +682,7 @@ func TestClassify(t *testing.T) {
 			cfg:        Config{},
 			wantTier:   TierErrand,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "zero config: virtual rides are kept",
@@ -998,7 +998,9 @@ func TestMachineTitleGate(t *testing.T) {
 		},
 	}
 
-	cfg := Config{MachineTitles: DefaultMachineTitles()}
+	// DefaultConfig, not a hand-built Config: the shipped defaults are what
+	// production wires, and this feature was inert in them until it was not.
+	cfg := DefaultConfig()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

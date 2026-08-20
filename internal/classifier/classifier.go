@@ -212,6 +212,7 @@ func DefaultConfig() Config {
 		ToHomeTitle:               defaultToHomeTitle,
 		SportMinDistanceMeters:    defaultSportMinDistanceMeters,
 		SportMinMovingTimeSeconds: defaultSportMinMovingTimeSeconds,
+		MachineTitles:             DefaultMachineTitles(),
 	}
 }
 
@@ -261,7 +262,7 @@ const (
 
 // Decision reasons, kept as constants so logs and tests share one spelling.
 const (
-	reasonNotDefaultTitle = "title is not a Strava default"
+	reasonNotDefaultTitle = "title is neither a Strava default nor a recognized machine title"
 	reasonCommuteErrand   = "commute-tagged errand"
 	reasonErrandsDisabled = "errand naming disabled"
 	reasonSportRide       = "sport ride"
