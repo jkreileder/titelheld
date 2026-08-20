@@ -69,20 +69,26 @@ jobs:
       - name: Check formatting
         run: terraform -chdir=infra fmt -check -recursive -diff
 
+      # Everything from here down runs code the pull request chose, so for a
+      # fork it is all skipped and `fmt -check` above is the whole check.
+      #
+      # `init` installs the providers named in the fork's versions.tf, and
+      # `validate` launches those binaries to read their schemas — the same
+      # exposure as tflint's plugins, from a different file. Only `fmt` reads
+      # the tree without executing anything out of it.
+      #
       # -backend=false: the real backend is a GCS bucket this job has no
       # credentials for, and validation does not need state.
       - name: Initialize without a backend
+        if: ${{ !fromJSON(steps.fork.outputs.is_fork) }}
         run: terraform -chdir=infra init -backend=false -input=false
 
       - name: Validate
+        if: ${{ !fromJSON(steps.fork.outputs.is_fork) }}
         run: terraform -chdir=infra validate
 
       # tflint --init reads .tflint.hcl from the tree being linted and downloads
-      # whatever plugins it declares, as executables it then runs. On a fork
-      # pull request that file is the fork author's, so linting one would be
-      # running code chosen by whoever opened it. Skipped there instead: fmt
-      # and validate still cover the change, and .tflint.hcl itself is part of
-      # the diff a human reads before merging.
+      # whatever plugins it declares, as executables it then runs.
       - name: Set up tflint
         if: ${{ !fromJSON(steps.fork.outputs.is_fork) }}
         uses: terraform-linters/setup-tflint@6e1e0642c0289bd619021bf6b34e3c08ed1e005a # v6.3.0
@@ -99,7 +105,7 @@ jobs:
           # tflint downloads its google ruleset from GitHub releases.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Note the skipped lint
+      - name: Note the reduced checks
         if: ${{ fromJSON(steps.fork.outputs.is_fork) }}
         run: |
-          echo "::notice::tflint was skipped: a fork pull request supplies its own .tflint.hcl, and --init would run plugins it names. Format and validate still ran."
+          echo "::notice::Only 'terraform fmt -check' ran. A fork pull request supplies its own versions.tf and .tflint.hcl, and init, validate and tflint all execute code those files name, so they are skipped here and run once the change is on main."

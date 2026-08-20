@@ -238,10 +238,11 @@
         },
         {
             "automerge": false,
-            "description": "GitHub Actions digest refreshes are reviewed by hand: minimumReleaseAge cannot hold them back. The github-tags datasource ages a digest against the matched version's original release date, so an action tag force-pushed to new commits clears the 3-day check immediately and would otherwise automerge within hours.",
-            "groupName": "github-actions-digests",
+            "description": "Action and pre-commit digest refreshes are reviewed by hand: minimumReleaseAge cannot hold them back. The datasource ages a digest against the matched version's original release date, so a tag force-pushed to new commits clears the 3-day check immediately and would otherwise automerge within hours. This is the case the pre-commit rule above cannot catch - a hook repo re-pointing an existing tag arrives as a digest update, not a major one.",
+            "groupName": "pinned-digests",
             "matchManagers": [
-                "github-actions"
+                "github-actions",
+                "pre-commit"
             ],
             "matchUpdateTypes": [
                 "digest"

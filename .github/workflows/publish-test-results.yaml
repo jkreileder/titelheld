@@ -105,10 +105,17 @@ jobs:
           # that list against GITHUB_REF, which a workflow_run job always
           # reports as the default branch, so any value matches.
           check_run_annotations_branch: "*"
-          # Annotations are built from the XML, so they carry text the fork
-          # wrote. Suppressed for forks only: a same-repository pull request
-          # keeps the inline annotations, which is the reason to run this at
-          # all, and nothing renders text this repository has not reviewed.
+          # Suppressed for forks only, so a same-repository pull request keeps
+          # its annotations, which is the reason to run this at all.
+          #
+          # This narrows the exposure rather than closing it. In the pinned
+          # action the setting is read only by get_test_list_annotations, so
+          # it drops the "all tests"/"skipped tests" listing — itself built
+          # from fork-written test names. The per-case and per-error
+          # annotations are assembled unconditionally, so a failure message
+          # the fork chose still renders. That residual is the accepted part:
+          # it lands on the contributor's own pull request, where they already
+          # control the title, the body and the diff.
           check_run_annotations: >-
             ${{ github.event.workflow_run.head_repository.full_name == github.repository
             && 'all tests, skipped tests' || 'none' }}

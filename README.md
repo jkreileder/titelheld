@@ -228,8 +228,10 @@ value, and the deployed service keeps it on.
 
 ## Infrastructure
 
-Everything in GCP is Terraform, under [`infra/`](infra). `make tf-check` runs exactly what CI
-runs: `terraform fmt -check`, `validate` and `tflint`.
+Everything in GCP is Terraform, under [`infra/`](infra). `make tf-check` runs what CI runs on
+a branch of this repository: `terraform fmt -check`, `validate` and `tflint`. A pull request
+from a fork gets `fmt -check` alone — `init`, `validate` and `tflint` all execute providers or
+plugins named by files in the pull request, so they wait until the change is on `main`.
 
 **CI never applies.** It formats, validates and lints; applies are run by hand.
 

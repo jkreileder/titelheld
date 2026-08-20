@@ -87,7 +87,9 @@ subscription has been created.
   Scorecard, TruffleHog secret scanning, pre-commit hooks, PR-title validation
   and test-result publication.
 - `terraform.yaml` formats, validates and lints `infra/`; it holds no
-  credentials and never applies. `docker.yaml` builds the image on every PR and
+  credentials and never applies. A fork's pull request gets `fmt -check` only:
+  `init`, `validate` and `tflint` each run providers or plugins that files in
+  the pull request name. `docker.yaml` builds the image on every PR and
   push to main, scans it with Grype, and holds no credentials - it publishes
   nothing. `rescan.yaml` rebuilds the newest released tag daily and rescans it,
   so advisories published after a release are noticed. It selects the newest
