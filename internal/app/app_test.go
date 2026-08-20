@@ -164,6 +164,11 @@ func TestRunNeverLogsThePathSecret(t *testing.T) {
 
 	const secret = "s3cr3t-segment"
 
+	// Allocated out here: freePort calls t.Fatalf on failure, which stops only
+	// the calling goroutine, so from inside the one below it would leave this
+	// test waiting out its timeout and reporting the wrong thing.
+	port := freePort(t)
+
 	var logged safeBuffer
 
 	logger := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -174,7 +179,7 @@ func TestRunNeverLogsThePathSecret(t *testing.T) {
 
 	go func() {
 		done <- Run(ctx, logger, env(map[string]string{
-			"PORT":                freePort(t),
+			"PORT":                port,
 			"WEBHOOK_PATH_SECRET": secret,
 		}))
 	}()
@@ -182,8 +187,13 @@ func TestRunNeverLogsThePathSecret(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
+	// The error matters here, not just the return: a run that failed before it
+	// logged anything would satisfy the assertion below while proving nothing.
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run = %v, want nil after a clean shutdown", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("run did not return after the context was canceled")
 	}
