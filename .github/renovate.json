@@ -215,6 +215,16 @@
             ]
         },
         {
+            "description": "Propose go-directive updates at all. Renovate leaves the directive alone by default, because `go 1.x` means \"compatible with this version or later\" rather than \"built with this version\", so without rangeStrategy: bump no update is ever generated and the rule below has nothing to act on. This repository does treat it as a pin: CI reads it through `go-version-file: go.mod`, and the Dockerfile's golang tag is bumped by the docker manager, so a directive left behind drifts away from both.",
+            "matchDepNames": [
+                "go"
+            ],
+            "matchDepTypes": [
+                "golang"
+            ],
+            "rangeStrategy": "bump"
+        },
+        {
             "automerge": true,
             "description": "Patch releases of the Go toolchain itself (the `go` directive in go.mod) carry the security fixes; the spec requires staying on latest stable. Minors and majors fall through to manual review.",
             "matchDatasources": [
@@ -267,6 +277,16 @@
             "matchUpdateTypes": [
                 "minor",
                 "patch"
+            ]
+        },
+        {
+            "description": "The built-in github-actions manager special-cases golangci/golangci-lint-action and extracts its `version:` input as `golangci/golangci-lint` from github-tags. The custom managers above already pin that same line, together with GOLANGCI_LINT_VERSION in the Makefile, as one dependency across both files - which is what keeps the two in step. Leaving both enabled produced two pull requests for one upgrade, editing the same line, so the second to merge would conflict. The custom pair wins because no built-in manager can read the Makefile half.",
+            "enabled": false,
+            "matchManagers": [
+                "github-actions"
+            ],
+            "matchPackageNames": [
+                "golangci/golangci-lint"
             ]
         }
     ],
