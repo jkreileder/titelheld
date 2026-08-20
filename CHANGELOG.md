@@ -10,7 +10,7 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
-## [v0.1.0] – Unreleased
+## [v0.1.0] – 2026-08-20
 
 First release. The service is deployable but does not yet name anything: it classifies, stores
 and describes, and `DRY_RUN` is on, so it cannot write to Strava.
