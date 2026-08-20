@@ -23,4 +23,16 @@ terraform {
 provider "google" {
   project = var.project_id
   region  = var.region
+
+  # Some APIs bill quota to a project of the caller's choosing rather than to
+  # the project holding the resource, and refuse the call when the caller does
+  # not name one. billingbudgets is one: the budget lives on the billing
+  # account, so there is no resource project for it to infer.
+  #
+  # Applying with user credentials therefore fails on the budget with
+  # SERVICE_DISABLED against Google's own default project, which is confusing
+  # because the API *is* enabled on this one. These two send this project as
+  # the quota project instead.
+  user_project_override = true
+  billing_project       = var.project_id
 }
