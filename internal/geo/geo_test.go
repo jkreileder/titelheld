@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/jkreileder/titelheld/internal/store"
@@ -63,6 +64,54 @@ func TestDecodePolylineRejectsGarbage(t *testing.T) {
 				t.Errorf("DecodePolyline(%q) = %v, want ErrBadPolyline", tt.encoded, err)
 			}
 		})
+	}
+}
+
+// An over-long polyline is refused before it sizes an allocation. The decoder
+// derives its capacity hint from the input length, and the input comes from
+// Strava rather than from anything this service controls.
+//
+// "??" is one point with a zero delta in both axes, so a long run of them
+// stays at the origin: length is the only thing under test here, and a
+// rejection cannot be coming from the coordinate-range check instead.
+func TestDecodePolylineRejectsAnOverlongInput(t *testing.T) {
+	t.Parallel()
+
+	oversized := strings.Repeat("??", (maxEncodedPolylineBytes/2)+1)
+
+	if len(oversized) <= maxEncodedPolylineBytes {
+		t.Fatalf("test input is %d bytes, which does not exceed the %d-byte limit",
+			len(oversized), maxEncodedPolylineBytes)
+	}
+
+	_, err := DecodePolyline(oversized)
+	if !errors.Is(err, ErrBadPolyline) {
+		t.Fatalf("DecodePolyline(%d bytes) = %v, want ErrBadPolyline", len(oversized), err)
+	}
+
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("DecodePolyline rejected the input as %v, want the length guard", err)
+	}
+}
+
+// An input exactly at the limit still decodes, so the guard bounds the input
+// without narrowing what a real activity may carry.
+func TestDecodePolylineAcceptsTheLimit(t *testing.T) {
+	t.Parallel()
+
+	atLimit := strings.Repeat("??", maxEncodedPolylineBytes/2)
+
+	if len(atLimit) != maxEncodedPolylineBytes {
+		t.Fatalf("test input is %d bytes, want exactly %d", len(atLimit), maxEncodedPolylineBytes)
+	}
+
+	points, err := DecodePolyline(atLimit)
+	if err != nil {
+		t.Fatalf("DecodePolyline(%d bytes) = %v, want no error", len(atLimit), err)
+	}
+
+	if len(points) != maxEncodedPolylineBytes/2 {
+		t.Errorf("DecodePolyline decoded %d points, want %d", len(points), maxEncodedPolylineBytes/2)
 	}
 }
 

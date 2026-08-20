@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -152,4 +154,72 @@ func TestStoreKind(t *testing.T) {
 	if got := storeKind(config.Config{FirestoreProject: "p"}); got != "firestore" {
 		t.Errorf("storeKind with a project = %q, want firestore", got)
 	}
+}
+
+// The path secret is the only thing in front of the webhook intake — Strava
+// does not sign its POSTs — so it must never reach a log. Cloud Run logs are
+// readable by a much wider set of principals than the environment is.
+func TestRunNeverLogsThePathSecret(t *testing.T) {
+	t.Parallel()
+
+	const secret = "s3cr3t-segment"
+
+	// Allocated out here: freePort calls t.Fatalf on failure, which stops only
+	// the calling goroutine, so from inside the one below it would leave this
+	// test waiting out its timeout and reporting the wrong thing.
+	port := freePort(t)
+
+	var logged safeBuffer
+
+	logger := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan error, 1)
+
+	go func() {
+		done <- Run(ctx, logger, env(map[string]string{
+			"PORT":                port,
+			"WEBHOOK_PATH_SECRET": secret,
+		}))
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	// The error matters here, not just the return: a run that failed before it
+	// logged anything would satisfy the assertion below while proving nothing.
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run = %v, want nil after a clean shutdown", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not return after the context was canceled")
+	}
+
+	if output := logged.String(); strings.Contains(output, secret) {
+		t.Errorf("the path secret reached the log:\n%s", output)
+	}
+}
+
+// safeBuffer is a bytes.Buffer that tolerates the logger writing from the
+// server's goroutines while the test reads it.
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
 }

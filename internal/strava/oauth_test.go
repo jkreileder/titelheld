@@ -2,6 +2,7 @@ package strava
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -318,5 +319,31 @@ func TestTokenRequestWithUnbuildableURL(t *testing.T) {
 
 	if _, err := oauth.Exchange(t.Context(), "code"); err == nil {
 		t.Fatal("Exchange with an unparseable base URL = nil error, want error")
+	}
+}
+
+// The same ceiling applies to a token response, which is structurally tiny.
+func TestTokenResponseStopsAtTheSizeLimit(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"`)
+
+		chunk := strings.Repeat("a", 4096)
+		for written := 0; written < maxTokenBytes*2; written += len(chunk) {
+			if _, err := io.WriteString(w, chunk); err != nil {
+				return
+			}
+		}
+
+		_, _ = io.WriteString(w, `"}`)
+	}))
+	defer server.Close()
+
+	oauth := &OAuth{ClientID: "1", ClientSecret: "s", BaseURL: server.URL, HTTPClient: server.Client()}
+
+	if _, err := oauth.Exchange(t.Context(), "code"); err == nil {
+		t.Error("Exchange on an oversized body = nil error, want a decode failure")
 	}
 }

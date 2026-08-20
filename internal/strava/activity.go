@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -63,6 +64,15 @@ func (a *Activity) Owner() int64 {
 	return a.Athlete.ID
 }
 
+// maxActivityBytes caps what a decode will read from an activity response.
+//
+// drainAndClose already refuses to read an unbounded body, but it runs after
+// the decode, so the decoder needs its own ceiling: without one a response
+// that never ends makes this process allocate until it is killed. A detailed
+// activity carries a summary polyline and free-text fields, so a megabyte is
+// generous rather than tight.
+const maxActivityBytes = 1 << 20
+
 // GetActivity fetches one activity by ID.
 func (c *Client) GetActivity(ctx context.Context, activityID int64) (*Activity, error) {
 	path := "/activities/" + strconv.FormatInt(activityID, 10)
@@ -74,7 +84,7 @@ func (c *Client) GetActivity(ctx context.Context, activityID int64) (*Activity, 
 	defer drainAndClose(response)
 
 	var activity Activity
-	if err := json.NewDecoder(response.Body).Decode(&activity); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxActivityBytes)).Decode(&activity); err != nil {
 		return nil, fmt.Errorf("strava: decode activity %d: %w", activityID, err)
 	}
 
@@ -114,7 +124,7 @@ func (c *Client) UpdateActivityName(ctx context.Context, activityID int64, name 
 	defer drainAndClose(response)
 
 	var activity Activity
-	if err := json.NewDecoder(response.Body).Decode(&activity); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxActivityBytes)).Decode(&activity); err != nil {
 		return nil, fmt.Errorf("strava: decode renamed activity %d: %w", activityID, err)
 	}
 

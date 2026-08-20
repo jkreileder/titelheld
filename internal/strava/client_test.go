@@ -3,6 +3,7 @@ package strava
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -753,5 +754,36 @@ func TestTokenErrorWrapsItsCause(t *testing.T) {
 	}
 	if !errors.Is(wrapped, cause) {
 		t.Error("errors.Is could not see through tokenError")
+	}
+}
+
+// A response that never ends must not be decoded into memory without limit.
+// The body here is valid JSON for far longer than the ceiling allows, so the
+// decode fails on truncation rather than on a syntax error the server sent.
+func TestGetActivityStopsAtTheSizeLimit(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// A name field that keeps going. Written in chunks so the test does
+		// not hold the whole oversized body in memory at once.
+		_, _ = io.WriteString(w, `{"id":1,"name":"`)
+
+		chunk := strings.Repeat("a", 4096)
+		for written := 0; written < maxActivityBytes*2; written += len(chunk) {
+			if _, err := io.WriteString(w, chunk); err != nil {
+				return
+			}
+		}
+
+		_, _ = io.WriteString(w, `"}`)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, WriteModeDryRun)
+
+	if _, err := client.GetActivity(t.Context(), 1); err == nil {
+		t.Error("GetActivity on an oversized body = nil error, want a decode failure")
 	}
 }
