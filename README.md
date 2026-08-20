@@ -202,6 +202,26 @@ done
 `200` means the model is served there, `404` that it is not. The `x-goog-user-project` header is
 required: without it the call returns `403`, which says nothing about the model.
 
+### Checking the naming path for real
+
+The probe above proves a model exists. This proves the whole path — credentials, request shape,
+response parsing and validation — with the same code the service runs. It sits behind a build tag,
+so CI never runs it and no live call happens there:
+
+```sh
+VERTEX_PROJECT=titelheld-XXXXXX go test -tags smoke ./internal/naming/ -run TestLiveVertex -v
+```
+
+It needs application default credentials and spends a few tokens. A pass logs the validated title;
+a failure names the step that broke, which is the point of running the real code rather than a
+`curl` that resembles it.
+
+That distinction is not academic. `gemini-3.5-flash` reasons by default and those tokens are
+billed inside `maxOutputTokens`, so an early hand-written `curl` spent 241 of 256 thinking,
+returned a truncated fragment, and stopped at `MAX_TOKENS`. The provider therefore sends
+`thinkingConfig: {thinkingBudget: 0}` — naming a ride needs no chain of reasoning. Any hand-run
+`curl` needs that field too, or it reproduces the original failure.
+
 ## HTTP surface
 
 | Route                    | Purpose                                                     |
