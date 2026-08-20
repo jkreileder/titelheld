@@ -171,13 +171,20 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
 | `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
 
-The sweep that drains the delay queue is configured by three variables that stand or fall
-together. Terraform sets all three; nothing else does, and none of them is written by hand.
-Set none of them and the sweep route is not mounted at all, which is the local case and the
-case on the first apply, before Cloud Run has minted the URL the audience is built from. Set
-some of them and the service refuses to start: ignoring the rest would leave the queue
-silently undrained, and inferring the missing one would mean inventing the identity the
-endpoint trusts.
+The sweep that drains the delay queue is configured by three variables. Terraform sets all
+three; nothing else does, and none of them is written by hand.
+
+Set none of them and the sweep route is not mounted at all, which is the local case. Set some
+of them and the service refuses to start: ignoring the rest would leave the queue silently
+undrained, and inferring the missing one would mean inventing the identity the endpoint trusts.
+
+`SWEEP_AUDIENCE` is the one exception, and it is not a special case so much as the first apply.
+The path is generated and the service account exists from the start, so Terraform always sets
+both; the audience is built from the service's own URL, which Cloud Run has not minted yet. An
+empty audience therefore means "no sweep route yet" and the service starts normally — treating
+it as fatal would stop the very apply that creates the service. The route appears on the second
+apply, with the audience filled in. The unsafe reading, *accept any audience*, is the one thing
+that never happens.
 
 | Variable                | Required | Default | Purpose                                          |
 | ----------------------- | -------- | ------- | ------------------------------------------------ |

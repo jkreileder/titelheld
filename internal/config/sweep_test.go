@@ -68,12 +68,12 @@ func TestNoSweepSettingsIsNotAnError(t *testing.T) {
 // There is no safe reading of it. Ignoring the settings that are present would
 // leave the queue undrained with no error anywhere, and filling in the missing
 // one would mean inventing the identity this endpoint trusts.
+//
+// The audience is the exception, and has its own test below.
 func TestAPartialSweepConfigurationIsAnError(t *testing.T) {
 	t.Parallel()
 
-	for _, missing := range []string{
-		EnvSweepPath, EnvSweepAudience, EnvSweepServiceAccount,
-	} {
+	for _, missing := range []string{EnvSweepPath, EnvSweepServiceAccount} {
 		t.Run("missing "+missing, func(t *testing.T) {
 			t.Parallel()
 
@@ -90,6 +90,32 @@ func TestAPartialSweepConfigurationIsAnError(t *testing.T) {
 				t.Errorf("the sweep is enabled despite the error: %+v", cfg.Sweep)
 			}
 		})
+	}
+}
+
+// A missing audience alone is the first Terraform apply, not a mistake.
+//
+// The path is generated and the service account exists from the start, so
+// Terraform always sets both; the audience is built from the service's own URL,
+// which Cloud Run has not minted yet. Terraform produces exactly this
+// combination once, by design. Treating it as fatal would stop the apply that
+// creates the service — the deployment could never be stood up from scratch.
+func TestAMissingAudienceDisablesTheSweepWithoutFailing(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(sweepEnv(map[string]string{EnvSweepAudience: ""}))
+	if err != nil {
+		t.Fatalf("the first-apply configuration was rejected: %v", err)
+	}
+
+	if cfg.Sweep.Enabled() {
+		t.Errorf("the sweep is enabled with no audience to check against: %+v", cfg.Sweep)
+	}
+
+	// Nothing is carried forward, so no later code can read a half-populated
+	// configuration and act on the parts that happen to be there.
+	if cfg.Sweep != (SweepConfig{}) {
+		t.Errorf("Sweep is %+v, want the zero value", cfg.Sweep)
 	}
 }
 

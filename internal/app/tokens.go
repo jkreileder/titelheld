@@ -37,8 +37,13 @@ func (b boundTokens) Load(ctx context.Context, athleteID int64) (strava.Token, e
 
 	token, err := b.store.AnyToken(ctx)
 	if err != nil {
+		// The store's own error is carried, not replaced. "None is bound" and
+		// "Firestore is unavailable" are the same sentence to a caller
+		// otherwise, and they send an operator to opposite ends of the system:
+		// one to the OAuth flow, the other to the database.
 		return strava.Token{}, fmt.Errorf(
-			"%w: no athlete is configured and none is bound", strava.ErrTokenNotFound)
+			"%w: no athlete is configured and none could be resolved: %w",
+			strava.ErrTokenNotFound, err)
 	}
 
 	return token, nil

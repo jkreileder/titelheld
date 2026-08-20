@@ -119,10 +119,13 @@ func (c Config) RedirectURL() string {
 // initiative, and the alternative reading of an unset audience — accept any
 // audience — would turn a half-configured deployment into an open trigger.
 //
-// The audience is empty on the very first Terraform apply, because the service
-// URL does not exist until Cloud Run has minted it. Refusing to mount the
-// route until the second apply is the correct behavior for that window, not a
-// limitation of it.
+// The audience specifically is empty on the very first Terraform apply,
+// because the service URL it is built from does not exist until Cloud Run has
+// minted it, while the generated path and the service account are known from
+// the start. An empty audience therefore means "no sweep route yet" rather
+// than a misconfiguration; refusing to mount the route until the second apply
+// is the correct behavior for that window, not a limitation of it. Any other
+// gap is a mistake and is reported as one.
 type SweepConfig struct {
 	// Path is the full, unguessable path Cloud Scheduler posts to, including
 	// the generated segment. Terraform mints it; it is never configured by
@@ -360,6 +363,20 @@ func loadSweep(getenv func(string) string, errs *[]error) SweepConfig {
 	}
 
 	if len(set) == 0 {
+		return SweepConfig{}
+	}
+
+	// A missing audience on its own is the first Terraform apply, not a
+	// mistake. The path is generated and the service account exists from the
+	// start, so both are always set; the audience is built from the service's
+	// own URL, which Cloud Run has not minted yet. Terraform therefore
+	// produces exactly this combination once, by design, and treating it as
+	// fatal would stop the very apply that creates the service.
+	//
+	// Disabling the route is the safe reading and the one the deployment
+	// documents. The alternative — accepting any audience — is what must never
+	// happen, and does not.
+	if sweep.Audience == "" {
 		return SweepConfig{}
 	}
 

@@ -132,3 +132,36 @@ func TestSavePassesThroughToTheStore(t *testing.T) {
 		t.Errorf("refresh token is %q, want the saved one", got.RefreshToken)
 	}
 }
+
+// The store's own failure survives the fallback.
+//
+// A Firestore outage and "nobody has authorized yet" both arrive here as an
+// error from AnyToken, and they send an operator to opposite ends of the
+// system. Reporting only the second would be guessing.
+func TestTheStoresOwnErrorIsCarried(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("firestore: permission denied")
+	tokens := boundTokens{failingAnyToken{store.NewMemory(), sentinel}}
+
+	_, err := tokens.Load(t.Context(), 0)
+
+	if !errors.Is(err, strava.ErrTokenNotFound) {
+		t.Errorf("error %v does not report a missing token", err)
+	}
+
+	if !errors.Is(err, sentinel) {
+		t.Errorf("error %v discards the store's own failure", err)
+	}
+}
+
+// failingAnyToken is a store whose bootstrap lookup fails for its own reasons.
+type failingAnyToken struct {
+	*store.Memory
+
+	err error
+}
+
+func (f failingAnyToken) AnyToken(_ context.Context) (strava.Token, error) {
+	return strava.Token{}, f.err
+}
