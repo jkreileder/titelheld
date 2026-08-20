@@ -44,6 +44,10 @@ func Suite(t *testing.T, newStore Factory) {
 		"NamedLogKeyedByAthlete":     namedLogKeyedByAthlete,
 		"GeocodeCacheRoundTrip":      geocodeCacheRoundTrip,
 		"GeocodeCacheMissIsNotAnErr": geocodeCacheMissIsNotAnErr,
+		"FranchiseStartsAtZero":      franchiseStartsAtZero,
+		"FranchiseAdvances":          franchiseAdvances,
+		"FranchisesAreIndependent":   franchisesAreIndependent,
+		"FranchiseKeyedByAthlete":    franchiseKeyedByAthlete,
 	}
 
 	for name, run := range tests {
@@ -347,4 +351,87 @@ func ids(pending []store.Pending) []int64 {
 	}
 
 	return out
+}
+
+// An unused franchise, and one that no longer exists in configuration, both
+// answer zero. Removing a franchise from config should stop it being
+// consulted, not start producing errors.
+func franchiseStartsAtZero(t *testing.T, s store.Store) {
+	t.Helper()
+
+	position, err := s.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 0 {
+		t.Errorf("position = %d, want 0 for a franchise never used", position)
+	}
+
+	if _, err := s.FranchisePosition(t.Context(), 4242, "a-franchise-that-was-removed"); err != nil {
+		t.Errorf("FranchisePosition for an unknown franchise = %v, want no error", err)
+	}
+}
+
+// The store decides the next number, so two callers cannot land on the same
+// position and reuse a title.
+func franchiseAdvances(t *testing.T, s store.Store) {
+	t.Helper()
+
+	for want := 1; want <= 3; want++ {
+		got, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther")
+		if err != nil {
+			t.Fatalf("AdvanceFranchise: %v", err)
+		}
+
+		if got != want {
+			t.Fatalf("AdvanceFranchise returned %d, want %d", got, want)
+		}
+	}
+
+	position, err := s.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 3 {
+		t.Errorf("position after three advances = %d, want 3", position)
+	}
+}
+
+// Two franchises for one athlete are separate series.
+func franchisesAreIndependent(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if _, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
+		t.Fatalf("AdvanceFranchise: %v", err)
+	}
+
+	other, err := s.FranchisePosition(t.Context(), 4242, "bond")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if other != 0 {
+		t.Errorf("advancing one franchise moved another: %d", other)
+	}
+}
+
+// Everything here is keyed by athlete, so a second athlete walks the same
+// series from the start.
+func franchiseKeyedByAthlete(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if _, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
+		t.Fatalf("AdvanceFranchise: %v", err)
+	}
+
+	other, err := s.FranchisePosition(t.Context(), 9999, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if other != 0 {
+		t.Errorf("another athlete inherited a franchise position: %d", other)
+	}
 }

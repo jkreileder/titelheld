@@ -107,6 +107,36 @@ type Store interface {
 	Queue
 	NamedLog
 	GeocodeCache
+	Franchises
+}
+
+// Franchises remembers how far along an ordered title series an athlete is.
+//
+// A franchise is a list of titles walked in order — the Pink Panther films on
+// the gravel bike — and the only thing that has to persist is the position in
+// it. The list itself is configuration, so this stores an integer and not the
+// titles: renaming or reordering a franchise in config must not require a
+// migration of anything stored here.
+//
+// Like the queue and the named log, it is re-derivable in principle — the
+// titles this service wrote are the record — but re-deriving it means matching
+// past titles against a series, so it is cheaper to remember. Losing it costs
+// a repeated or skipped entry, not a wrong write.
+type Franchises interface {
+	// FranchisePosition returns how many entries of the named franchise this
+	// athlete has already used. Zero for a franchise never used, which is
+	// also the answer for one that does not exist — a franchise removed from
+	// configuration should not error, it should simply stop being consulted.
+	FranchisePosition(ctx context.Context, athleteID int64, franchise string) (int, error)
+
+	// AdvanceFranchise records that one more entry has been used and returns
+	// the new position.
+	//
+	// It advances by one rather than setting a value, so two callers cannot
+	// race to the same position: the store decides the next number, not the
+	// caller. That matters less at max-instances=1 than it will later, and
+	// costs nothing now.
+	AdvanceFranchise(ctx context.Context, athleteID int64, franchise string) (int, error)
 }
 
 // NamedLog records what this service has written.

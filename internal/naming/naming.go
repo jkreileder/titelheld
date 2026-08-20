@@ -113,8 +113,12 @@ type Validator struct {
 	banned []string
 }
 
-// NewValidator builds a validator. Banned words are matched case-insensitively
-// and as substrings, so "Epic" also rejects "Epically".
+// NewValidator builds a validator.
+//
+// Banned words match case-insensitively and as substrings, so "Epic" also
+// rejects "Epically" — and, less obviously, any word that merely contains one:
+// a banned "ass" would reject "Passau". Choose entries that are safe to match
+// anywhere, or the list will reject titles nobody objected to.
 func NewValidator(banned []string) Validator {
 	folded := make([]string, 0, len(banned))
 
@@ -209,6 +213,14 @@ func isEmojiPart(r rune) bool {
 	// Skin-tone modifiers.
 	if r >= '\U0001F3FB' && r <= '\U0001F3FF' {
 		return true
+	}
+
+	// The degree sign is category So, alongside the pictographs, and a title
+	// about weather wants it: "5° und sonnig" is a title this athlete would
+	// write. Carved out by hand because So is otherwise exactly the right
+	// category to reject.
+	if r == '°' {
+		return false
 	}
 
 	// Pictographic symbols. Sk would also catch the modifiers above, but it

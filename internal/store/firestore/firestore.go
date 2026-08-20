@@ -31,10 +31,11 @@ import (
 // Collection names. Each is listed in the IAM documentation; adding one means
 // updating that list.
 const (
-	CollectionTokens   = "tokens"
-	CollectionPending  = "pending"
-	CollectionNamed    = "named"
-	CollectionGeocache = "geocache"
+	CollectionTokens    = "tokens"
+	CollectionPending   = "pending"
+	CollectionNamed     = "named"
+	CollectionGeocache  = "geocache"
+	CollectionFranchise = "franchise"
 )
 
 // Store implements [store.Store] on Firestore.
@@ -455,4 +456,85 @@ func isSafeDocID(key string) bool {
 	}
 
 	return true
+}
+
+// franchiseDoc is one athlete's position in one franchise.
+//
+// The titles are not stored: they are configuration, and a franchise renamed
+// or reordered in config must not require migrating anything here.
+type franchiseDoc struct {
+	AthleteID int64     `firestore:"athlete_id"`
+	Franchise string    `firestore:"franchise"`
+	Position  int       `firestore:"position"`
+	UpdatedAt time.Time `firestore:"updated_at"`
+}
+
+// franchiseKey is the document ID for one athlete's position in one franchise.
+func franchiseKey(athleteID int64, franchise string) string {
+	return strconv.FormatInt(athleteID, 10) + "-" + franchise
+}
+
+// FranchisePosition returns how many entries of the franchise are used.
+//
+// A franchise never used, and one that no longer exists in configuration, both
+// answer zero: removing a franchise from config should stop it being consulted,
+// not start producing errors.
+func (s *Store) FranchisePosition(ctx context.Context, athleteID int64, franchise string) (int, error) {
+	snapshot, err := s.collection(CollectionFranchise).Doc(franchiseKey(athleteID, franchise)).Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return 0, nil
+		}
+
+		return 0, fmt.Errorf("firestore: franchise position: %w", err)
+	}
+
+	var doc franchiseDoc
+	if err := snapshot.DataTo(&doc); err != nil {
+		return 0, fmt.Errorf("firestore: decode franchise position: %w", err)
+	}
+
+	return doc.Position, nil
+}
+
+// AdvanceFranchise moves one entry along and returns the new position.
+//
+// The increment happens inside a transaction so the store decides the next
+// number rather than the caller: two callers reading and writing separately
+// would both land on the same position and reuse a title.
+func (s *Store) AdvanceFranchise(ctx context.Context, athleteID int64, franchise string) (int, error) {
+	ref := s.collection(CollectionFranchise).Doc(franchiseKey(athleteID, franchise))
+
+	var position int
+
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		position = 0
+
+		snapshot, err := tx.Get(ref)
+		switch {
+		case err != nil && status.Code(err) != codes.NotFound:
+			return err
+		case err == nil:
+			var doc franchiseDoc
+			if err := snapshot.DataTo(&doc); err != nil {
+				return err
+			}
+
+			position = doc.Position
+		}
+
+		position++
+
+		return tx.Set(ref, franchiseDoc{
+			AthleteID: athleteID,
+			Franchise: franchise,
+			Position:  position,
+			UpdatedAt: time.Now().UTC(),
+		})
+	})
+	if err != nil {
+		return 0, fmt.Errorf("firestore: advance franchise: %w", err)
+	}
+
+	return position, nil
 }

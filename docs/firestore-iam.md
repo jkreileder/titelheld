@@ -14,14 +14,20 @@ it does not.
 
 ## What is stored
 
-Four collections, and nothing else. Adding a fifth means changing this document.
+Five collections, and nothing else. Adding a sixth means changing this document.
 
-| Collection | Document ID              | Contents                                         | Re-derivable?      |
-| ---------- | ------------------------ | ------------------------------------------------ | ------------------ |
-| `tokens`   | `{athleteID}`            | OAuth access and refresh token, expiry, scopes   | **No**             |
-| `pending`  | `{athleteID}-{activity}` | Queued activity and its `process_after` deadline | Yes                |
-| `named`    | `{athleteID}-{activity}` | Title this service wrote, and when               | Yes, from Strava   |
-| `geocache` | rounded coordinate key   | Verified place names from Nominatim              | Yes, by refetching |
+| Collection  | Document ID               | Contents                                         | Re-derivable?           |
+| ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
+| `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes   | **No**                  |
+| `pending`   | `{athleteID}-{activity}`  | Queued activity and its `process_after` deadline | Yes                     |
+| `named`     | `{athleteID}-{activity}`  | Title this service wrote, and when               | Yes, from Strava        |
+| `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
+| `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
+
+`franchise` stores an integer, never the titles: the series is configuration, so renaming or
+reordering one must not require migrating anything here. It is re-derivable only by matching past
+titles against a series, which is why it is remembered rather than recomputed — and losing it
+costs a repeated or skipped entry, not a wrong write.
 
 Only `tokens` genuinely has to survive. Strava rotates the refresh token on every refresh and
 invalidates the previous one immediately, so losing that document means re-running the
@@ -116,6 +122,9 @@ where process_after <= now  order by process_after asc
 The inequality and the ordering are on the same field, so Firestore serves it from the
 automatic single-field index. There is no composite index to create, and therefore no index
 administration permission to grant.
+
+`franchise` does not change that. It is addressed by document ID in both directions — read the
+position, or increment it in a transaction — so it runs no query at all.
 
 ## Local and CI
 

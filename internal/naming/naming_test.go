@@ -701,3 +701,18 @@ func TestValidateAcceptsDecomposedGerman(t *testing.T) {
 		t.Errorf("a decomposed umlaut was rejected: %v", err)
 	}
 }
+
+// The degree sign is category So, alongside the pictographs, so the emoji
+// check rejected a title about the weather until it was carved out.
+func TestValidateAllowsTheDegreeSign(t *testing.T) {
+	t.Parallel()
+
+	if _, err := NewValidator(nil).Validate("5° und sonnig bis Musterdorf", German); err != nil {
+		t.Errorf("a degree sign was rejected: %v", err)
+	}
+
+	// The carve-out is one character wide; pictographs still go.
+	if _, err := NewValidator(nil).Validate("5° 🚴 Musterdorf", German); !errors.Is(err, ErrTitleShape) {
+		t.Errorf("carving out ° also let an emoji through: %v", err)
+	}
+}
