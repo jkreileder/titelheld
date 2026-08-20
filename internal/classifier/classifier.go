@@ -187,6 +187,13 @@ type Config struct {
 	// thresholds; meeting either one is enough. Zero means the default.
 	SportMinDistanceMeters    float64
 	SportMinMovingTimeSeconds int
+
+	// MachineTitles are the titles another tool wrote that this service may
+	// replace — Xert renames sport rides shortly after upload, and those are
+	// not the athlete's words. The zero value matches nothing, so a
+	// configuration silent about them leaves only Strava defaults renamable.
+	// See [DefaultMachineTitles] for the shipped set.
+	MachineTitles MachineTitles
 }
 
 // Shipped defaults, applied field-wise wherever Config leaves a value unset.
@@ -205,6 +212,7 @@ func DefaultConfig() Config {
 		ToHomeTitle:               defaultToHomeTitle,
 		SportMinDistanceMeters:    defaultSportMinDistanceMeters,
 		SportMinMovingTimeSeconds: defaultSportMinMovingTimeSeconds,
+		MachineTitles:             DefaultMachineTitles(),
 	}
 }
 
@@ -254,7 +262,7 @@ const (
 
 // Decision reasons, kept as constants so logs and tests share one spelling.
 const (
-	reasonNotDefaultTitle = "title is not a Strava default"
+	reasonNotDefaultTitle = "title is neither a Strava default nor a recognized machine title"
 	reasonCommuteErrand   = "commute-tagged errand"
 	reasonErrandsDisabled = "errand naming disabled"
 	reasonSportRide       = "sport ride"
@@ -309,10 +317,13 @@ func Classify(activity Activity, cfg Config) Decision {
 
 	tier, direction := classifyTier(activity, cfg)
 
-	// The skip gate. A title that is not a Strava default was written by a
-	// human or by another tool (ActivityFix, Xert), and this service is the
-	// last writer, not an overwriter.
-	if !IsDefaultTitle(activity.Name) {
+	// The skip gate. A title this service does not recognize was written by a
+	// human, and this service is the last writer, not an overwriter.
+	//
+	// Recognized machine titles are the exception: Xert renames sport rides
+	// shortly after upload, so an activity can arrive titled without a person
+	// ever having named it. Those are renamable — see [MachineTitles].
+	if !cfg.MachineTitles.renamable(activity.Name) {
 		return Decision{
 			Tier:      tier,
 			Action:    ActionSkip,

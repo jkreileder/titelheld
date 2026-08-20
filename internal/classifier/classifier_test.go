@@ -70,7 +70,7 @@ func TestClassify(t *testing.T) {
 			wantTier:      TierCommute,
 			wantAction:    ActionSkip,
 			wantDirection: DirectionToWork,
-			wantReason:    "title is not a Strava default",
+			wantReason:    "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "tier 4: 0.96 km commute-tagged errand at its Strava default",
@@ -129,7 +129,7 @@ func TestClassify(t *testing.T) {
 			cfg:        geofencedConfig(),
 			wantTier:   TierSportRide,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 
 		// --- Tier 1: never named. ---
@@ -245,7 +245,7 @@ func TestClassify(t *testing.T) {
 			}(),
 			wantTier:   TierVirtual,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 
 		{
@@ -326,7 +326,7 @@ func TestClassify(t *testing.T) {
 			wantTier:      TierCommute,
 			wantAction:    ActionSkip,
 			wantDirection: DirectionToHome,
-			wantReason:    "title is not a Strava default",
+			wantReason:    "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "tier 3 is not reached without geofences: falls through to tier 4",
@@ -378,7 +378,7 @@ func TestClassify(t *testing.T) {
 			wantTier:      TierCommute,
 			wantAction:    ActionSkip,
 			wantDirection: DirectionToWork,
-			wantReason:    "title is not a Strava default",
+			wantReason:    "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "tier 3: a ride just over the distance threshold ending at work",
@@ -428,7 +428,7 @@ func TestClassify(t *testing.T) {
 			}(),
 			wantTier:   TierSportRide,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "tier 3: clearing the commute titles disables the title match",
@@ -448,7 +448,7 @@ func TestClassify(t *testing.T) {
 			}(),
 			wantTier:   TierErrand,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 
 		// --- Tier 4: errands. ---
@@ -614,7 +614,7 @@ func TestClassify(t *testing.T) {
 			cfg:        geofencedConfig(),
 			wantTier:   TierSportRide,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "skip gate: surrounding whitespace does not defeat the default match",
@@ -640,7 +640,7 @@ func TestClassify(t *testing.T) {
 			cfg:        geofencedConfig(),
 			wantTier:   TierSportRide,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "skip gate: a localized default title still qualifies",
@@ -682,7 +682,7 @@ func TestClassify(t *testing.T) {
 			cfg:        Config{},
 			wantTier:   TierErrand,
 			wantAction: ActionSkip,
-			wantReason: "title is not a Strava default",
+			wantReason: "title is neither a Strava default nor a recognized machine title",
 		},
 		{
 			name: "zero config: virtual rides are kept",
@@ -937,5 +937,188 @@ func TestStringers(t *testing.T) {
 		if got := direction.String(); got != want {
 			t.Errorf("Direction(%d).String() = %q, want %q", int(direction), got, want)
 		}
+	}
+}
+
+// The machine-title gate. Xert renames sport rides shortly after upload, so a
+// titled activity has not necessarily been named by the athlete.
+func TestMachineTitleGate(t *testing.T) {
+	t.Parallel()
+
+	sportRide := func(name string) Activity {
+		return Activity{
+			Name:              name,
+			SportType:         "GravelRide",
+			DistanceMeters:    67638.5,
+			MovingTimeSeconds: 10876,
+		}
+	}
+
+	tests := []struct {
+		name  string
+		title string
+		want  Action
+		why   string
+	}{
+		{
+			name:  "Xert focus title is renamable",
+			title: "Difficult Mixed Breakaway Specialist Ride",
+			want:  ActionLLM,
+			why:   "the acceptance case: a machine title, not the athlete's",
+		},
+		{
+			name:  "Xert focus title without the Mixed modifier",
+			title: "Hard Climber Ride",
+			want:  ActionLLM,
+			why:   "same construction, no modifier",
+		},
+		{
+			name:  "a human title is never overwritten",
+			title: "The Pink Panther Checks Inn",
+			want:  ActionSkip,
+			why:   "the acceptance case on the other side of the gate",
+		},
+		{
+			name:  "an ActivityFix commute title is left alone",
+			title: "Zur Arbeit",
+			want:  ActionSkip,
+			why:   "machine-written, but already the right title for the ride",
+		},
+		{
+			name:  "a title merely shaped like Xert's is not enough",
+			title: "Sunday Morning Ride",
+			want:  ActionSkip,
+			why:   "ends in Ride, but neither word is Xert vocabulary",
+		},
+		{
+			name:  "a Strava default is renamable as before",
+			title: "Afternoon Gravel Ride",
+			want:  ActionLLM,
+			why:   "the gate's original job still works",
+		},
+	}
+
+	// DefaultConfig, not a hand-built Config: the shipped defaults are what
+	// production wires, and this feature was inert in them until it was not.
+	cfg := DefaultConfig()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := Classify(sportRide(tt.title), cfg)
+			if got.Action != tt.want {
+				t.Errorf("Classify(%q).Action = %v, want %v — %s (reason: %s)",
+					tt.title, got.Action, tt.want, tt.why, got.Reason)
+			}
+		})
+	}
+}
+
+// Without configured patterns nothing is renamable but a Strava default, so a
+// deployment that says nothing about machine titles keeps the old behavior.
+func TestMachineTitleGateIsClosedByDefault(t *testing.T) {
+	t.Parallel()
+
+	activity := Activity{
+		Name:           "Difficult Mixed Breakaway Specialist Ride",
+		SportType:      "GravelRide",
+		DistanceMeters: 67638.5,
+	}
+
+	if got := Classify(activity, Config{}); got.Action != ActionSkip {
+		t.Errorf("Classify with no patterns = %v, want ActionSkip", got.Action)
+	}
+}
+
+func TestMachineTitlesRejectsABadPattern(t *testing.T) {
+	t.Parallel()
+
+	if _, err := NewMachineTitles([]string{"("}); err == nil {
+		t.Error("NewMachineTitles with an unclosed group = nil error, want error")
+	}
+}
+
+// Blank entries are ignored rather than compiled into a pattern that matches
+// everything, which is what an empty regex would do.
+func TestMachineTitlesIgnoresBlankPatterns(t *testing.T) {
+	t.Parallel()
+
+	titles, err := NewMachineTitles([]string{"", "   "})
+	if err != nil {
+		t.Fatalf("NewMachineTitles: %v", err)
+	}
+
+	if titles.Matches("The Pink Panther Checks Inn") {
+		t.Error("a blank pattern matched a human title")
+	}
+}
+
+// A configured pattern matches the whole title or not at all.
+//
+// A regexp matches anywhere by default, so an unanchored "Ride" would have
+// accepted "The Pink Panther Ride" — a human title, overwritten, from
+// configuration alone. That is the failure this gate exists to prevent.
+func TestMachineTitlePatternsMatchTheWholeTitle(t *testing.T) {
+	t.Parallel()
+
+	titles, err := NewMachineTitles([]string{"Ride"})
+	if err != nil {
+		t.Fatalf("NewMachineTitles: %v", err)
+	}
+
+	tests := []struct {
+		title string
+		want  bool
+		why   string
+	}{
+		{title: "Ride", want: true, why: "the whole title is the pattern"},
+		{title: "The Pink Panther Ride", want: false, why: "a human title ending in the pattern"},
+		{title: "Ride to the Musterberg", want: false, why: "a human title starting with it"},
+		{title: "Afternoon Ride Home", want: false, why: "the pattern in the middle"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			t.Parallel()
+
+			if got := titles.Matches(tt.title); got != tt.want {
+				t.Errorf("Matches(%q) = %v, want %v — %s", tt.title, got, tt.want, tt.why)
+			}
+		})
+	}
+}
+
+// Anchoring is applied on top of whatever the pattern says, so an already
+// anchored pattern keeps matching exactly what it matched before.
+func TestMachineTitlePatternsToleratePreAnchoring(t *testing.T) {
+	t.Parallel()
+
+	titles, err := NewMachineTitles([]string{`^Hard \w+ Ride$`})
+	if err != nil {
+		t.Fatalf("NewMachineTitles: %v", err)
+	}
+
+	if !titles.Matches("Hard Climber Ride") {
+		t.Error("an already-anchored pattern stopped matching its own title")
+	}
+
+	if titles.Matches("Very Hard Climber Ride") {
+		t.Error("an already-anchored pattern matched a longer title")
+	}
+}
+
+// The multiline flag makes ^ and $ mean line boundaries, so anchoring with
+// them would still admit a multi-line title. \A and \z do not.
+func TestMachineTitlePatternsResistMultilineFlags(t *testing.T) {
+	t.Parallel()
+
+	titles, err := NewMachineTitles([]string{`(?m)^Ride$`})
+	if err != nil {
+		t.Fatalf("NewMachineTitles: %v", err)
+	}
+
+	if titles.Matches("The Pink Panther Checks Inn\nRide") {
+		t.Error("a multiline pattern matched a title whose first line is human-written")
 	}
 }

@@ -45,7 +45,7 @@ everything that should stay boring untouched.
 
 The service is the **last writer** in a chain of Strava automations. Other tools
 (ActivityFix, Xert) fix up sport type, gear and workout summaries first; this service waits a
-configurable delay, then names an activity only if nothing else has already titled it.
+configurable delay, then names an activity only if nobody has already titled it by hand.
 
 An activity is only ever renamed. Sport type, gear and descriptions are never touched.
 
@@ -53,7 +53,7 @@ An activity is only ever renamed. Sport type, gear and descriptions are never to
 
 | Path                        | Purpose                                                                                |
 | --------------------------- | -------------------------------------------------------------------------------------- |
-| `internal/classifier/`      | Tier rules and the Strava default-title gate. No I/O, no deps.                         |
+| `internal/classifier/`      | Tier rules and the title gate. No I/O, no deps.                                        |
 | `internal/config/`          | Runtime configuration, read from the environment only.                                 |
 | `internal/store/`           | Persistence interfaces, an in-memory implementation, and the shared conformance suite. |
 | `internal/store/firestore/` | The Firestore implementation. See [docs/firestore-iam.md](docs/firestore-iam.md).      |
@@ -73,23 +73,31 @@ another tool already titled still belongs to a tier — it just must not be writ
 
 Tier rules are evaluated in order, first match wins:
 
-| Tier | Name       | Matches                                            | Action when still at a Strava default |
-| ---- | ---------- | -------------------------------------------------- | ------------------------------------- |
-| 1    | Skip       | `WeightTraining`, `Workout`, `Walk`, `Hike`, Whoop | never written                         |
-| 2    | Virtual    | `VirtualRide`, or a ride with the trainer flag     | `zwift_mode`: keep, or indoor LLM     |
-| 3    | Commute    | short ride to or from the work geofence            | deterministic commute title           |
-| 4    | Errand     | commute-tagged ride                                | deterministic errand title            |
-| 5    | Sport ride | ride ≥ 15 km or ≥ 45 min                           | full LLM naming pipeline              |
-| —    | None       | anything else (runs, swims, short rides)           | never written                         |
+| Tier | Name       | Matches                                            | Action when the title gate allows a write |
+| ---- | ---------- | -------------------------------------------------- | ----------------------------------------- |
+| 1    | Skip       | `WeightTraining`, `Workout`, `Walk`, `Hike`, Whoop | never written                             |
+| 2    | Virtual    | `VirtualRide`, or a ride with the trainer flag     | `zwift_mode`: keep, or indoor LLM         |
+| 3    | Commute    | short ride to or from the work geofence            | deterministic commute title               |
+| 4    | Errand     | commute-tagged ride                                | deterministic errand title                |
+| 5    | Sport ride | ride ≥ 15 km or ≥ 45 min                           | full LLM naming pipeline                  |
+| —    | None       | anything else (runs, swims, short rides)           | never written                             |
 
 Tiers 3 to 5 apply to rides only: the trainer flag does not make a treadmill run a virtual
 ride, and a commute-tagged run does not become an errand. Tier 3's geofence match is capped by
 the tier-5 thresholds, so a long ride that merely finishes at work stays a sport ride; a title
 ActivityFix already wrote is taken at face value whatever the ride's size.
 
-The **skip gate** runs after tier assignment: unless the activity's current title is a recognized
-Strava default, the action is downgraded to skip. The gate fails closed — an unrecognized title is
-assumed to be authored by a human or another tool.
+The **skip gate** runs after tier assignment: unless the current title is a recognized Strava
+default *or* a recognized machine title, the action is downgraded to skip. The gate fails closed —
+an unrecognized title is assumed to have been written by a person.
+
+Machine titles are the exception the gate needs because Xert renames sport rides with its focus
+pattern (`Difficult Mixed Breakaway Specialist Ride`) shortly after upload, so an activity can
+arrive titled without anyone having named it. The shipped pattern is anchored on Xert's own
+vocabulary at both ends, and every configured pattern is anchored to the whole title, because a
+pattern that matches too much overwrites the athlete's own words. ActivityFix's commute titles are
+deliberately not in the list: `Zur Arbeit` is already the right title for that ride. Extend the
+list with `MACHINE_TITLE_PATTERNS`.
 
 ## Writes and dry run
 
@@ -449,13 +457,13 @@ and stores nothing.
 
 ### What the tag push does
 
-| Step | Where | What it produces |
-| ---- | ----- | ---------------- |
-| Check | `release.yaml` | Fails fast on a lightweight tag, a pre-release version, or a stale changelog |
-| Build | `release-image.yaml` | One image, cache-free, tagged `0.1.0`, `0.1`, `0` and `sha-<commit>` |
+| Step   | Where                | What it produces                                                                                              |
+| ------ | -------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Check  | `release.yaml`       | Fails fast on a lightweight tag, a pre-release version, or a stale changelog                                  |
+| Build  | `release-image.yaml` | One image, cache-free, tagged `0.1.0`, `0.1`, `0` and `sha-<commit>`                                          |
 | Attest | `release-image.yaml` | Sigstore-signed SLSA provenance, stored in GitHub and pushed to Artifact Registry as a referrer of the digest |
-| Deploy | `release.yaml` | `gcloud run deploy` of that **digest**, via Workload Identity Federation |
-| Draft | `release.yaml` | A draft GitHub release for you to publish |
+| Deploy | `release.yaml`       | `gcloud run deploy` of that **digest**, via Workload Identity Federation                                      |
+| Draft  | `release.yaml`       | A draft GitHub release for you to publish                                                                     |
 
 The image is built exactly once. Everything after it refers to the digest, never to a version
 tag, so moving a tag afterwards cannot change what is running.
