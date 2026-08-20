@@ -31,7 +31,8 @@ costs a repeated or skipped entry, not a wrong write.
 
 Only `tokens` genuinely has to survive. Strava rotates the refresh token on every refresh and
 invalidates the previous one immediately, so losing that document means re-running the
-authorization flow by hand. The other three are a work queue and two caches.
+authorization flow by hand. The other four are a work queue, two caches, and franchise
+position state.
 
 Location data is minimized, not absent. No coordinate is stored as a *field*: `geocache`
 documents hold place names only. The coordinate that produced a place does survive as the

@@ -48,6 +48,7 @@ func Suite(t *testing.T, newStore Factory) {
 		"FranchiseAdvances":          franchiseAdvances,
 		"FranchisesAreIndependent":   franchisesAreIndependent,
 		"FranchiseKeyedByAthlete":    franchiseKeyedByAthlete,
+		"FranchiseNamesAreArbitrary": franchiseNamesAreArbitrary,
 	}
 
 	for name, run := range tests {
@@ -433,5 +434,57 @@ func franchiseKeyedByAthlete(t *testing.T, s store.Store) {
 
 	if other != 0 {
 		t.Errorf("another athlete inherited a franchise position: %d", other)
+	}
+}
+
+// A franchise name is configuration, so it is whatever a person typed.
+//
+// The one this service ships with is "Pink Panther": a space, which is not a
+// character every backing store can put in a key. Names must not need
+// sanitizing by the caller, and two different names must never share a
+// position — that would hand out the same title twice.
+func franchiseNamesAreArbitrary(t *testing.T, s store.Store) {
+	t.Helper()
+
+	names := []string{
+		"Pink Panther",
+		"Herr der Ringe / LOTR",
+		"__proto__",
+		"..",
+		"Ocean's Eleven",
+		"Über-Runde",
+	}
+
+	for _, name := range names {
+		position, err := s.AdvanceFranchise(t.Context(), 4242, name)
+		if err != nil {
+			t.Fatalf("AdvanceFranchise(%q): %v", name, err)
+		}
+
+		if position != 1 {
+			t.Errorf("AdvanceFranchise(%q) = %d, want 1", name, position)
+		}
+	}
+
+	// Advancing one must not move any of the others.
+	if _, err := s.AdvanceFranchise(t.Context(), 4242, names[0]); err != nil {
+		t.Fatalf("second AdvanceFranchise: %v", err)
+	}
+
+	for index, name := range names {
+		want := 1
+		if index == 0 {
+			want = 2
+		}
+
+		got, err := s.FranchisePosition(t.Context(), 4242, name)
+		if err != nil {
+			t.Fatalf("FranchisePosition(%q): %v", name, err)
+		}
+
+		if got != want {
+			t.Errorf("FranchisePosition(%q) = %d, want %d: two names share a position",
+				name, got, want)
+		}
 	}
 }

@@ -117,7 +117,7 @@ type Validator struct {
 //
 // Banned words match case-insensitively and as substrings, so "Epic" also
 // rejects "Epically" — and, less obviously, any word that merely contains one:
-// a banned "ass" would reject "Passau". Choose entries that are safe to match
+// a banned "ass" would reject "Musterpass". Choose entries that are safe to match
 // anywhere, or the list will reject titles nobody objected to.
 func NewValidator(banned []string) Validator {
 	folded := make([]string, 0, len(banned))

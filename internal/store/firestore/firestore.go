@@ -470,8 +470,16 @@ type franchiseDoc struct {
 }
 
 // franchiseKey is the document ID for one athlete's position in one franchise.
+//
+// The franchise name is configuration, so it is a string this package does not
+// own and cannot assume anything about. The one this service ships with is
+// "Pink Panther" — a space, which the safe set rejects — and a name containing
+// "/" would not be a document ID at all but a path with the wrong number of
+// segments. So the composed key goes through the same escaping the geocode
+// cache uses, and for the same reason: the mapping has to stay injective, or
+// two franchises would share one position and hand out the same title twice.
 func franchiseKey(athleteID int64, franchise string) string {
-	return strconv.FormatInt(athleteID, 10) + "-" + franchise
+	return cacheDocID(strconv.FormatInt(athleteID, 10) + "-" + franchise)
 }
 
 // FranchisePosition returns how many entries of the franchise are used.
