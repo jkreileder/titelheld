@@ -44,7 +44,9 @@ func buildSweep(
 
 	// The token source refreshes on expiry and persists the rotated refresh
 	// token, so a sweep hours after the last webhook still has a live token.
-	tokens := strava.NewStoredTokenSource(oauth, dataStore, cfg.AthleteID)
+	//
+	// Wrapped, because cfg.AthleteID is legitimately zero: see [boundTokens].
+	tokens := strava.NewStoredTokenSource(oauth, boundTokens{dataStore}, cfg.AthleteID)
 
 	// The write mode is derived from the same flag the processor reads, and
 	// the client refuses a write on its own if it disagrees. Two independent
