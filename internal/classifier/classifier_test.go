@@ -939,3 +939,115 @@ func TestStringers(t *testing.T) {
 		}
 	}
 }
+
+// The machine-title gate. Xert renames sport rides shortly after upload, so a
+// titled activity has not necessarily been named by the athlete.
+func TestMachineTitleGate(t *testing.T) {
+	t.Parallel()
+
+	sportRide := func(name string) Activity {
+		return Activity{
+			Name:              name,
+			SportType:         "GravelRide",
+			DistanceMeters:    67638.5,
+			MovingTimeSeconds: 10876,
+		}
+	}
+
+	tests := []struct {
+		name  string
+		title string
+		want  Action
+		why   string
+	}{
+		{
+			name:  "Xert focus title is renamable",
+			title: "Difficult Mixed Breakaway Specialist Ride",
+			want:  ActionLLM,
+			why:   "the acceptance case: a machine title, not the athlete's",
+		},
+		{
+			name:  "Xert focus title without the Mixed modifier",
+			title: "Hard Climber Ride",
+			want:  ActionLLM,
+			why:   "same construction, no modifier",
+		},
+		{
+			name:  "a human title is never overwritten",
+			title: "The Pink Panther Checks Inn",
+			want:  ActionSkip,
+			why:   "the acceptance case on the other side of the gate",
+		},
+		{
+			name:  "an ActivityFix commute title is left alone",
+			title: "Zur Arbeit",
+			want:  ActionSkip,
+			why:   "machine-written, but already the right title for the ride",
+		},
+		{
+			name:  "a title merely shaped like Xert's is not enough",
+			title: "Sunday Morning Ride",
+			want:  ActionSkip,
+			why:   "ends in Ride, but neither word is Xert vocabulary",
+		},
+		{
+			name:  "a Strava default is renamable as before",
+			title: "Afternoon Gravel Ride",
+			want:  ActionLLM,
+			why:   "the gate's original job still works",
+		},
+	}
+
+	cfg := Config{MachineTitles: DefaultMachineTitles()}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := Classify(sportRide(tt.title), cfg)
+			if got.Action != tt.want {
+				t.Errorf("Classify(%q).Action = %v, want %v — %s (reason: %s)",
+					tt.title, got.Action, tt.want, tt.why, got.Reason)
+			}
+		})
+	}
+}
+
+// Without configured patterns nothing is renamable but a Strava default, so a
+// deployment that says nothing about machine titles keeps the old behavior.
+func TestMachineTitleGateIsClosedByDefault(t *testing.T) {
+	t.Parallel()
+
+	activity := Activity{
+		Name:           "Difficult Mixed Breakaway Specialist Ride",
+		SportType:      "GravelRide",
+		DistanceMeters: 67638.5,
+	}
+
+	if got := Classify(activity, Config{}); got.Action != ActionSkip {
+		t.Errorf("Classify with no patterns = %v, want ActionSkip", got.Action)
+	}
+}
+
+func TestMachineTitlesRejectsABadPattern(t *testing.T) {
+	t.Parallel()
+
+	if _, err := NewMachineTitles([]string{"("}); err == nil {
+		t.Error("NewMachineTitles with an unclosed group = nil error, want error")
+	}
+}
+
+// Blank entries are ignored rather than compiled into a pattern that matches
+// everything, which is what an empty regex would do.
+func TestMachineTitlesIgnoresBlankPatterns(t *testing.T) {
+	t.Parallel()
+
+	titles, err := NewMachineTitles([]string{"", "   "})
+	if err != nil {
+		t.Fatalf("NewMachineTitles: %v", err)
+	}
+
+	if titles.Matches("The Pink Panther Checks Inn") {
+		t.Error("a blank pattern matched a human title")
+	}
+}
