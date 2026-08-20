@@ -198,11 +198,3 @@ func sanitizeFactValue(value string) string {
 
 	return cleaned
 }
-
-// IsWhoop reports whether a description came from a Whoop-pushed activity.
-//
-// The classifier already skips these; this exists so the processor can say why
-// in a log line without importing the classifier's internals.
-func IsWhoop(description string) bool {
-	return strings.Contains(description, "Strain")
-}

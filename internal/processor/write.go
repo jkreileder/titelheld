@@ -23,9 +23,12 @@ import (
 // been: the title, and whether the attribution line would have been added.
 // The pipeline above this point runs in full either way — the spec asks for
 // the would-be title, which means the LLM really is called.
+// It reports whether anything was actually sent. Dry run returns false, and
+// the caller leaves the activity queued on the strength of it.
 func (p *Processor) write(
-	ctx context.Context, activity *strava.Activity, title string, logger *slog.Logger,
-) error {
+	ctx context.Context, athleteID int64, activity *strava.Activity,
+	title string, logger *slog.Logger,
+) (bool, error) {
 	description, attribute := p.description(ctx, activity, logger)
 
 	if !p.deps.WritesEnabled {
@@ -33,12 +36,17 @@ func (p *Processor) write(
 			"would_title", logsafe.String(title),
 			"would_attribute", attribute)
 
-		return nil
+		return false, nil
 	}
 
 	// Recorded before the write. See the note above.
-	if err := p.deps.Store.MarkNamed(ctx, activity.Owner(), activity.ID, title); err != nil {
-		return fmt.Errorf("record the title before writing: %w", err)
+	//
+	// Keyed on the athlete the queue entry names rather than the one the
+	// activity reports, because that is the key the dedup read uses. Strava
+	// omitting athlete.id would otherwise file this under athlete 0, where the
+	// check that stops a second rename would never find it.
+	if err := p.deps.Store.MarkNamed(ctx, athleteID, activity.ID, title); err != nil {
+		return false, fmt.Errorf("record the title before writing: %w", err)
 	}
 
 	var err error
@@ -49,12 +57,12 @@ func (p *Processor) write(
 	}
 
 	if err != nil {
-		return fmt.Errorf("write the title: %w", err)
+		return false, fmt.Errorf("write the title: %w", err)
 	}
 
 	logger.Info("wrote the title", "title", logsafe.String(title), "attributed", attribute)
 
-	return nil
+	return true, nil
 }
 
 // description decides what description to send, if any.
@@ -70,10 +78,17 @@ func (p *Processor) description(
 		return "", false
 	}
 
-	// The description is re-fetched rather than reused from the activity the
-	// classifier saw. That copy was read before the delay elapsed; by now Xert
-	// and myWindsock have written theirs, and prepending to the stale copy
-	// would delete their work.
+	// Re-fetched rather than reused from the copy the classifier saw. That
+	// copy is already post-delay — the queue held the activity until then, and
+	// the sweep fetched it afterwards — so the gap this closes is only the
+	// naming itself: the geocoding and the model call, seconds in which
+	// another tool may have written. The spec asks for a read at write time,
+	// and prepending to a description that moved under us would delete
+	// whatever arrived in between.
+	//
+	// It is a second GET per named activity. Strava allows 100 requests per
+	// 15 minutes and this service names a handful of rides a day, so the
+	// budget is not the constraint here; correctness of the merge is.
 	fresh, err := p.deps.Activities.GetActivity(ctx, activity.ID)
 	if err != nil {
 		logger.Warn("could not re-read the description; writing the title without attribution",

@@ -162,13 +162,15 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 				"activity_id", pending.ActivityID,
 				"athlete_id", pending.AthleteID,
 				"error", err)
-		case outcome == outcomeNamed:
+		case outcome == outcomeNamed, outcome == outcomeDryRun:
 			result.Named++
 		default:
 			result.Skipped++
 		}
 
-		if err == nil {
+		// Left queued after a failure, so the next sweep retries it, and after
+		// a dry run, so turning writes on still names it. See outcomeDryRun.
+		if err == nil && outcome != outcomeDryRun {
 			if err := p.deps.Store.Remove(ctx, pending.AthleteID, pending.ActivityID); err != nil {
 				p.deps.Logger.Error("could not dequeue a finished activity",
 					"activity_id", pending.ActivityID, "error", err)
@@ -191,6 +193,22 @@ type outcome int
 const (
 	outcomeSkipped outcome = iota
 	outcomeNamed
+
+	// outcomeDryRun is a naming that was worked out in full and not sent.
+	//
+	// It counts as named in the Result — the pipeline ran, the model was
+	// called, the title exists in the log — but the queue entry stays put.
+	// Dry run has to be a no-op on state, or the observation window silently
+	// eats the activities it observes: nothing records them as named, and
+	// nothing is left to name them once writes are turned on, so they keep
+	// their Strava default forever.
+	//
+	// The cost of that is the pipeline re-running for a queued activity on
+	// every sweep, model call included, for as long as dry run lasts. That is
+	// the deliberate trade: dry run is a review window someone is watching,
+	// the scheduler is paused until they open it, and a budget alert bounds
+	// the bill.
+	outcomeDryRun
 )
 
 // processOne runs the pipeline for a single activity.
@@ -230,8 +248,16 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 		return outcomeSkipped, err
 	}
 
-	if err := p.write(ctx, activity, title, logger); err != nil {
+	// pending.AthleteID, not the activity's own owner: this is the key the
+	// dedup read above used, and the two have to be the same one or a replay
+	// would look unnamed and be renamed a second time.
+	written, err := p.write(ctx, pending.AthleteID, activity, title, logger)
+	if err != nil {
 		return outcomeSkipped, err
+	}
+
+	if !written {
+		return outcomeDryRun, nil
 	}
 
 	return outcomeNamed, nil

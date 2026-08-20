@@ -314,6 +314,72 @@ func TestDryRunNamesButDoesNotWrite(t *testing.T) {
 	if _, named, _ := h.store.Named(t.Context(), 4242, 777); named {
 		t.Error("dry run marked the activity as named")
 	}
+
+	// And the entry is still queued, which is the half of that claim the
+	// store cannot make on its own.
+	due, err := h.store.Due(t.Context(), h.now)
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+
+	if len(due) != 1 {
+		t.Fatalf("%d entries queued after a dry run, want the activity kept", len(due))
+	}
+}
+
+// Turning writes on names what dry run only described.
+//
+// This is the claim the comment above makes, proven rather than asserted: a
+// dry-run sweep must leave the queue exactly as it found it, or the review
+// window silently eats the rides it was opened to observe — nothing records
+// them as named, and nothing is left to name them afterwards, so they keep
+// their Strava default forever.
+func TestFlippingWritesOnNamesWhatDryRunDescribed(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, false, nil)
+	h.enqueue(t, "create")
+
+	// Several dry-run sweeps, as a paused-then-unpaused scheduler would do.
+	for range 3 {
+		if _, err := h.proc.Sweep(t.Context()); err != nil {
+			t.Fatalf("dry run Sweep: %v", err)
+		}
+	}
+
+	if writes := h.strava.writes(); len(writes) != 0 {
+		t.Fatalf("dry run wrote to Strava: %+v", writes)
+	}
+
+	// The operator flips DRY_RUN off.
+	h.proc.deps.WritesEnabled = true
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	writes := h.strava.writes()
+	if len(writes) != 1 {
+		t.Fatalf("%d PUTs after enabling writes, want 1: %+v", len(writes), writes)
+	}
+
+	if writes[0].name != "Musterrunde am Musterbach" {
+		t.Errorf("title %q, want the validated one", writes[0].name)
+	}
+
+	// And now it is done: the entry is gone and the named log has it.
+	due, err := h.store.Due(t.Context(), h.now)
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+
+	if len(due) != 0 {
+		t.Errorf("%d entries still queued after a real write", len(due))
+	}
+
+	if _, named, _ := h.store.Named(t.Context(), 4242, 777); !named {
+		t.Error("the activity was not recorded as named")
+	}
 }
 
 // One bad activity must not stall the sweep.
@@ -552,5 +618,50 @@ func TestNamedLogAloneStopsASecondWrite(t *testing.T) {
 
 	if writes := h.strava.writes(); len(writes) != 1 {
 		t.Errorf("%d PUTs; the named log did not stop the second one", len(writes))
+	}
+}
+
+// The named log is keyed on the queue's athlete, not the activity's.
+//
+// Strava's detailed activity carries athlete.id, but the named log is read
+// with the athlete the webhook event named and was written with the one the
+// activity reported. Those are the same number right up until they are not —
+// a response without athlete.id makes Owner() zero — and then the record
+// lands under athlete 0, the dedup read never finds it, and the next event
+// for that activity renames it a second time.
+func TestTheNamedLogIsKeyedOnTheQueuesAthlete(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+
+	// A response that omits athlete.id, which is all it takes.
+	h.strava.activity.Athlete.ID = 0
+	h.strava.activity.AthleteID = 0
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	// Recorded under the athlete the queue named.
+	if _, named, err := h.store.Named(t.Context(), 4242, 777); err != nil || !named {
+		t.Fatalf("the named log was not written under athlete 4242 (named=%v, err=%v)", named, err)
+	}
+
+	// Put the title back so the classifier gate would allow another write,
+	// leaving the named log as the only thing that can refuse.
+	h.strava.mu.Lock()
+	h.strava.activity.Name = "Afternoon Gravel Ride"
+	h.strava.mu.Unlock()
+
+	h.enqueue(t, "update")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("second Sweep: %v", err)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs; the activity was renamed again under a different key", len(writes))
 	}
 }
