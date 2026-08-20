@@ -589,3 +589,19 @@ func TestBuildPromptSkipsBlankListItems(t *testing.T) {
 		t.Errorf("a blank place became an empty bullet:\n%s", prompt.User)
 	}
 }
+
+// "global" is the one location whose host is not prefixed with itself, and
+// "global-aiplatform.googleapis.com" does not resolve — so the config accepting
+// any location string means this case has to be handled rather than assumed
+// away.
+func TestVertexGlobalEndpoint(t *testing.T) {
+	t.Parallel()
+
+	got := (&Vertex{ProjectID: "p", Location: GlobalLocation, Model: "m"}).endpoint()
+	want := "https://aiplatform.googleapis.com/v1/projects/p/locations/global" +
+		"/publishers/google/models/m:generateContent"
+
+	if got != want {
+		t.Errorf("global endpoint = %q, want %q", got, want)
+	}
+}

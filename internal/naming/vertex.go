@@ -19,21 +19,33 @@ import (
 // anywhere — not in Secret Manager, not in the environment, not in this
 // repository. LLM_API_KEY exists only for the Anthropic alternative.
 //
-// Model ID and endpoint were verified against Google's live documentation on
-// 2026-08-20, not recalled:
+// The endpoint was verified against Google's live documentation on 2026-08-20:
 //
-//	model:    gemini-3.7-flash
-//	          https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-7-flash
-//	endpoint: POST https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT
-//	              /locations/LOCATION/publishers/google/models/MODEL:generateContent
-//	          https://docs.cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference
+//	POST https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT
+//	     /locations/LOCATION/publishers/google/models/MODEL:generateContent
+//	https://docs.cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference
 //
-// Regional availability of this model in europe-west3/west4 could not be
-// confirmed from the documentation, so the location is configuration rather
-// than a constant and the operator confirms it once — see README.md.
+// The model was not, in the end, taken from documentation at all. The model
+// index lists gemini-3.7-flash as the newest Flash model, but an index is a
+// catalogue and says nothing about where a model is served. Reading the
+// publisher-model metadata does:
+//
+//	                    global   europe-west3   europe-west4
+//	gemini-3.7-flash    200      404            404
+//	gemini-3.6-flash    200      404            404
+//	gemini-3.5-flash    200      200 (GA)       200 (GA)
+//
+// The newest models exist, but only behind the global endpoint, which routes
+// to whichever region has capacity. This service ships regional: the prompt
+// carries place names derived from the athlete's GPS traces, and the rest of
+// the deployment is europe-west3. So the default is the newest model served
+// in-region, and the global endpoint is an opt-in documented in README.md.
+//
+// README.md carries the probe, for rechecking when a newer model reaches the
+// region.
 
 // DefaultVertexModel is the Flash-class model this service ships with.
-const DefaultVertexModel = "gemini-3.7-flash"
+const DefaultVertexModel = "gemini-3.5-flash"
 
 // maxVertexResponseBytes caps what a decode reads from a Vertex response. A
 // title is a few dozen bytes; the ceiling is for a response that never ends.
@@ -77,10 +89,21 @@ func (v *Vertex) temperature() float64 {
 	return v.Temperature
 }
 
+// GlobalLocation is Vertex's multi-region routing location. It is spelled out
+// because it is the one location whose host is not prefixed with itself.
+const GlobalLocation = "global"
+
 func (v *Vertex) endpoint() string {
 	base := v.BaseURL
 	if base == "" {
-		base = "https://" + v.Location + "-aiplatform.googleapis.com"
+		// Every region is served from LOCATION-aiplatform.googleapis.com,
+		// except "global", which is served from the bare host — and
+		// "global-aiplatform.googleapis.com" does not resolve at all.
+		if v.Location == GlobalLocation {
+			base = "https://aiplatform.googleapis.com"
+		} else {
+			base = "https://" + v.Location + "-aiplatform.googleapis.com"
+		}
 	}
 
 	return fmt.Sprintf("%s/v1/projects/%s/locations/%s/publishers/google/models/%s:generateContent",
