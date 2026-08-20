@@ -140,7 +140,7 @@ and is required only when that is selected.
 | `LLM_MODEL`              | no           | provider default     | Overrides the shipped, pinned model ID        |
 | `LLM_API_KEY`            | for Anthropic| —                    | Never read when the provider is `gemini`      |
 | `VERTEX_PROJECT`         | no           | `FIRESTORE_PROJECT`  | Project the Vertex call bills to              |
-| `VERTEX_LOCATION`        | no           | `europe-west3`       | Vertex region — see below                     |
+| `VERTEX_LOCATION`        | no           | `europe-west3`       | Vertex region, or `global` — see below        |
 | `BANNED_WORDS`           | no           | shipped list         | Comma-separated; rejected in a title          |
 | `MACHINE_TITLE_PATTERNS` | no           | Xert's pattern       | Newline-separated regexes; see below          |
 
@@ -151,27 +151,51 @@ The shipped model IDs are pinned, and each is recorded in the source next to the
 URL it was verified against and the date — `internal/naming/vertex.go` and
 `internal/naming/anthropic.go`. They are not taken from a model's training data.
 
-### Confirming the Vertex region
+### Choosing the Vertex model and region
 
-Gemini model availability is regional, and it does not follow the documentation's model index.
-That index lists `gemini-3.7-flash` as the newest Flash model; reading the publisher metadata in
-this project's own regions returns `404` for it in both `europe-west3` and `europe-west4`, while
-`gemini-3.5-flash` answers `200` and reports `launchStage: GA` in both. The shipped default is
-therefore `gemini-3.5-flash` in `europe-west3`, the same region as Firestore.
+Gemini model availability is regional, and the documentation's model index does not describe it —
+an index is a catalogue of models, not a statement about where each one is served. Reading the
+publisher metadata per host does:
 
-Recheck it the same way when a newer model lands — a metadata read, not an inference call, so it
-costs nothing and generates no tokens:
+| Model              | `global` | `europe-west3` | `europe-west4` |
+| ------------------ | -------- | -------------- | -------------- |
+| `gemini-3.7-flash` | 200      | 404            | 404            |
+| `gemini-3.6-flash` | 200      | 404            | 404            |
+| `gemini-3.5-flash` | 200      | 200 (GA)       | 200 (GA)       |
+
+The newest Flash models are real, but only behind the **global** endpoint, which routes the
+request to whichever region has capacity. The prompt carries place names derived from your GPS
+traces, and the rest of this deployment is `europe-west3`, so the shipped default is the newest
+model served **in region**:
+
+```sh
+VERTEX_LOCATION=europe-west3   # default
+LLM_MODEL=                     # unset -> gemini-3.5-flash
+```
+
+To use a newer model instead, at the cost of regional routing:
+
+```sh
+VERTEX_LOCATION=global
+LLM_MODEL=gemini-3.7-flash
+```
+
+Both work with no code change. `global` is the one location whose host is unprefixed —
+`aiplatform.googleapis.com`, not `global-aiplatform.googleapis.com`, which does not resolve.
+
+Recheck availability the same way when a newer model lands — a metadata read, not an inference
+call, so it costs nothing and generates no tokens:
 
 ```sh
 PROJECT=titelheld-XXXXXX
 MODEL=gemini-3.5-flash
 
-for region in europe-west3 europe-west4; do
-  printf '%s: ' "$region"
+for host in aiplatform.googleapis.com europe-west3-aiplatform.googleapis.com; do
+  printf '%s: ' "$host"
   curl -s -o /dev/null -w '%{http_code}\n' \
     -H "Authorization: Bearer $(gcloud auth print-access-token)" \
     -H "x-goog-user-project: ${PROJECT}" \
-    "https://${region}-aiplatform.googleapis.com/v1/publishers/google/models/${MODEL}"
+    "https://${host}/v1/publishers/google/models/${MODEL}"
 done
 ```
 
