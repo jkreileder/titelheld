@@ -184,6 +184,10 @@ jobs:
           # the DNS request is dropped, gcloud retries for half a minute, and
           # the failure surfaces as though the service were missing.
           #
+          # serviceusage is checked before the deploy itself: gcloud asks
+          # whether run.googleapis.com is enabled on the project, and crashes
+          # on a name-resolution error if it cannot ask.
+          #
           # All three are required, and this job runs *after* the image has
           # been published, so getting them wrong strands a released image.
           allowed-endpoints: >
@@ -199,6 +203,7 @@ jobs:
             raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
             run.googleapis.com:443
+            serviceusage.googleapis.com:443
             storage.googleapis.com:443
             sts.googleapis.com:443
             ${{ vars.GCP_REGION }}-run.googleapis.com:443
