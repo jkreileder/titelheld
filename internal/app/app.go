@@ -62,11 +62,17 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		return fmt.Errorf("build webhook: %w", err)
 	}
 
+	sweepHandler, err := buildSweep(ctx, cfg, dataStore, oauth, logger)
+	if err != nil {
+		return err
+	}
+
 	httpServer, err := server.New(server.Deps{
 		Config:  cfg,
 		OAuth:   oauth,
 		Tokens:  dataStore,
 		Webhook: hook,
+		Sweep:   sweepHandler,
 		Logger:  logger,
 		Bound: func(ctx context.Context) (int64, bool) {
 			token, err := dataStore.AnyToken(ctx)
@@ -89,6 +95,7 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		"process_delay", cfg.ProcessDelay,
 		"athlete_id", cfg.AthleteID,
 		"auth_path_configured", cfg.AuthPath != "",
+		"sweep_configured", cfg.Sweep.Enabled(),
 		"store", storeKind(cfg))
 
 	return httpServer.Run(ctx, net.JoinHostPort("", strconv.Itoa(cfg.Port)))

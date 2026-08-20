@@ -55,9 +55,20 @@
   Nominatim into verified place names. The privacy allow-list and the 1 req/s
   limit live there and are enforced in code, not by convention.
 
-Not built yet: the prompt builder and LLM interface, and the sweep and writer.
-The infrastructure is described but has never been applied, and no Strava push
-subscription has been created.
+- `internal/processor/` is where the pieces meet: it drains the due queue,
+  classifies, gathers, prompts, validates and writes. Per-activity failures are
+  isolated - one bad ride never stalls a sweep - and the named log is written
+  *before* the title is sent, so the failure mode is a ride that keeps its
+  default title rather than one renamed twice.
+- `internal/sweep/` serves the scheduled drain. It verifies Cloud Scheduler's
+  OIDC token itself - audience, issuer, and the scheduler service account -
+  because `allUsers` holds `roles/run.invoker` and the platform authenticates
+  nobody. The log names the failing claim; the response is a bare 401.
+
+Not built yet: the per-athlete configuration document, so tiers, geofences and
+banned words are still the shipped defaults; and franchise *selection*, though
+its position store is in place. No Strava push subscription has been created,
+and the Cloud Scheduler job is deliberately paused.
 
 ## Design Rules That Are Not Negotiable
 

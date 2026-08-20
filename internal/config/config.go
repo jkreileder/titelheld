@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +52,11 @@ type Config struct {
 	// The callback stays at the fixed [AuthCallbackPath], because that URL is
 	// registered with Strava.
 	AuthPath string
+
+	// Sweep is the scheduled sweep's route and the identity allowed to call
+	// it. All three are set together by Terraform or not at all; see
+	// [SweepConfig].
+	Sweep SweepConfig
 
 	// AthleteID, when set, is the only athlete whose events are accepted.
 	// Zero means "accept whichever athlete completed the OAuth flow".
@@ -105,24 +111,64 @@ func (c Config) RedirectURL() string {
 	return c.BaseURL + AuthCallbackPath
 }
 
+// SweepConfig is what the sweep route needs to exist and to say no.
+//
+// Every field is safe at its zero value, and the zero value is "no sweep
+// route". That matters more here than anywhere else in this file: the sweep
+// is the one endpoint that makes this service write to Strava on its own
+// initiative, and the alternative reading of an unset audience — accept any
+// audience — would turn a half-configured deployment into an open trigger.
+//
+// The audience is empty on the very first Terraform apply, because the service
+// URL does not exist until Cloud Run has minted it. Refusing to mount the
+// route until the second apply is the correct behavior for that window, not a
+// limitation of it.
+type SweepConfig struct {
+	// Path is the full, unguessable path Cloud Scheduler posts to, including
+	// the generated segment. Terraform mints it; it is never configured by
+	// hand and never appears in the repository.
+	Path string
+
+	// Audience is the exact audience the Scheduler's OIDC token must carry.
+	// Terraform feeds one value to both sides so they cannot drift.
+	Audience string
+
+	// ServiceAccount is the email of the identity allowed to trigger a sweep.
+	// The scheduler account, which holds invoke permission and nothing else —
+	// notably not the runtime account, which can read the athlete's data.
+	ServiceAccount string
+}
+
+// Enabled reports whether the sweep route may be mounted.
+//
+// Anything less than all three is a misconfiguration, and the route not
+// existing is how it reports: a 404 is unambiguous in a log, where a mounted
+// route that rejects everything looks exactly like an attack.
+func (s SweepConfig) Enabled() bool {
+	return s.Path != "" && s.Audience != "" && s.ServiceAccount != ""
+}
+
 // Environment variable names, named once so the loader, its errors and the
 // documentation cannot drift apart. These are the names of variables, never
 // values, which is why the credential-detection lint is silenced below.
 //
 //nolint:gosec // G101: these are variable names, not hardcoded credentials
 const (
-	EnvStravaClientID     = "STRAVA_CLIENT_ID"
-	EnvStravaClientSecret = "STRAVA_CLIENT_SECRET"
-	EnvStravaVerifyToken  = "STRAVA_VERIFY_TOKEN"
-	EnvStravaAthleteID    = "STRAVA_ATHLETE_ID"
-	EnvWebhookPathSecret  = "WEBHOOK_PATH_SECRET"
-	EnvBaseURL            = "BASE_URL"
-	EnvProcessDelay       = "PROCESS_DELAY"
-	EnvDryRun             = "DRY_RUN"
-	EnvPort               = "PORT"
-	EnvFirestoreProject   = "FIRESTORE_PROJECT"
-	EnvFirestoreDatabase  = "FIRESTORE_DATABASE"
-	EnvNominatimUserAgent = "NOMINATIM_USER_AGENT"
+	EnvStravaClientID      = "STRAVA_CLIENT_ID"
+	EnvStravaClientSecret  = "STRAVA_CLIENT_SECRET"
+	EnvStravaVerifyToken   = "STRAVA_VERIFY_TOKEN"
+	EnvStravaAthleteID     = "STRAVA_ATHLETE_ID"
+	EnvWebhookPathSecret   = "WEBHOOK_PATH_SECRET"
+	EnvBaseURL             = "BASE_URL"
+	EnvProcessDelay        = "PROCESS_DELAY"
+	EnvDryRun              = "DRY_RUN"
+	EnvPort                = "PORT"
+	EnvFirestoreProject    = "FIRESTORE_PROJECT"
+	EnvFirestoreDatabase   = "FIRESTORE_DATABASE"
+	EnvNominatimUserAgent  = "NOMINATIM_USER_AGENT"
+	EnvSweepPath           = "SWEEP_PATH"
+	EnvSweepAudience       = "SWEEP_AUDIENCE"
+	EnvSweepServiceAccount = "SWEEP_SERVICE_ACCOUNT"
 )
 
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.
@@ -188,6 +234,8 @@ func Load(getenv func(string) string) (Config, error) {
 		cfg.WebhookPath = "/webhook/" + pathSecret
 		cfg.AuthPath = "/auth/" + pathSecret
 	}
+
+	cfg.Sweep = loadSweep(getenv, &errs)
 
 	cfg.LLM = loadLLM(getenv, cfg.FirestoreProject, &errs)
 
@@ -271,4 +319,97 @@ func parseWritesEnabled(raw string) (bool, error) {
 		return false, fmt.Errorf(
 			"config: "+EnvDryRun+" must be a boolean, got %q (staying in dry run)", raw)
 	}
+}
+
+// sweepSegmentPattern is what a generated sweep segment must look like.
+//
+// Deliberately the same alphabet as the webhook secret: both are URL path
+// segments minted by Terraform, and a value that needs escaping to appear in a
+// URL would mean the path the service serves and the path the scheduler posts
+// to are different strings.
+var sweepSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{8,128}$`)
+
+// loadSweep reads the three sweep settings, which stand or fall together.
+//
+// Unset means no sweep route, and is not an error: that is a local run, or a
+// first Terraform apply before Cloud Run has minted the URL the audience is
+// built from. A *partial* configuration is an error, because there is no
+// reading of it that is safe. Ignoring it would leave the queue silently
+// undrained, and inferring the missing piece would mean inventing the identity
+// this endpoint trusts.
+func loadSweep(getenv func(string) string, errs *[]error) SweepConfig {
+	sweep := SweepConfig{
+		Path:           strings.TrimSpace(getenv(EnvSweepPath)),
+		Audience:       strings.TrimSpace(getenv(EnvSweepAudience)),
+		ServiceAccount: strings.TrimSpace(getenv(EnvSweepServiceAccount)),
+	}
+
+	set := make([]string, 0, 3)
+	unset := make([]string, 0, 3)
+
+	for name, value := range map[string]string{
+		EnvSweepPath:           sweep.Path,
+		EnvSweepAudience:       sweep.Audience,
+		EnvSweepServiceAccount: sweep.ServiceAccount,
+	} {
+		if value == "" {
+			unset = append(unset, name)
+		} else {
+			set = append(set, name)
+		}
+	}
+
+	if len(set) == 0 {
+		return SweepConfig{}
+	}
+
+	if len(unset) > 0 {
+		sort.Strings(unset)
+		*errs = append(*errs, fmt.Errorf(
+			"config: the sweep is partly configured: %s set, %s missing"+
+				" (set all three or none)",
+			strings.Join(sortedCopy(set), ", "), strings.Join(unset, ", ")))
+
+		return SweepConfig{}
+	}
+
+	segment, ok := strings.CutPrefix(sweep.Path, "/sweep/")
+	if !ok || !sweepSegmentPattern.MatchString(segment) {
+		*errs = append(*errs, errors.New(
+			"config: "+EnvSweepPath+" must be /sweep/ followed by 8 to 128"+
+				" characters from A-Z a-z 0-9 . _ ~ -"))
+
+		return SweepConfig{}
+	}
+
+	// An audience that is not the service's own URL means the token was minted
+	// for something else, and validating against it would be validating
+	// against whatever an operator happened to paste in.
+	if !strings.HasPrefix(sweep.Audience, "https://") {
+		*errs = append(*errs, fmt.Errorf(
+			"config: "+EnvSweepAudience+" must be an https URL, got %q", sweep.Audience))
+
+		return SweepConfig{}
+	}
+
+	if !strings.Contains(sweep.ServiceAccount, "@") {
+		*errs = append(*errs, fmt.Errorf(
+			"config: "+EnvSweepServiceAccount+" must be a service account email, got %q",
+			sweep.ServiceAccount))
+
+		return SweepConfig{}
+	}
+
+	return sweep
+}
+
+// sortedCopy sorts without disturbing the caller's slice, so an error message
+// reads the same on every run. Map iteration order is randomized, and an error
+// that reorders itself between two runs of the same broken deployment is one
+// nobody can diff.
+func sortedCopy(values []string) []string {
+	sorted := append([]string(nil), values...)
+	sort.Strings(sorted)
+
+	return sorted
 }
