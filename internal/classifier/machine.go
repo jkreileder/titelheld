@@ -82,7 +82,16 @@ func NewMachineTitles(patterns []string) (MachineTitles, error) {
 			continue
 		}
 
-		expression, err := regexp.Compile(pattern)
+		// Anchored to the whole title, whatever the pattern says. A regexp
+		// matches anywhere by default, so an unanchored "Ride" would accept
+		// "The Pink Panther Ride" and this service would overwrite a title the
+		// athlete wrote — the one outcome the gate exists to prevent, reachable
+		// from configuration alone. \A and \z rather than ^ and $ because those
+		// mean line boundaries under (?m), which a configured pattern may set.
+		//
+		// Wrapping an already-anchored pattern is harmless: the shipped one
+		// keeps matching exactly what it matched before.
+		expression, err := regexp.Compile(`\A(?:` + pattern + `)\z`)
 		if err != nil {
 			return MachineTitles{}, fmt.Errorf("classifier: machine-title pattern %q: %w", pattern, err)
 		}

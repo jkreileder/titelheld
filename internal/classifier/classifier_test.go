@@ -1051,3 +1051,72 @@ func TestMachineTitlesIgnoresBlankPatterns(t *testing.T) {
 		t.Error("a blank pattern matched a human title")
 	}
 }
+
+// A configured pattern matches the whole title or not at all.
+//
+// A regexp matches anywhere by default, so an unanchored "Ride" would have
+// accepted "The Pink Panther Ride" — a human title, overwritten, from
+// configuration alone. That is the failure this gate exists to prevent.
+func TestMachineTitlePatternsMatchTheWholeTitle(t *testing.T) {
+	t.Parallel()
+
+	titles, err := NewMachineTitles([]string{"Ride"})
+	if err != nil {
+		t.Fatalf("NewMachineTitles: %v", err)
+	}
+
+	tests := []struct {
+		title string
+		want  bool
+		why   string
+	}{
+		{title: "Ride", want: true, why: "the whole title is the pattern"},
+		{title: "The Pink Panther Ride", want: false, why: "a human title ending in the pattern"},
+		{title: "Ride to the Musterberg", want: false, why: "a human title starting with it"},
+		{title: "Afternoon Ride Home", want: false, why: "the pattern in the middle"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			t.Parallel()
+
+			if got := titles.Matches(tt.title); got != tt.want {
+				t.Errorf("Matches(%q) = %v, want %v — %s", tt.title, got, tt.want, tt.why)
+			}
+		})
+	}
+}
+
+// Anchoring is applied on top of whatever the pattern says, so an already
+// anchored pattern keeps matching exactly what it matched before.
+func TestMachineTitlePatternsToleratePreAnchoring(t *testing.T) {
+	t.Parallel()
+
+	titles, err := NewMachineTitles([]string{`^Hard \w+ Ride$`})
+	if err != nil {
+		t.Fatalf("NewMachineTitles: %v", err)
+	}
+
+	if !titles.Matches("Hard Climber Ride") {
+		t.Error("an already-anchored pattern stopped matching its own title")
+	}
+
+	if titles.Matches("Very Hard Climber Ride") {
+		t.Error("an already-anchored pattern matched a longer title")
+	}
+}
+
+// The multiline flag makes ^ and $ mean line boundaries, so anchoring with
+// them would still admit a multi-line title. \A and \z do not.
+func TestMachineTitlePatternsResistMultilineFlags(t *testing.T) {
+	t.Parallel()
+
+	titles, err := NewMachineTitles([]string{`(?m)^Ride$`})
+	if err != nil {
+		t.Fatalf("NewMachineTitles: %v", err)
+	}
+
+	if titles.Matches("The Pink Panther Checks Inn\nRide") {
+		t.Error("a multiline pattern matched a title whose first line is human-written")
+	}
+}
