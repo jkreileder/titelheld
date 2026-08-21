@@ -50,7 +50,11 @@ func (c *Client) GetGear(ctx context.Context, gearID string) (Gear, error) {
 	}
 	defer drainAndClose(response)
 
-	decoder := json.NewDecoder(io.LimitReader(response.Body, maxGearBytes))
+	// One byte of headroom over the cap, and the reader kept rather than
+	// wrapped, so the two reasons it can report EOF stay distinguishable: the
+	// body ended, or the limit did. Checked below.
+	limited := &io.LimitedReader{R: response.Body, N: maxGearBytes + 1}
+	decoder := json.NewDecoder(limited)
 
 	var gear Gear
 	if err := decoder.Decode(&gear); err != nil {
@@ -63,6 +67,14 @@ func (c *Client) GetGear(ctx context.Context, gearID string) (Gear, error) {
 	// this reads a response the service did not produce.
 	if err := decoder.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
 		return Gear{}, fmt.Errorf("strava: gear %q: trailing data after the response", gearID)
+	}
+
+	// That EOF is only evidence of a clean end if the limit was not the thing
+	// that produced it. A gear object padded to the cap would otherwise hide
+	// whatever follows it: the limiter reports EOF, the second decode is
+	// satisfied, and the rest of the body is never looked at.
+	if limited.N <= 0 {
+		return Gear{}, fmt.Errorf("strava: gear %q: response exceeds %d bytes", gearID, maxGearBytes)
 	}
 
 	return gear, nil

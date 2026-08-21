@@ -198,3 +198,50 @@ func TestGetGearAcceptsTrailingWhitespace(t *testing.T) {
 		t.Errorf("Name = %q, want %q", gear.Name, "Musterrad")
 	}
 }
+
+// Padding to the byte cap must not hide what follows it.
+//
+// io.LimitReader reports io.EOF once it has supplied its budget, whether or
+// not the body ended — so a valid object padded with whitespace up to the cap
+// would satisfy the trailing-data check above and everything after it would
+// go unread.
+func TestGetGearRejectsABodyPaddedToTheLimit(t *testing.T) {
+	t.Parallel()
+
+	object := `{"id":"b1","name":"Musterrad"}`
+
+	for _, tc := range []struct {
+		name    string
+		padding int
+		suffix  string
+	}{
+		{
+			name:    "junk immediately after the cap",
+			padding: maxGearBytes - len(object),
+			suffix:  `{"id":"b2","name":"Anderes"}`,
+		},
+		{
+			name:    "junk beyond the cap",
+			padding: maxGearBytes,
+			suffix:  `{"id":"b2","name":"Anderes"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := object + strings.Repeat(" ", tc.padding) + tc.suffix
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+
+			client := newTestClient(t, server, WriteModeDryRun)
+
+			if _, err := client.GetGear(t.Context(), "b1"); err == nil {
+				t.Errorf("a body padded to the limit was accepted, hiding %q", tc.suffix)
+			}
+		})
+	}
+}
