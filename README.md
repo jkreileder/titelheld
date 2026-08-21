@@ -480,8 +480,10 @@ the stored token — so **run the authorization flow first**. It resolves the at
 OAuth callback binds one, from the single stored token, refusing if there is none or more than
 one; there is no athlete flag to mistype.
 
-It never writes to Strava. The client is built in its dry-run zero value, so the transport
-refuses anything that is not a `GET`.
+It never changes an activity. The client is built in its dry-run zero value, so its transport
+refuses anything that is not a `GET`. The one request that does not go through it is the OAuth
+token refresh — a `POST` to `/oauth/token`, which issues tokens and cannot touch an activity, and
+which an import needs because a stored access token is only valid for a few hours.
 
 **What it seeds, and what it leaves out.** Only titles the athlete or another person wrote.
 Strava's own defaults are skipped, because a default is not a title — they repeat by design, so

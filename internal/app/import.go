@@ -106,10 +106,18 @@ func importWith(
 
 // importClient builds the read-only Strava client an import uses.
 //
-// Left in the client's dry-run zero value on purpose. An import has no
-// business being able to write, and this is the cheapest guarantee available:
-// the transport refuses every request that is not a GET, so the property holds
-// however the code above it changes.
+// Left in the client's dry-run zero value on purpose: its transport refuses
+// every request that is not a GET, so "an import cannot change an activity"
+// holds however the code above it changes rather than by anyone remembering.
+//
+// One request an import makes does not go through it. The token source
+// refreshes an expired access token by POSTing to Strava's /oauth/token, on
+// the OAuth type's own client. That is not a gap in the guarantee — the
+// endpoint issues tokens and cannot touch an activity — and it is not
+// avoidable either: refusing to refresh would mean an import that fails
+// whenever the stored token has aged past its few hours, which is most of the
+// time. What matters is that nothing reachable from here can write an
+// activity, and the client above is what enforces that.
 func importClient(
 	cfg config.Config, dataStore boundStore, athleteID int64,
 ) (*strava.Client, error) {

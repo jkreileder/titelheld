@@ -179,8 +179,15 @@ func TestTheImportClientCannotWrite(t *testing.T) {
 		t.Errorf("write mode = %v, want dry run", client.WriteMode())
 	}
 
-	// And it refuses a write outright rather than attempting one.
+	// And it refuses a write outright rather than attempting one. Both write
+	// paths, because the guarantee is about activities and not about one
+	// method.
 	if _, err := client.UpdateActivityName(t.Context(), 1, "Neuer Titel"); err == nil {
-		t.Error("the import's client accepted a write")
+		t.Error("the import's client accepted a rename")
+	}
+
+	if _, err := client.UpdateActivityNameAndDescription(
+		t.Context(), 1, "Neuer Titel", "Neue Beschreibung"); err == nil {
+		t.Error("the import's client accepted a rename with a description")
 	}
 }

@@ -8,8 +8,10 @@
 //	BASE_URL=… WEBHOOK_PATH_SECRET=… STRAVA_VERIFY_TOKEN=… \
 //	go run ./cmd/titelheld-import
 //
-// It never writes to Strava: the client is built in its dry-run zero value and
-// the transport refuses anything that is not a GET.
+// It never changes an activity: the client is built in its dry-run zero value
+// and its transport refuses anything that is not a GET. The one POST it can
+// make is the OAuth token refresh, which issues tokens and touches no
+// activity.
 package main
 
 import (
