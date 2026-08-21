@@ -1051,14 +1051,36 @@ func TestASectionWithNothingLeftIsOmitted(t *testing.T) {
 	t.Parallel()
 
 	prompt := BuildPrompt(
-		Ride{SportType: "GravelRide", Places: []string{"\n", "  ", "\t"}},
-		Context{RecentTitles: []string{" ", "\r\n"}},
+		Ride{
+			SportType:    "GravelRide",
+			Places:       []string{"\n", "  ", "\t"},
+			Achievements: []string{"\t\t"},
+			Region:       " ",
+			Country:      "\n",
+			Facts:        []Fact{{Label: "Difficulty", Value: "  "}},
+		},
+		Context{
+			RecentTitles:  []string{" ", "\r\n"},
+			FranchiseNext: "\t \n",
+			Examples:      []Example{{Situation: "60 km", Title: "  ", Language: German}},
+		},
 	)
 
-	for _, heading := range []string{"PLACES", "RECENT"} {
+	// Every section, not the two that were fixed first: whether a section
+	// exists cannot be decided from the raw values, because sanitizing is what
+	// makes them empty.
+	for _, heading := range []string{
+		"PLACES", "RECENT", "REGION", "NOTES", "ACHIEVEMENTS", "FRANCHISE", "EXAMPLES",
+	} {
 		if strings.Contains(prompt.User, heading) {
 			t.Errorf("an empty %s section was written:\n%s", heading, prompt.User)
 		}
+	}
+
+	// And an example with no title is dropped rather than rendered as one
+	// whose title is the empty string.
+	if strings.Contains(prompt.User, "-> ") {
+		t.Errorf("an example with no title was written:\n%s", prompt.User)
 	}
 }
 
