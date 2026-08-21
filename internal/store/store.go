@@ -253,6 +253,11 @@ type Naming struct {
 const (
 	SourceLLM      = "llm"
 	SourceTemplate = "template"
+
+	// SourceImported is a title the athlete already had, seeded from their
+	// Strava history rather than written here. It counts as their style — it
+	// is their style — so it feeds the prompt like a model-written one.
+	SourceImported = "imported"
 )
 
 // NamedTitle is one entry of the title history.
