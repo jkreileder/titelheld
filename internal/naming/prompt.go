@@ -207,12 +207,12 @@ func BuildPrompt(ride Ride, ctx Context) Prompt {
 		}
 	}
 
-	writeList(&b, "RECENT", oneLineEach(capTitles(ctx.RecentTitles)))
+	writeList(&b, "RECENT", capTitles(ctx.RecentTitles))
 
 	if ctx.FranchiseNext != "" {
 		b.WriteString("\nFRANCHISE\n")
 		b.WriteString("- This ride continues a series. The next entry is: " +
-			ctx.FranchiseNext + "\n")
+			OneLine(ctx.FranchiseNext) + "\n")
 		b.WriteString("- Use it, adapting the wording to this ride if you like. " +
 			"Do not skip ahead in the series.\n")
 	}
@@ -263,16 +263,6 @@ func OneLine(value string) string {
 	return value
 }
 
-// oneLineEach bounds every entry of a list.
-func oneLineEach(values []string) []string {
-	bounded := make([]string, 0, len(values))
-	for _, value := range values {
-		bounded = append(bounded, OneLine(value))
-	}
-
-	return bounded
-}
-
 // capTitles trims the recent-title list to what the prompt carries.
 func capTitles(titles []string) []string {
 	if len(titles) > RecentTitleLimit {
@@ -282,8 +272,16 @@ func capTitles(titles []string) []string {
 	return titles
 }
 
+// writeField writes one labelled value.
+//
+// Every value goes through [OneLine] here rather than at the call sites, so a
+// field added later cannot forget it. The prompt is newline-delimited with
+// named blocks: any value carrying a newline can invent one, and most of these
+// values come from Strava, from a geocoder or from a document the athlete
+// typed.
 func writeField(b *strings.Builder, label, value string) {
-	if strings.TrimSpace(value) == "" {
+	value = OneLine(value)
+	if value == "" {
 		return
 	}
 
@@ -316,7 +314,8 @@ func writeList(b *strings.Builder, heading string, items []string) {
 	b.WriteString("\n" + heading + "\n")
 
 	for _, item := range items {
-		if strings.TrimSpace(item) == "" {
+		item = OneLine(item)
+		if item == "" {
 			continue
 		}
 

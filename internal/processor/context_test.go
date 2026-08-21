@@ -763,6 +763,7 @@ func TestAnUnreadableConfigurationDegradesToTheDefaults(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t, true, func(d *Deps) { d.Franchises = nil })
+	capture := withCapture(h)
 
 	h.proc.deps.Store = &faultyStore{
 		Store:            h.store,
@@ -785,6 +786,14 @@ func TestAnUnreadableConfigurationDegradesToTheDefaults(t *testing.T) {
 
 	if writes := h.strava.writes(); len(writes) != 1 {
 		t.Errorf("%d PUTs, want 1 despite an unreadable configuration", len(writes))
+	}
+
+	// Degraded to the default profile, not to no franchise at all — which is
+	// what "falls back" has to mean, and what a test asserting only that the
+	// ride was named cannot tell apart.
+	if !strings.Contains(capture.prompt.User, naming.DefaultProfile()[0].Titles[0]) {
+		t.Errorf("an unreadable configuration dropped the franchise entirely:\n%s",
+			capture.prompt.User)
 	}
 }
 
@@ -817,8 +826,26 @@ func TestTheConfigurationIsReadOnce(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 
+	// A second sweep, because the cache is meant to last the process and not
+	// the sweep — one that reset per sweep would pass on a single one.
+	fresh := sportRide()
+	fresh.ID = 780
+	h.strava.byID[fresh.ID] = fresh
+
+	if _, err := h.store.Enqueue(t.Context(), store.Pending{
+		AthleteID: 4242, ActivityID: fresh.ID, Aspect: "create",
+		EnqueuedAt:   h.now.Add(-time.Hour),
+		ProcessAfter: h.now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("second Sweep: %v", err)
+	}
+
 	if counting.reads != 1 {
-		t.Errorf("the configuration was read %d times for 3 activities, want 1", counting.reads)
+		t.Errorf("the configuration was read %d times across 2 sweeps, want 1", counting.reads)
 	}
 }
 
