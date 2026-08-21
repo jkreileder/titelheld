@@ -195,9 +195,9 @@ rather than hashing a sequence, which is tolerant by construction and direction-
 sets are unordered. Nothing in the service does this today, and no title can carry a route
 callback until it does.
 
-**The history starts empty.** Nothing has been named yet, so the recent-titles list and the
-derived examples only become useful once real namings accumulate. Seeding them from the
-athlete's existing Strava activities is the history import, which is not built.
+**The history has to be seeded once.** Nothing has been named yet, so the recent-titles list and
+the derived examples are empty until the athlete's existing Strava activities are imported —
+see [Seeding the title history](#seeding-the-title-history).
 
 ## Configuration
 
@@ -485,7 +485,8 @@ refuses anything that is not a `GET`. The one request that does not go through i
 token refresh — a `POST` to `/oauth/token`, which issues tokens and cannot touch an activity, and
 which an import needs because a stored access token is only valid for a few hours.
 
-**What it seeds, and what it leaves out.** Only titles the athlete or another person wrote.
+**What it seeds, and what it leaves out.** Only the athlete's own titles — which is every title
+on their activities that neither Strava nor a recognized tool wrote.
 Strava's own defaults are skipped, because a default is not a title — they repeat by design, so
 listing them under "never repeat" forbids the right answer — and recognized machine titles are
 skipped because they are the style this service exists to replace, which is the last thing a
