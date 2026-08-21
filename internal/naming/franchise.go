@@ -56,20 +56,20 @@ func (f Franchise) Applies(sportType, gearName string) bool {
 	return false
 }
 
-// DefaultFranchises is the shipped set.
+// DefaultProfile is the franchise set a deployment starts with.
 //
-// One series: the Pink Panther films, on the gravel bike of the same name.
+// Franchises are data, not code: the athlete's own list lives in their
+// Firestore configuration document, where adding one needs no release. This is
+// the default profile the spec asks for — what applies until a document is
+// written, and what a first document is seeded from.
 //
-// The three entries the athlete has already used by hand — "The Pink Panther
-// Checks Inn", "The Pink Panther Strikes Again" and "Revenge of the Pink
-// Panther" — are deliberately absent rather than listed and skipped. A stored
-// position of zero would otherwise hand out a title that has already been
-// used, and there is no mechanism to seed a position: the store starts every
-// franchise at zero and nothing can set it. Omitting them makes zero correct.
-//
-// A franchise added later that has never been used needs no such care. The
-// README says how to handle one that has.
-func DefaultFranchises() []Franchise {
+// The three entries already used by hand — "The Pink Panther Checks Inn",
+// "The Pink Panther Strikes Again" and "Revenge of the Pink Panther" — are
+// deliberately absent. A stored position starts at zero, so listing them would
+// hand out a title the athlete already has. A canon added later that has never
+// been used needs no such care; one that has, needs its position seeded, and
+// the README says how.
+func DefaultProfile() []Franchise {
 	return []Franchise{
 		{
 			Name:       "pink-panther",

@@ -527,20 +527,45 @@ indistinguishable.
 `AdvanceFranchise` increments and returns the new position in one transaction, so the store
 decides the next number rather than a caller reading, adding one and writing back.
 
-To add a franchise:
+Franchises live in the athlete's Firestore configuration document, one document per athlete in
+the `config` collection keyed by athlete ID. Adding one is an edit to that document — no release,
+no deploy. An athlete with no document gets the shipped default profile.
 
-1. Pick a name that will not change. It is the document key, so renaming it resets the athlete
-   to the start of the series.
-2. Add the name, the ordered titles, and the rule that selects it — a sport type, a gear ID, or
-   both — to the athlete's configuration document.
-3. If the athlete has already used some entries by hand, set the position to that count. Leaving
-   it unset starts at the first title.
+The document's shape:
 
-The shipped list deliberately omits the three entries already used by hand — "The Pink Panther
-Checks Inn", "The Pink Panther Strikes Again" and "Revenge of the Pink Panther". The store
-starts every franchise at zero and nothing can seed it, so listing them would hand out a title
-the athlete already has. A franchise added later that has never been used needs no such care.
+```json
+{
+  "athlete_id": 12345678,
+  "franchises": [
+    {
+      "name": "silver-surfer",
+      "sport_types": ["GravelRide", "Ride"],
+      "gear_name": "Silver Surfer",
+      "titles": ["Herald of Galactus", "The Power Cosmic"]
+    }
+  ],
+  "updated_at": "2026-08-21T12:00:00Z"
+}
+```
 
+`sport_types` empty means any sport; `gear_name` empty means any bike. The first matching
+franchise wins, so order is precedence.
+
+To add one:
+
+1. Pick a `name` that will not change. It keys the stored position, so renaming it sends the
+   athlete back to the first title.
+2. Add the entry to the document, in the Firestore console or with `gcloud firestore documents`.
+   The service reads the document once per process, so a running instance picks the change up on
+   its next cold start — which, scaling to zero, is the next sweep.
+3. **If some entries have already been used by hand**, either leave those titles out of `titles`
+   (what the shipped Pink Panther profile does — the three films already used are simply absent),
+   or seed the position. The position lives in `franchise/{athleteID}-{name}` as a single
+   `position` integer, and setting it to the number already used is the whole of it.
+
+**Still shipped in code:** the *default profile* — what applies until a document exists. Tiers,
+geofences, banned words and language preferences have not moved yet; they belong in this same
+document and will follow.
 **Still configuration-in-code.** The list lives in `internal/naming/franchise.go` rather than in
 a per-athlete configuration document, because that document is not built yet. Adding a
 franchise is therefore a code change today, which is the one thing "franchises are data" was

@@ -104,7 +104,8 @@ func titlesOf(history []store.NamedTitle) []string {
 func (p *Processor) franchiseNext(
 	ctx context.Context, athleteID int64, ride naming.Ride, logger *slog.Logger,
 ) (next, franchiseName string) {
-	franchise, ok := naming.FranchiseFor(p.deps.Franchises, ride.SportType, ride.GearName)
+	franchise, ok := naming.FranchiseFor(
+		p.franchises(ctx, athleteID, logger), ride.SportType, ride.GearName)
 	if !ok {
 		return "", ""
 	}
@@ -126,6 +127,79 @@ func (p *Processor) franchiseNext(
 	}
 
 	return next, franchise.Name
+}
+
+// franchises are the athlete's configured series.
+//
+// Read from the configuration document, because a franchise is data: adding
+// one is an edit to a document, not a release. An athlete with no document
+// gets the shipped default profile, which is what every deployment starts
+// with and what a first document is seeded from.
+//
+// A document that cannot be read degrades to the default profile rather than
+// failing the naming. A franchise is garnish — the ride still gets a title —
+// and the alternative is a ride left with its Strava default because a
+// configuration read timed out. The failure is logged rather than swallowed.
+//
+// Cached for the life of the process. Configuration changes about as often as
+// a person edits it, and a restart is what picks it up: the same trade the
+// gear cache makes, for the same reason.
+func (p *Processor) franchises(
+	ctx context.Context, athleteID int64, logger *slog.Logger,
+) []naming.Franchise {
+	if p.deps.Franchises != nil {
+		return p.deps.Franchises
+	}
+
+	p.franchiseMu.Lock()
+	defer p.franchiseMu.Unlock()
+
+	if p.franchiseLoaded {
+		return p.franchiseCache
+	}
+
+	p.franchiseCache = naming.DefaultProfile()
+	p.franchiseLoaded = true
+
+	config, ok, err := p.deps.Store.AthleteConfig(ctx, athleteID)
+	if err != nil {
+		logger.Error("could not read the athlete configuration; using the default profile",
+			"error", err)
+
+		return p.franchiseCache
+	}
+
+	if !ok {
+		logger.Info("no athlete configuration; using the default franchise profile")
+
+		return p.franchiseCache
+	}
+
+	p.franchiseCache = fromStored(config.Franchises)
+
+	logger.Info("loaded the athlete configuration", "franchises", len(p.franchiseCache))
+
+	return p.franchiseCache
+}
+
+// fromStored converts the persisted shape into the one with behavior.
+//
+// The two are deliberately separate types: a franchise has methods here and a
+// schema on disk, and letting one type be both means a refactor in this
+// package silently rewrites what Firestore expects.
+func fromStored(stored []store.Franchise) []naming.Franchise {
+	franchises := make([]naming.Franchise, 0, len(stored))
+
+	for _, entry := range stored {
+		franchises = append(franchises, naming.Franchise{
+			Name:       entry.Name,
+			SportTypes: entry.SportTypes,
+			GearName:   entry.GearName,
+			Titles:     entry.Titles,
+		})
+	}
+
+	return franchises
 }
 
 // examplesFrom derives few-shot examples from the title history.

@@ -44,6 +44,12 @@
   CI runs. CI never applies: applies are by hand. Secret Manager *values* never
   appear in code, tfvars or state - only the secret resources are managed.
 
+- `internal/importer/` seeds the title history from Strava. A one-shot run by
+  hand, not a route: the service is invokable by `allUsers`, so an endpoint
+  that exists for a job run once is surface for no reason. Idempotent and
+  resumable with no state of its own — an activity already in the named log is
+  left alone.
+
 - `internal/naming/` builds the prompt, validates what comes back, and holds
   the two LLM implementations behind one interface it defines itself. No HTTP
   client of its own beyond the providers, no Firestore: a caller assembles a
@@ -112,7 +118,9 @@ deliberately paused.
   wires everything together.
 - **Config is data, per athlete.** Thresholds, `zwift_mode`, geofences, banned
   words and franchises are configuration, not code, and every field is safe at its
-  zero value.
+  zero value. Franchises live in the `config` collection now; the rest still
+  ship as defaults in code and follow into the same document. What ships in
+  code is the *default profile* — what applies until a document exists.
 - **No new dependencies without asking.** Allowed: a polyline decoder, the
   Firestore client, an HTTP router. Everything else needs a decision first.
   There are still none: OAuth, the HTTP client and routing are standard library.

@@ -62,9 +62,10 @@ type Deps struct {
 	Classifier classifier.Config
 	Validator  naming.Validator
 
-	// Franchises are the ordered title series that may apply. Nil means the
-	// shipped set; an empty non-nil slice means none, which is how a
-	// deployment turns the feature off.
+	// Franchises overrides the athlete's configured series. Nil means read
+	// them from the configuration document, falling back to the shipped
+	// default profile; an empty non-nil slice means none, which is how a test
+	// turns the feature off without a document.
 	Franchises []naming.Franchise
 
 	// Attribution is on unless this says otherwise. The field is negative so
@@ -103,6 +104,17 @@ type Processor struct {
 	// each time, against a hundred per fifteen minutes.
 	examplesMu sync.Mutex
 	examples   map[int64]naming.Example
+
+	// franchiseCache holds the athlete's configured series, read once. A
+	// person edits configuration about as often as they name a bike, and a
+	// restart is what picks up an edit — the same trade the gear cache makes.
+	//
+	// franchiseLoaded is separate from the slice being nil, because "no
+	// franchises configured" is a real answer and must not be retried on
+	// every activity.
+	franchiseMu     sync.Mutex
+	franchiseCache  []naming.Franchise
+	franchiseLoaded bool
 }
 
 // New builds a processor.
@@ -120,10 +132,6 @@ func New(deps Deps) (*Processor, error) {
 
 	if deps.Now == nil {
 		deps.Now = time.Now
-	}
-
-	if deps.Franchises == nil {
-		deps.Franchises = naming.DefaultFranchises()
 	}
 
 	return &Processor{

@@ -98,7 +98,7 @@ func TestAFranchiseRideIsOfferedTheNextEntry(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 
-	first := naming.DefaultFranchises()[0].Titles[0]
+	first := naming.DefaultProfile()[0].Titles[0]
 
 	if !strings.Contains(capture.prompt.User, "FRANCHISE") {
 		t.Fatalf("the prompt has no FRANCHISE block:\n%s", capture.prompt.User)
@@ -167,7 +167,7 @@ func TestDryRunOffersAFranchiseWithoutConsumingIt(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(capture.prompt.User, naming.DefaultFranchises()[0].Titles[0]) {
+	if !strings.Contains(capture.prompt.User, naming.DefaultProfile()[0].Titles[0]) {
 		t.Error("dry run did not offer the franchise entry")
 	}
 
@@ -680,5 +680,198 @@ func TestAnExampleWithoutALanguageFallsBack(t *testing.T) {
 
 	if strings.Contains(capture.prompt.User, "()") {
 		t.Errorf("an example rendered an empty language:\n%s", capture.prompt.User)
+	}
+}
+
+// The athlete's configured series is what applies, not the shipped one.
+//
+// This is the whole point of franchises being data: a series added to the
+// configuration document takes effect without a release.
+func TestConfiguredFranchisesOverrideTheDefaultProfile(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) { d.Franchises = nil })
+	capture := withCapture(h)
+
+	if err := h.store.SaveAthleteConfig(t.Context(), 4242, store.AthleteConfig{
+		Franchises: []store.Franchise{{
+			Name:       "silver-surfer",
+			SportTypes: []string{"GravelRide"},
+			GearName:   "Silver Surfer",
+			Titles:     []string{"Herald of Galactus", "The Power Cosmic"},
+		}},
+	}); err != nil {
+		t.Fatalf("SaveAthleteConfig: %v", err)
+	}
+
+	h.strava.gearName = "Silver Surfer"
+	h.strava.activity.GearID = "b7654321"
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if !strings.Contains(capture.prompt.User, "Herald of Galactus") {
+		t.Errorf("the configured series was not offered:\n%s", capture.prompt.User)
+	}
+
+	// And the shipped default did not apply to a bike it does not name.
+	if strings.Contains(capture.prompt.User, "The Pink Panther") {
+		t.Errorf("the default profile applied despite a configuration document:\n%s",
+			capture.prompt.User)
+	}
+
+	position, err := h.store.FranchisePosition(t.Context(), 4242, "silver-surfer")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 1 {
+		t.Errorf("position = %d, want the configured series advanced", position)
+	}
+}
+
+// An athlete with no document gets the shipped default profile.
+func TestNoConfigurationFallsBackToTheDefaultProfile(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) { d.Franchises = nil })
+	capture := withCapture(h)
+
+	h.strava.gearName = "Pink Panther"
+	h.strava.activity.GearID = "b1234567"
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if !strings.Contains(capture.prompt.User, naming.DefaultProfile()[0].Titles[0]) {
+		t.Errorf("the default profile did not apply with no document:\n%s", capture.prompt.User)
+	}
+}
+
+// A configuration that cannot be read degrades to the defaults.
+//
+// A franchise is garnish; the ride still gets a title. Failing the naming
+// because a configuration read timed out would leave a ride with its Strava
+// default over a decoration.
+func TestAnUnreadableConfigurationDegradesToTheDefaults(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) { d.Franchises = nil })
+
+	h.proc.deps.Store = &faultyStore{
+		Store:            h.store,
+		athleteConfigErr: errors.New("firestore: unavailable"),
+	}
+
+	h.strava.gearName = "Pink Panther"
+	h.strava.activity.GearID = "b1234567"
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Named != 1 {
+		t.Errorf("result %+v, want the activity named anyway", result)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs, want 1 despite an unreadable configuration", len(writes))
+	}
+}
+
+// The configuration is read once, not per activity.
+func TestTheConfigurationIsReadOnce(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) { d.Franchises = nil })
+
+	counting := &countingConfig{Store: h.store}
+	h.proc.deps.Store = counting
+
+	h.strava.byID = make(map[int64]strava.Activity, 3)
+
+	for index := range 3 {
+		a := sportRide()
+		a.ID = int64(770 + index)
+		h.strava.byID[a.ID] = a
+
+		if _, err := h.store.Enqueue(t.Context(), store.Pending{
+			AthleteID: 4242, ActivityID: a.ID, Aspect: "create",
+			EnqueuedAt:   h.now.Add(-time.Hour),
+			ProcessAfter: h.now.Add(-time.Minute),
+		}); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+	}
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if counting.reads != 1 {
+		t.Errorf("the configuration was read %d times for 3 activities, want 1", counting.reads)
+	}
+}
+
+// countingConfig counts configuration reads.
+type countingConfig struct {
+	store.Store
+
+	reads int
+}
+
+func (c *countingConfig) AthleteConfig(
+	ctx context.Context, athleteID int64,
+) (store.AthleteConfig, bool, error) {
+	c.reads++
+
+	return c.Store.AthleteConfig(ctx, athleteID)
+}
+
+// The prompt invites a bike's name to color the title.
+//
+// Any bike, not only one with a configured canon — a "Silver Surfer" may riff
+// without anybody writing a series for it. The no-repeat rule and the recent
+// titles are what keep it from becoming a formula, and the gear name reaches
+// the prompt as one short sanitized line, which is what makes inviting the
+// riff safe.
+func TestThePromptInvitesAGearNameMotif(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) { d.Franchises = []naming.Franchise{} })
+	capture := withCapture(h)
+
+	h.strava.gearName = "Silver Surfer"
+	h.strava.activity.GearID = "b7654321"
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	system := capture.prompt.System
+
+	if !strings.Contains(system, "named by the athlete") {
+		t.Errorf("the prompt does not invite a gear-name motif:\n%s", system)
+	}
+
+	// The bike itself reaches the prompt, or there is nothing to riff on.
+	if !strings.Contains(capture.prompt.User, "Silver Surfer") {
+		t.Errorf("the bike's name did not reach the prompt:\n%s", capture.prompt.User)
+	}
+
+	// And a configured canon still wins where one applies.
+	if !strings.Contains(system, "FRANCHISE is present it overrides") {
+		t.Errorf("the prompt does not say a franchise overrides the motif:\n%s", system)
 	}
 }
