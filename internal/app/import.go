@@ -44,26 +44,35 @@ func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string
 
 	defer closeStore()
 
+	return importWith(ctx, cfg, dataStore, nil, logger)
+}
+
+// importWith runs the import against an already-open store.
+//
+// Split from [Import] so everything after the store is open can be tested: the
+// athlete resolution, the read-only client, and the run itself. Import keeps
+// only what needs a real environment — reading it, refusing an in-memory one,
+// and opening Firestore.
+//
+// A nil activities builds the real client. A test passes its own, which is the
+// only way to exercise this without reaching Strava.
+func importWith(
+	ctx context.Context, cfg config.Config, dataStore boundStore,
+	activities importer.Activities, logger *slog.Logger,
+) error {
 	token, err := dataStore.AnyToken(ctx)
 	if err != nil {
 		return fmt.Errorf(
 			"import: no single bound athlete; run the authorization flow first: %w", err)
 	}
 
-	oauth := &strava.OAuth{
-		ClientID:     cfg.StravaClientID,
-		ClientSecret: cfg.StravaClientSecret,
-		RedirectURL:  cfg.RedirectURL(),
-	}
+	if activities == nil {
+		client, err := importClient(cfg, dataStore, token.AthleteID)
+		if err != nil {
+			return err
+		}
 
-	// Read-only work, so the client is left in its safe zero value. An import
-	// has no business being able to write, and this is the cheapest way to
-	// guarantee it: the transport refuses every non-GET request.
-	client, err := strava.NewClient(strava.ClientConfig{
-		Tokens: strava.NewStoredTokenSource(oauth, dataStore, token.AthleteID),
-	})
-	if err != nil {
-		return fmt.Errorf("import: build the Strava client: %w", err)
+		activities = client
 	}
 
 	rules, err := classifierConfig(cfg)
@@ -72,7 +81,7 @@ func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string
 	}
 
 	result, err := importer.Run(ctx, importer.Deps{
-		Activities:    client,
+		Activities:    activities,
 		Store:         dataStore,
 		AthleteID:     token.AthleteID,
 		MachineTitles: rules.MachineTitles,
@@ -93,4 +102,29 @@ func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string
 	}
 
 	return nil
+}
+
+// importClient builds the read-only Strava client an import uses.
+//
+// Left in the client's dry-run zero value on purpose. An import has no
+// business being able to write, and this is the cheapest guarantee available:
+// the transport refuses every request that is not a GET, so the property holds
+// however the code above it changes.
+func importClient(
+	cfg config.Config, dataStore boundStore, athleteID int64,
+) (*strava.Client, error) {
+	oauth := &strava.OAuth{
+		ClientID:     cfg.StravaClientID,
+		ClientSecret: cfg.StravaClientSecret,
+		RedirectURL:  cfg.RedirectURL(),
+	}
+
+	client, err := strava.NewClient(strava.ClientConfig{
+		Tokens: strava.NewStoredTokenSource(oauth, dataStore, athleteID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("import: build the Strava client: %w", err)
+	}
+
+	return client, nil
 }
