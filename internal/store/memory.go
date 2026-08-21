@@ -191,6 +191,7 @@ func (m *Memory) MarkNamed(_ context.Context, naming Naming) error {
 		ActivityID: naming.ActivityID,
 		Title:      naming.Title,
 		Language:   naming.Language,
+		Source:     naming.Source,
 		NamedAt:    naming.At.UTC(),
 	}
 

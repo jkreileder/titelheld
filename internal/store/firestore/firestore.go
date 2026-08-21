@@ -308,6 +308,7 @@ type namedDoc struct {
 	ActivityID int64     `firestore:"activity_id"`
 	Title      string    `firestore:"title"`
 	Language   string    `firestore:"language"`
+	Source     string    `firestore:"source"`
 	NamedAt    time.Time `firestore:"named_at"`
 }
 
@@ -318,6 +319,7 @@ func (s *Store) MarkNamed(ctx context.Context, naming store.Naming) error {
 		ActivityID: naming.ActivityID,
 		Title:      naming.Title,
 		Language:   naming.Language,
+		Source:     naming.Source,
 		NamedAt:    naming.At.UTC(),
 	}
 
@@ -369,6 +371,7 @@ func (s *Store) RecentTitles(
 			ActivityID: doc.ActivityID,
 			Title:      doc.Title,
 			Language:   doc.Language,
+			Source:     doc.Source,
 			NamedAt:    doc.NamedAt.UTC(),
 		})
 	}

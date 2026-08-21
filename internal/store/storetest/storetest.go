@@ -301,7 +301,8 @@ func namedLogRoundTrip(t *testing.T, s store.Store) {
 
 	if err := s.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 1, ActivityID: 5,
-		Title: "The Pink Panther Strikes Again", Language: "en", At: Now,
+		Title: "The Pink Panther Strikes Again", Language: "en",
+		Source: store.SourceLLM, At: Now,
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -512,6 +513,7 @@ func recentTitlesNewestFirst(t *testing.T, s store.Store) {
 			ActivityID: int64(100 + index),
 			Title:      title,
 			Language:   "de",
+			Source:     store.SourceLLM,
 			At:         Now.Add(time.Duration(index) * time.Hour),
 		}); err != nil {
 			t.Fatalf("MarkNamed(%q): %v", title, err)
@@ -533,10 +535,14 @@ func recentTitlesNewestFirst(t *testing.T, s store.Store) {
 		t.Errorf("RecentTitles = %v, want %v", got, want)
 	}
 
-	// The language round-trips: it cannot be recovered from Strava later, so
-	// losing it here loses it for good.
+	// The language and the source round-trip. Neither can be recovered from
+	// Strava later, so losing them here loses them for good.
 	if len(titles) > 0 && titles[0].Language != "de" {
 		t.Errorf("language = %q, want %q", titles[0].Language, "de")
+	}
+
+	if len(titles) > 0 && titles[0].Source != store.SourceLLM {
+		t.Errorf("source = %q, want %q", titles[0].Source, store.SourceLLM)
 	}
 }
 

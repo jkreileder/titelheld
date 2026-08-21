@@ -20,7 +20,7 @@ Six collections, and nothing else. Adding a seventh means changing this document
 | ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
 | `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes   | **No**                  |
 | `pending`   | `{athleteID}-{activity}`  | Queued activity and its `process_after` deadline | Yes                     |
-| `named`     | `{athleteID}-{activity}`  | Title this service wrote, its language, and when | Mostly, from Strava     |
+| `named`     | `{athleteID}-{activity}`  | Title written, its language and source, and when | Mostly, from Strava     |
 | `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
 | `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
 | `routes`    | `{athleteID}-{digest}`    | How often a route fingerprint has been ridden    | Yes, from Strava        |
@@ -36,8 +36,9 @@ and cannot answer "which route" — it is not reversible into a line on a map, a
 direction-insensitive on purpose, so an out-and-back matches its return. Losing it costs a
 missed callback in a title.
 
-`named` also stores the language each title was written in. That one field is not re-derivable:
-re-reading an activity returns the title but never says which language was chosen for it.
+`named` also stores the language each title was written in and whether a model or a template
+produced it. Neither is re-derivable: re-reading an activity returns the title but never says
+which language was chosen for it, or which tier named it.
 
 Only `tokens` genuinely has to survive. Strava rotates the refresh token on every refresh and
 invalidates the previous one immediately, so losing that document means re-running the

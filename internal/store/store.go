@@ -217,12 +217,30 @@ type Naming struct {
 	// the store, as [Pending] does, so both implementations order the same way
 	// and a test can say what "newest" means.
 	At time.Time
+
+	// Source says how the title was produced: [SourceLLM] for one a model
+	// wrote, [SourceTemplate] for a commute or errand name that came from
+	// configuration.
+	//
+	// Recorded because the two are not interchangeable to a reader of the
+	// history. This athlete commutes, so a working week fills the newest
+	// entries with two repeated strings — which would crowd the real titles
+	// out of "never repeat these" and teach a model that a Saturday gravel
+	// ride should be called "Zur Arbeit".
+	Source string
 }
+
+// How a recorded title was produced.
+const (
+	SourceLLM      = "llm"
+	SourceTemplate = "template"
+)
 
 // NamedTitle is one entry of the title history.
 type NamedTitle struct {
 	ActivityID int64
 	Title      string
 	Language   string
+	Source     string
 	NamedAt    time.Time
 }
