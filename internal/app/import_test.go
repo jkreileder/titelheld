@@ -196,6 +196,8 @@ func TestImportAgainstTheEmulator(t *testing.T) {
 	// A database of its own, so a parallel run of anything else cannot see it.
 	project := "titelheld-import-test"
 
+	// Overrides only; env supplies the Strava client credentials LoadImport
+	// requires, along with the rest of a complete environment.
 	getenv := env(map[string]string{
 		"FIRESTORE_PROJECT":  project,
 		"FIRESTORE_DATABASE": "(default)",
