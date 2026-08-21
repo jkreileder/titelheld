@@ -332,7 +332,7 @@ returned a truncated fragment, and stopped at `MAX_TOKENS`. The provider therefo
 
 | Route                    | Purpose                                                     |
 | ------------------------ | ----------------------------------------------------------- |
-| `GET /healthz`           | Liveness check                                              |
+| `GET /health`            | Liveness check                                              |
 | `GET /auth`              | Starts the one-time authorization; redirects to Strava      |
 | `GET /auth/callback`     | Completes it, verifies the granted scopes, stores the token |
 | `GET /webhook/<secret>`  | Strava's subscription validation handshake                  |
