@@ -44,6 +44,11 @@ func Suite(t *testing.T, newStore Factory) {
 		"NamedLogKeyedByAthlete":     namedLogKeyedByAthlete,
 		"GeocodeCacheRoundTrip":      geocodeCacheRoundTrip,
 		"GeocodeCacheMissIsNotAnErr": geocodeCacheMissIsNotAnErr,
+		"FranchiseStartsAtZero":      franchiseStartsAtZero,
+		"FranchiseAdvances":          franchiseAdvances,
+		"FranchisesAreIndependent":   franchisesAreIndependent,
+		"FranchiseKeyedByAthlete":    franchiseKeyedByAthlete,
+		"FranchiseNamesAreArbitrary": franchiseNamesAreArbitrary,
 	}
 
 	for name, run := range tests {
@@ -347,4 +352,139 @@ func ids(pending []store.Pending) []int64 {
 	}
 
 	return out
+}
+
+// An unused franchise, and one that no longer exists in configuration, both
+// answer zero. Removing a franchise from config should stop it being
+// consulted, not start producing errors.
+func franchiseStartsAtZero(t *testing.T, s store.Store) {
+	t.Helper()
+
+	position, err := s.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 0 {
+		t.Errorf("position = %d, want 0 for a franchise never used", position)
+	}
+
+	if _, err := s.FranchisePosition(t.Context(), 4242, "a-franchise-that-was-removed"); err != nil {
+		t.Errorf("FranchisePosition for an unknown franchise = %v, want no error", err)
+	}
+}
+
+// The store decides the next number, so two callers cannot land on the same
+// position and reuse a title.
+func franchiseAdvances(t *testing.T, s store.Store) {
+	t.Helper()
+
+	for want := 1; want <= 3; want++ {
+		got, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther")
+		if err != nil {
+			t.Fatalf("AdvanceFranchise: %v", err)
+		}
+
+		if got != want {
+			t.Fatalf("AdvanceFranchise returned %d, want %d", got, want)
+		}
+	}
+
+	position, err := s.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 3 {
+		t.Errorf("position after three advances = %d, want 3", position)
+	}
+}
+
+// Two franchises for one athlete are separate series.
+func franchisesAreIndependent(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if _, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
+		t.Fatalf("AdvanceFranchise: %v", err)
+	}
+
+	other, err := s.FranchisePosition(t.Context(), 4242, "bond")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if other != 0 {
+		t.Errorf("advancing one franchise moved another: %d", other)
+	}
+}
+
+// Everything here is keyed by athlete, so a second athlete walks the same
+// series from the start.
+func franchiseKeyedByAthlete(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if _, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
+		t.Fatalf("AdvanceFranchise: %v", err)
+	}
+
+	other, err := s.FranchisePosition(t.Context(), 9999, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if other != 0 {
+		t.Errorf("another athlete inherited a franchise position: %d", other)
+	}
+}
+
+// A franchise name is configuration, so it is whatever a person typed.
+//
+// The one this service ships with is "Pink Panther": a space, which is not a
+// character every backing store can put in a key. Names must not need
+// sanitizing by the caller, and two different names must never share a
+// position — that would hand out the same title twice.
+func franchiseNamesAreArbitrary(t *testing.T, s store.Store) {
+	t.Helper()
+
+	names := []string{
+		"Pink Panther",
+		"Herr der Ringe / LOTR",
+		"__proto__",
+		"..",
+		"Ocean's Eleven",
+		"Über-Runde",
+	}
+
+	for _, name := range names {
+		position, err := s.AdvanceFranchise(t.Context(), 4242, name)
+		if err != nil {
+			t.Fatalf("AdvanceFranchise(%q): %v", name, err)
+		}
+
+		if position != 1 {
+			t.Errorf("AdvanceFranchise(%q) = %d, want 1", name, position)
+		}
+	}
+
+	// Advancing one must not move any of the others.
+	if _, err := s.AdvanceFranchise(t.Context(), 4242, names[0]); err != nil {
+		t.Fatalf("second AdvanceFranchise: %v", err)
+	}
+
+	for index, name := range names {
+		want := 1
+		if index == 0 {
+			want = 2
+		}
+
+		got, err := s.FranchisePosition(t.Context(), 4242, name)
+		if err != nil {
+			t.Fatalf("FranchisePosition(%q): %v", name, err)
+		}
+
+		if got != want {
+			t.Errorf("FranchisePosition(%q) = %d, want %d: two names share a position",
+				name, got, want)
+		}
+	}
 }

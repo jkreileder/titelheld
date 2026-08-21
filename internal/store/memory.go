@@ -26,6 +26,16 @@ type Memory struct {
 	pending map[key]Pending
 	named   map[key]string
 	places  map[string]Place
+
+	// franchises is keyed by athlete and franchise name, so two athletes walk
+	// the same series independently.
+	franchises map[franchiseKey]int
+}
+
+// franchiseKey identifies one athlete's position in one franchise.
+type franchiseKey struct {
+	athleteID int64
+	franchise string
 }
 
 type key struct {
@@ -36,10 +46,11 @@ type key struct {
 // NewMemory returns an empty in-memory store.
 func NewMemory() *Memory {
 	return &Memory{
-		tokens:  make(map[int64]strava.Token),
-		pending: make(map[key]Pending),
-		named:   make(map[key]string),
-		places:  make(map[string]Place),
+		tokens:     make(map[int64]strava.Token),
+		pending:    make(map[key]Pending),
+		named:      make(map[key]string),
+		places:     make(map[string]Place),
+		franchises: make(map[franchiseKey]int),
 	}
 }
 
@@ -199,4 +210,23 @@ func (m *Memory) SavePlace(_ context.Context, key string, place Place) error {
 	m.places[key] = place
 
 	return nil
+}
+
+// FranchisePosition returns how many entries of the franchise are used.
+func (m *Memory) FranchisePosition(_ context.Context, athleteID int64, franchise string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.franchises[franchiseKey{athleteID: athleteID, franchise: franchise}], nil
+}
+
+// AdvanceFranchise moves one entry along and returns the new position.
+func (m *Memory) AdvanceFranchise(_ context.Context, athleteID int64, franchise string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	k := franchiseKey{athleteID: athleteID, franchise: franchise}
+	m.franchises[k]++
+
+	return m.franchises[k], nil
 }

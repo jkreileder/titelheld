@@ -218,6 +218,14 @@ func TestEveryMethodReportsAFailedClient(t *testing.T) {
 		"Named":     func() error { _, _, err := firestoreStore.Named(ctx, 1, 2); return err },
 		"Place":     func() error { _, _, err := firestoreStore.Place(ctx, "k"); return err },
 		"SavePlace": func() error { return firestoreStore.SavePlace(ctx, "k", store.Place{Name: "n"}) },
+		"FranchisePosition": func() error {
+			_, err := firestoreStore.FranchisePosition(ctx, 1, "pink-panther")
+			return err
+		},
+		"AdvanceFranchise": func() error {
+			_, err := firestoreStore.AdvanceFranchise(ctx, 1, "pink-panther")
+			return err
+		},
 	}
 
 	for name, call := range checks {
@@ -258,6 +266,15 @@ func TestCorruptDocumentsAreReported(t *testing.T) {
 		t.Fatalf("seed corrupt named entry: %v", err)
 	}
 
+	// position is an int in the schema. A franchise position that cannot be
+	// read must not decode as zero: zero means "not started", so the athlete
+	// would be sent back to the first title of the series and every entry
+	// already used would be handed out a second time.
+	if _, err := raw.Collection(collectionPrefix+fsstore.CollectionFranchise).
+		Doc("1-pink-panther").Set(t.Context(), map[string]any{"position": "not-a-number"}); err != nil {
+		t.Fatalf("seed corrupt franchise position: %v", err)
+	}
+
 	firestoreStore, err := fsstore.New(t.Context(), fsstore.Config{
 		ProjectID: testProject,
 		Prefix:    collectionPrefix,
@@ -276,6 +293,16 @@ func TestCorruptDocumentsAreReported(t *testing.T) {
 	}
 	if _, err := firestoreStore.AnyToken(t.Context()); err == nil {
 		t.Error("AnyToken over a corrupt token = nil error, want a decode failure")
+	}
+
+	if _, err := firestoreStore.FranchisePosition(t.Context(), 1, "pink-panther"); err == nil {
+		t.Error("FranchisePosition on a corrupt document = nil error, want a decode failure")
+	}
+
+	// The same document read inside the transaction, so the decode failure
+	// there is reported rather than starting the series again.
+	if _, err := firestoreStore.AdvanceFranchise(t.Context(), 1, "pink-panther"); err == nil {
+		t.Error("AdvanceFranchise on a corrupt document = nil error, want a decode failure")
 	}
 }
 
@@ -304,6 +331,68 @@ func TestReservedDocumentIDFormIsEscaped(t *testing.T) {
 
 		if want := "Musterdorf" + strconv.Itoa(i); cached.Name != want {
 			t.Errorf("Place(%q).Name = %q, want %q", key, cached.Name, want)
+		}
+	}
+}
+
+// A franchise name is configuration, so it may be anything a person types.
+//
+// The one this service ships with is "Pink Panther" — a space, which the safe
+// document-ID set rejects. A name containing "/" would not be a document ID at
+// all but a path with the wrong number of segments. Both have to work, and two
+// different franchises must never land on one document: sharing a position
+// would hand out the same title twice.
+func TestFranchiseNamesThatAreNotValidDocumentIDs(t *testing.T) {
+	requireEmulator(t)
+
+	firestoreStore := newStore(t)
+
+	names := []string{
+		"Pink Panther",
+		"Herr der Ringe / LOTR",
+		"__proto__",
+		"..",
+		".",
+		"Ocean's Eleven",
+		"Über-Runde",
+		strings.Repeat("long", 500),
+	}
+
+	positions := make(map[string]int, len(names))
+
+	for _, name := range names {
+		position, err := firestoreStore.AdvanceFranchise(t.Context(), 1, name)
+		if err != nil {
+			t.Fatalf("AdvanceFranchise(%q): %v", name, err)
+		}
+
+		if position != 1 {
+			t.Errorf("AdvanceFranchise(%q) = %d, want 1", name, position)
+		}
+
+		positions[name] = position
+	}
+
+	// Advance one of them again. If any two names collided, another franchise
+	// would see this increment.
+	if _, err := firestoreStore.AdvanceFranchise(t.Context(), 1, names[0]); err != nil {
+		t.Fatalf("second AdvanceFranchise: %v", err)
+	}
+
+	for _, name := range names {
+		got, err := firestoreStore.FranchisePosition(t.Context(), 1, name)
+		if err != nil {
+			t.Fatalf("FranchisePosition(%q): %v", name, err)
+		}
+
+		want := positions[name]
+		if name == names[0] {
+			want = 2
+		}
+
+		if got != want {
+			t.Errorf("FranchisePosition(%q) = %d, want %d: two names share a document",
+				name, got, want)
 		}
 	}
 }
