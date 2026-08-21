@@ -132,9 +132,12 @@ Scheduler job is deliberately paused, and the title history is seeded by
   declined the replay rather than the named log; a tolerance test whose uniform
   offset happened not to cross a cell boundary; an index guard that accepted
   `athlete_id` descending; a trailing-data check defeated by padding to the byte
-  cap. Assert against the thing itself, never a stand-in you control — the
-  emulator serves queries no index exists for, and `make lint` is not the
-  binary CI runs.
+  cap. Assert against the thing itself, never a stand-in you control: the
+  Firestore emulator serves queries no composite index exists for, so a wrong
+  index declaration passes every test here and fails only in production. Where
+  a stand-in is unavoidable, check what actually keeps it honest — `make lint`
+  and CI run the same golangci-lint version because a comment in the workflow
+  says to keep them in step, which is a convention and not a mechanism.
 
 - **Dry run is the safe zero value.** `strava.WriteMode` and
   `config.Config.WritesEnabled` are both written so that an unset or
