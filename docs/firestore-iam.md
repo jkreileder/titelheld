@@ -14,7 +14,7 @@ it does not.
 
 ## What is stored
 
-Five collections, and nothing else. Adding a sixth means changing this document.
+Six collections, and nothing else. Adding a seventh means changing this document.
 
 | Collection  | Document ID               | Contents                                         | Re-derivable?           |
 | ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
@@ -23,6 +23,7 @@ Five collections, and nothing else. Adding a sixth means changing this document.
 | `named`     | `{athleteID}-{activity}`  | Title written, its language and source, and when | Mostly, from Strava     |
 | `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
 | `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
+| `config`    | `{athleteID}`             | The athlete's configuration: franchise series    | **No** — hand-written   |
 
 `franchise` stores an integer, never the titles: the series is configuration, so renaming or
 reordering one must not require migrating anything here. It is re-derivable only by matching past
@@ -33,10 +34,20 @@ costs a repeated or skipped entry, not a wrong write.
 produced it. Neither is re-derivable: re-reading an activity returns the title but never says
 which language was chosen for it, or which tier named it.
 
-Only `tokens` genuinely has to survive. Strava rotates the refresh token on every refresh and
-invalidates the previous one immediately, so losing that document means re-running the
-authorization flow by hand. The other four are a work queue, two caches, and franchise
-position state.
+Two collections genuinely have to survive, and they fail differently.
+
+`tokens` is the one that cannot be replaced at all without a person: Strava rotates the refresh
+token on every refresh and invalidates the previous one immediately, so losing it means
+re-running the authorization flow by hand.
+
+`config` is the other. It is not *derived* from anything — nobody computed it, somebody typed
+it — so no amount of replaying the Strava API brings it back. Losing it is not an outage: the
+service falls back to its shipped defaults and keeps naming, with the athlete's franchises
+simply not applying until the document is written again. That is the whole reason configuration
+is data: a series lives in a document that can be edited without a release, and the cost of
+that is a document that has to be backed up by being written down somewhere.
+
+The other four are a work queue, two caches, and franchise position state.
 
 Location data is minimized, not absent. No coordinate is stored as a *field*: `geocache`
 documents hold place names only. The coordinate that produced a place does survive as the

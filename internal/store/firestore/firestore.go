@@ -36,6 +36,7 @@ const (
 	CollectionNamed     = "named"
 	CollectionGeocache  = "geocache"
 	CollectionFranchise = "franchise"
+	CollectionConfig    = "config"
 )
 
 // Store implements [store.Store] on Firestore.
@@ -597,4 +598,83 @@ func (s *Store) AdvanceFranchise(ctx context.Context, athleteID int64, franchise
 	}
 
 	return position, nil
+}
+
+// configDoc is the per-athlete configuration document.
+//
+// The stored shape is this package's, not the naming layer's, so a change to
+// how a franchise is represented in code is a deliberate decision here rather
+// than a silent schema change on disk.
+type configDoc struct {
+	AthleteID  int64            `firestore:"athlete_id"`
+	Franchises []franchiseEntry `firestore:"franchises"`
+	UpdatedAt  time.Time        `firestore:"updated_at"`
+}
+
+type franchiseEntry struct {
+	Name       string   `firestore:"name"`
+	SportTypes []string `firestore:"sport_types"`
+	GearName   string   `firestore:"gear_name"`
+	Titles     []string `firestore:"titles"`
+}
+
+// AthleteConfig returns the athlete's configuration document.
+func (s *Store) AthleteConfig(
+	ctx context.Context, athleteID int64,
+) (store.AthleteConfig, bool, error) {
+	snapshot, err := s.collection(CollectionConfig).
+		Doc(strconv.FormatInt(athleteID, 10)).Get(ctx)
+	if err != nil {
+		if notFound(err) {
+			return store.AthleteConfig{}, false, nil
+		}
+
+		return store.AthleteConfig{}, false, fmt.Errorf("firestore: read athlete config: %w", err)
+	}
+
+	var doc configDoc
+	if err := snapshot.DataTo(&doc); err != nil {
+		return store.AthleteConfig{}, false, fmt.Errorf("firestore: decode athlete config: %w", err)
+	}
+
+	franchises := make([]store.Franchise, 0, len(doc.Franchises))
+	for _, entry := range doc.Franchises {
+		franchises = append(franchises, store.Franchise{
+			Name:       entry.Name,
+			SportTypes: entry.SportTypes,
+			GearName:   entry.GearName,
+			Titles:     entry.Titles,
+		})
+	}
+
+	return store.AthleteConfig{Franchises: franchises}, true, nil
+}
+
+// SaveAthleteConfig replaces the document.
+func (s *Store) SaveAthleteConfig(
+	ctx context.Context, athleteID int64, config store.AthleteConfig,
+) error {
+	entries := make([]franchiseEntry, 0, len(config.Franchises))
+	for _, franchise := range config.Franchises {
+		entries = append(entries, franchiseEntry{
+			Name:       franchise.Name,
+			SportTypes: franchise.SportTypes,
+			GearName:   franchise.GearName,
+			Titles:     franchise.Titles,
+		})
+	}
+
+	doc := configDoc{
+		AthleteID:  athleteID,
+		Franchises: entries,
+		UpdatedAt:  time.Now().UTC(),
+	}
+
+	_, err := s.collection(CollectionConfig).
+		Doc(strconv.FormatInt(athleteID, 10)).Set(ctx, doc)
+	if err != nil {
+		return fmt.Errorf("firestore: write athlete config: %w", err)
+	}
+
+	return nil
 }

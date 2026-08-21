@@ -108,6 +108,58 @@ type Store interface {
 	NamedLog
 	GeocodeCache
 	Franchises
+	AthleteConfigs
+}
+
+// AthleteConfigs holds the per-athlete configuration document.
+//
+// The one collection besides the tokens that is not re-derivable from Strava:
+// it is written by a person, not computed from anything, so losing it means
+// typing it again rather than replaying an API.
+//
+// It exists so that configuration is data. A franchise added here needs no
+// release, which is the whole distinction the spec draws between a series of
+// titles and the code that walks it.
+type AthleteConfigs interface {
+	// AthleteConfig returns the athlete's configuration, and whether one has
+	// been written. An athlete with no document is not an error: the caller
+	// uses its own defaults, which is what every deployment starts with.
+	AthleteConfig(ctx context.Context, athleteID int64) (AthleteConfig, bool, error)
+
+	// SaveAthleteConfig replaces the document.
+	SaveAthleteConfig(ctx context.Context, athleteID int64, config AthleteConfig) error
+}
+
+// AthleteConfig is the per-athlete configuration document.
+//
+// Only franchises for now. Tiers, geofences, banned words and language
+// preferences belong here too and still live in code; this is the collection
+// they move into, one at a time.
+type AthleteConfig struct {
+	// Franchises are ordered title series, in precedence order.
+	Franchises []Franchise
+}
+
+// Franchise is one ordered series as it is stored.
+//
+// Deliberately a persistence type rather than the naming package's, so the
+// stored schema is owned here and changing the naming layer's shape cannot
+// silently change what is on disk. The conversion is a few lines and lives
+// with the caller that needs it.
+type Franchise struct {
+	// Name keys the position and is never shown to a model. Renaming it
+	// starts the athlete at the first entry again.
+	Name string
+
+	// SportTypes the series applies to. Empty means any.
+	SportTypes []string
+
+	// GearName the series rides on, matched case-insensitively and in full.
+	// Empty means any bike.
+	GearName string
+
+	// Titles are the entries, in order.
+	Titles []string
 }
 
 // Franchises remembers how far along an ordered title series an athlete is.

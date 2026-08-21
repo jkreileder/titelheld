@@ -30,6 +30,9 @@ type Memory struct {
 	// franchises is keyed by athlete and franchise name, so two athletes walk
 	// the same series independently.
 	franchises map[franchiseKey]int
+
+	// configs holds the per-athlete configuration document.
+	configs map[int64]AthleteConfig
 }
 
 // franchiseKey identifies one athlete's position in one franchise.
@@ -51,6 +54,7 @@ func NewMemory() *Memory {
 		named:      make(map[key]NamedTitle),
 		places:     make(map[string]Place),
 		franchises: make(map[franchiseKey]int),
+		configs:    make(map[int64]AthleteConfig),
 	}
 }
 
@@ -272,4 +276,44 @@ func (m *Memory) AdvanceFranchise(_ context.Context, athleteID int64, franchise 
 	m.franchises[k]++
 
 	return m.franchises[k], nil
+}
+
+// AthleteConfig returns the athlete's configuration document.
+func (m *Memory) AthleteConfig(_ context.Context, athleteID int64) (AthleteConfig, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	config, ok := m.configs[athleteID]
+	if !ok {
+		return AthleteConfig{}, false, nil
+	}
+
+	return cloneConfig(config), true, nil
+}
+
+// SaveAthleteConfig replaces the document.
+func (m *Memory) SaveAthleteConfig(_ context.Context, athleteID int64, config AthleteConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.configs[athleteID] = cloneConfig(config)
+
+	return nil
+}
+
+// cloneConfig copies the slices, so a caller holding the value it stored
+// cannot reach into the store and change it afterwards. The Firestore
+// implementation gives back a fresh decode every time; this makes the
+// in-memory one behave the same, which is what the conformance suite asserts
+// against both.
+func cloneConfig(config AthleteConfig) AthleteConfig {
+	franchises := make([]Franchise, len(config.Franchises))
+
+	for index, franchise := range config.Franchises {
+		franchise.SportTypes = slices.Clone(franchise.SportTypes)
+		franchise.Titles = slices.Clone(franchise.Titles)
+		franchises[index] = franchise
+	}
+
+	return AthleteConfig{Franchises: franchises}
 }
