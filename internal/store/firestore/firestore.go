@@ -306,24 +306,76 @@ type namedDoc struct {
 	AthleteID  int64     `firestore:"athlete_id"`
 	ActivityID int64     `firestore:"activity_id"`
 	Title      string    `firestore:"title"`
+	Language   string    `firestore:"language"`
+	Source     string    `firestore:"source"`
 	NamedAt    time.Time `firestore:"named_at"`
 }
 
 // MarkNamed implements [store.NamedLog].
-func (s *Store) MarkNamed(ctx context.Context, athleteID, activityID int64, title string) error {
+func (s *Store) MarkNamed(ctx context.Context, naming store.Naming) error {
 	doc := namedDoc{
-		AthleteID:  athleteID,
-		ActivityID: activityID,
-		Title:      title,
-		NamedAt:    time.Now().UTC(),
+		AthleteID:  naming.AthleteID,
+		ActivityID: naming.ActivityID,
+		Title:      naming.Title,
+		Language:   naming.Language,
+		Source:     naming.Source,
+		NamedAt:    naming.At.UTC(),
 	}
 
-	_, err := s.collection(CollectionNamed).Doc(activityKey(athleteID, activityID)).Set(ctx, doc)
+	_, err := s.collection(CollectionNamed).
+		Doc(activityKey(naming.AthleteID, naming.ActivityID)).Set(ctx, doc)
 	if err != nil {
 		return fmt.Errorf("firestore: mark named: %w", err)
 	}
 
 	return nil
+}
+
+// RecentTitles returns the newest titles first.
+//
+// This is the one query in this package that needs a composite index: an
+// equality on athlete_id with an ordering on named_at. Terraform declares it,
+// and the deploy order in the README puts the apply before the sweep is
+// unpaused, because a missing index is a runtime error on every naming rather
+// than something that degrades quietly.
+//
+// The emulator will not tell you if the index is wrong. It serves any query
+// without one, so a mismatch between the declaration and this query passes
+// every test here and fails only in production.
+func (s *Store) RecentTitles(
+	ctx context.Context, athleteID int64, limit int,
+) ([]store.NamedTitle, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	snapshots, err := s.collection(CollectionNamed).
+		Where("athlete_id", "==", athleteID).
+		OrderBy("named_at", firestore.Desc).
+		Limit(limit).
+		Documents(ctx).GetAll()
+	if err != nil {
+		return nil, fmt.Errorf("firestore: read recent titles: %w", err)
+	}
+
+	titles := make([]store.NamedTitle, 0, len(snapshots))
+
+	for _, snapshot := range snapshots {
+		var doc namedDoc
+		if err := snapshot.DataTo(&doc); err != nil {
+			return nil, fmt.Errorf("firestore: decode recent title: %w", err)
+		}
+
+		titles = append(titles, store.NamedTitle{
+			ActivityID: doc.ActivityID,
+			Title:      doc.Title,
+			Language:   doc.Language,
+			Source:     doc.Source,
+			NamedAt:    doc.NamedAt.UTC(),
+		})
+	}
+
+	return titles, nil
 }
 
 // Named implements [store.NamedLog].

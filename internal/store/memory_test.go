@@ -264,7 +264,10 @@ func TestNamedLog(t *testing.T) {
 		t.Errorf("Named on an empty log = %q, %v", title, named)
 	}
 
-	if err := memory.MarkNamed(t.Context(), 1, 5, "The Pink Panther Strikes Again"); err != nil {
+	if err := memory.MarkNamed(t.Context(), Naming{
+		AthleteID: 1, ActivityID: 5,
+		Title: "The Pink Panther Strikes Again", At: time.Now(),
+	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 
@@ -297,7 +300,9 @@ func TestMemoryIsSafeForConcurrentUse(t *testing.T) {
 				id := int64(worker*50 + i)
 
 				_, _ = memory.Enqueue(t.Context(), Pending{AthleteID: 1, ActivityID: id})
-				_ = memory.MarkNamed(t.Context(), 1, id, "title")
+				_ = memory.MarkNamed(t.Context(), Naming{
+					AthleteID: 1, ActivityID: id, Title: "title", At: time.Now(),
+				})
 				_, _, _ = memory.Named(t.Context(), 1, id)
 				_, _ = memory.Due(t.Context(), testNow)
 				_ = memory.Save(t.Context(), strava.Token{AthleteID: 1})

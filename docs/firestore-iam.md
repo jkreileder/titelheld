@@ -20,7 +20,7 @@ Five collections, and nothing else. Adding a sixth means changing this document.
 | ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
 | `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes   | **No**                  |
 | `pending`   | `{athleteID}-{activity}`  | Queued activity and its `process_after` deadline | Yes                     |
-| `named`     | `{athleteID}-{activity}`  | Title this service wrote, and when               | Yes, from Strava        |
+| `named`     | `{athleteID}-{activity}`  | Title written, its language and source, and when | Mostly, from Strava     |
 | `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
 | `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
 
@@ -28,6 +28,10 @@ Five collections, and nothing else. Adding a sixth means changing this document.
 reordering one must not require migrating anything here. It is re-derivable only by matching past
 titles against a series, which is why it is remembered rather than recomputed — and losing it
 costs a repeated or skipped entry, not a wrong write.
+
+`named` also stores the language each title was written in and whether a model or a template
+produced it. Neither is re-derivable: re-reading an activity returns the title but never says
+which language was chosen for it, or which tier named it.
 
 Only `tokens` genuinely has to survive. Strava rotates the refresh token on every refresh and
 invalidates the previous one immediately, so losing that document means re-running the
@@ -91,7 +95,7 @@ startup.
 - `roles/datastore.owner` — no creating or deleting databases.
 - Import and export (`datastore.databases.import` / `.export`) — no bulk extraction of the
   athlete's data.
-- Index administration — the queries here need no composite index, see below.
+- Index administration — Terraform declares the one composite index, see below.
 - Any other Google Cloud service beyond the two the naming pipeline needs. The runtime account
   also holds a Secret Manager accessor on five named secrets, and `roles/aiplatform.user` so it
   can call Gemini on Vertex AI — which is what lets Gemini be keyless, since the call
@@ -114,18 +118,35 @@ the only irreplaceable thing stored.
 
 ## Indexes
 
-None to create. The only non-trivial query is the sweep's due lookup:
+One, declared in Terraform and created by an apply. The runtime account still needs no index
+administration permission: it uses indexes, it does not manage them.
+
+The title history is the query that needs it:
+
+```text
+where athlete_id == N  order by named_at desc  limit 25
+```
+
+An equality on one field with an ordering on another is what a composite index is for, so
+`google_firestore_index.named_recent` declares `athlete_id` ascending, `named_at` descending.
+It must exist before the sweep runs: a missing index is not a slow query, it is an error on
+every naming. That is why the apply comes before the scheduler is unpaused.
+
+The sweep's due lookup needs nothing:
 
 ```text
 where process_after <= now  order by process_after asc
 ```
 
 The inequality and the ordering are on the same field, so Firestore serves it from the
-automatic single-field index. There is no composite index to create, and therefore no index
-administration permission to grant.
+automatic single-field index.
 
-`franchise` does not change that. It is addressed by document ID in both directions — read the
+`franchise` needs nothing either. It is addressed by document ID in both directions — read the
 position, or increment it in a transaction — so it runs no query at all.
+
+**The emulator will not tell you when this is wrong.** It serves any query without index
+definitions, so a mismatch between the Terraform declaration and the query in `RecentTitles`
+passes every test in this repository and fails only against the real database.
 
 ## Local and CI
 

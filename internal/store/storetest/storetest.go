@@ -8,6 +8,7 @@ package storetest
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -49,6 +50,9 @@ func Suite(t *testing.T, newStore Factory) {
 		"FranchisesAreIndependent":   franchisesAreIndependent,
 		"FranchiseKeyedByAthlete":    franchiseKeyedByAthlete,
 		"FranchiseNamesAreArbitrary": franchiseNamesAreArbitrary,
+		"RecentTitlesNewestFirst":    recentTitlesNewestFirst,
+		"RecentTitlesKeyedByAthlete": recentTitlesKeyedByAthlete,
+		"RecentTitlesBounded":        recentTitlesBounded,
 	}
 
 	for name, run := range tests {
@@ -292,7 +296,11 @@ func namedLogRoundTrip(t *testing.T, s store.Store) {
 		t.Fatalf("Named on an empty log = %v, %v", named, err)
 	}
 
-	if err := s.MarkNamed(t.Context(), 1, 5, "The Pink Panther Strikes Again"); err != nil {
+	if err := s.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 1, ActivityID: 5,
+		Title: "The Pink Panther Strikes Again", Language: "en",
+		Source: store.SourceLLM, At: Now,
+	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 
@@ -306,7 +314,9 @@ func namedLogRoundTrip(t *testing.T, s store.Store) {
 }
 
 func namedLogKeyedByAthlete(t *testing.T, s store.Store) {
-	if err := s.MarkNamed(t.Context(), 1, 5, "title"); err != nil {
+	if err := s.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 1, ActivityID: 5, Title: "title", At: Now,
+	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 
@@ -485,6 +495,107 @@ func franchiseNamesAreArbitrary(t *testing.T, s store.Store) {
 		if got != want {
 			t.Errorf("FranchisePosition(%q) = %d, want %d: two names share a position",
 				name, got, want)
+		}
+	}
+}
+
+// The title history reads newest first, which is the order the prompt wants:
+// the most recent titles are the ones a new one must not repeat.
+func recentTitlesNewestFirst(t *testing.T, s store.Store) {
+	t.Helper()
+
+	for index, title := range []string{"oldest", "middle", "newest"} {
+		if err := s.MarkNamed(t.Context(), store.Naming{
+			AthleteID:  7,
+			ActivityID: int64(100 + index),
+			Title:      title,
+			Language:   "de",
+			Source:     store.SourceLLM,
+			At:         Now.Add(time.Duration(index) * time.Hour),
+		}); err != nil {
+			t.Fatalf("MarkNamed(%q): %v", title, err)
+		}
+	}
+
+	titles, err := s.RecentTitles(t.Context(), 7, 10)
+	if err != nil {
+		t.Fatalf("RecentTitles: %v", err)
+	}
+
+	got := make([]string, 0, len(titles))
+	for _, entry := range titles {
+		got = append(got, entry.Title)
+	}
+
+	want := []string{"newest", "middle", "oldest"}
+	if !slices.Equal(got, want) {
+		t.Errorf("RecentTitles = %v, want %v", got, want)
+	}
+
+	// The language and the source round-trip. Neither can be recovered from
+	// Strava later, so losing them here loses them for good.
+	if len(titles) > 0 && titles[0].Language != "de" {
+		t.Errorf("language = %q, want %q", titles[0].Language, "de")
+	}
+
+	if len(titles) > 0 && titles[0].Source != store.SourceLLM {
+		t.Errorf("source = %q, want %q", titles[0].Source, store.SourceLLM)
+	}
+}
+
+// One athlete's history is not another's.
+func recentTitlesKeyedByAthlete(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if err := s.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 8, ActivityID: 200, Title: "theirs", At: Now,
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	titles, err := s.RecentTitles(t.Context(), 9, 10)
+	if err != nil {
+		t.Fatalf("RecentTitles: %v", err)
+	}
+
+	if len(titles) != 0 {
+		t.Errorf("RecentTitles for another athlete returned %d entries", len(titles))
+	}
+}
+
+// The limit is honored, and a limit of zero means nothing rather than
+// everything — an unbounded read grows with the athlete's riding.
+func recentTitlesBounded(t *testing.T, s store.Store) {
+	t.Helper()
+
+	for index := range 5 {
+		if err := s.MarkNamed(t.Context(), store.Naming{
+			AthleteID:  10,
+			ActivityID: int64(300 + index),
+			Title:      "title",
+			At:         Now.Add(time.Duration(index) * time.Minute),
+		}); err != nil {
+			t.Fatalf("MarkNamed: %v", err)
+		}
+	}
+
+	titles, err := s.RecentTitles(t.Context(), 10, 2)
+	if err != nil {
+		t.Fatalf("RecentTitles: %v", err)
+	}
+
+	if len(titles) != 2 {
+		t.Errorf("RecentTitles(limit 2) returned %d entries", len(titles))
+	}
+
+	for _, limit := range []int{0, -1} {
+		titles, err := s.RecentTitles(t.Context(), 10, limit)
+		if err != nil {
+			t.Fatalf("RecentTitles(limit %d): %v", limit, err)
+		}
+
+		if len(titles) != 0 {
+			t.Errorf("RecentTitles(limit %d) returned %d entries, want none", limit, len(titles))
 		}
 	}
 }

@@ -146,9 +146,68 @@ type Franchises interface {
 // rather than treated as a human retitling the activity.
 type NamedLog interface {
 	// MarkNamed records that an activity was given a title by this service.
-	MarkNamed(ctx context.Context, athleteID, activityID int64, title string) error
+	MarkNamed(ctx context.Context, naming Naming) error
 
 	// Named reports whether the activity has already been named, and with what
 	// title.
 	Named(ctx context.Context, athleteID, activityID int64) (string, bool, error)
+
+	// RecentTitles returns the titles most recently written for an athlete,
+	// newest first, at most limit of them.
+	//
+	// The prompt carries these so the model does not repeat itself and can
+	// refer back. A limit of zero or less returns nothing rather than
+	// everything, because an unbounded read of this collection grows with the
+	// athlete's riding and the only caller wants the last handful.
+	RecentTitles(ctx context.Context, athleteID int64, limit int) ([]NamedTitle, error)
+}
+
+// Naming is one title this service wrote.
+//
+// A struct rather than four positional arguments, two of which are int64s
+// meaning different things and two of which are strings meaning different
+// things. Swapping either pair compiles.
+type Naming struct {
+	AthleteID  int64
+	ActivityID int64
+
+	// Title is what was written.
+	Title string
+
+	// Language is the language it was written in, as the naming layer reported
+	// it. Stored because it cannot be recovered afterwards: re-reading the
+	// activity gives the title back but never says which language was chosen,
+	// and few-shot examples derived from history need it.
+	Language string
+
+	// At is when it was written. Supplied by the caller rather than stamped by
+	// the store, as [Pending] does, so both implementations order the same way
+	// and a test can say what "newest" means.
+	At time.Time
+
+	// Source says how the title was produced: [SourceLLM] for one a model
+	// wrote, [SourceTemplate] for a commute or errand name that came from
+	// configuration.
+	//
+	// Recorded because the two are not interchangeable to a reader of the
+	// history. This athlete commutes, so a working week fills the newest
+	// entries with two repeated strings — which would crowd the real titles
+	// out of "never repeat these" and teach a model that a Saturday gravel
+	// ride should be called "Zur Arbeit".
+	Source string
+}
+
+// How a recorded title was produced.
+const (
+	SourceLLM      = "llm"
+	SourceTemplate = "template"
+)
+
+// NamedTitle is one entry of the title history.
+type NamedTitle struct {
+	ActivityID int64
+	Title      string
+	Language   string
+	Source     string
+	NamedAt    time.Time
 }

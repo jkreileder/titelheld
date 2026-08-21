@@ -24,7 +24,7 @@ type Memory struct {
 	mu      sync.RWMutex
 	tokens  map[int64]strava.Token
 	pending map[key]Pending
-	named   map[key]string
+	named   map[key]NamedTitle
 	places  map[string]Place
 
 	// franchises is keyed by athlete and franchise name, so two athletes walk
@@ -48,7 +48,7 @@ func NewMemory() *Memory {
 	return &Memory{
 		tokens:     make(map[int64]strava.Token),
 		pending:    make(map[key]Pending),
-		named:      make(map[key]string),
+		named:      make(map[key]NamedTitle),
 		places:     make(map[string]Place),
 		franchises: make(map[franchiseKey]int),
 	}
@@ -173,13 +173,56 @@ func (m *Memory) Len(_ context.Context) (int, error) {
 }
 
 // MarkNamed implements [NamedLog].
-func (m *Memory) MarkNamed(_ context.Context, athleteID, activityID int64, title string) error {
+func (m *Memory) MarkNamed(_ context.Context, naming Naming) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.named[key{athleteID: athleteID, activityID: activityID}] = title
+	m.named[key{athleteID: naming.AthleteID, activityID: naming.ActivityID}] = NamedTitle{
+		ActivityID: naming.ActivityID,
+		Title:      naming.Title,
+		Language:   naming.Language,
+		Source:     naming.Source,
+		NamedAt:    naming.At.UTC(),
+	}
 
 	return nil
+}
+
+// RecentTitles returns the newest titles first.
+//
+// Ties on the timestamp break by activity ID, descending, so the order is
+// total rather than merely sorted. Two activities named in the same sweep
+// share a clock reading, and a test that could not say which came first would
+// be asserting on map iteration order.
+func (m *Memory) RecentTitles(_ context.Context, athleteID int64, limit int) ([]NamedTitle, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	titles := make([]NamedTitle, 0, len(m.named))
+
+	for id, entry := range m.named {
+		if id.athleteID == athleteID {
+			titles = append(titles, entry)
+		}
+	}
+
+	slices.SortFunc(titles, func(a, b NamedTitle) int {
+		if order := b.NamedAt.Compare(a.NamedAt); order != 0 {
+			return order
+		}
+
+		return cmp.Compare(b.ActivityID, a.ActivityID)
+	})
+
+	if len(titles) > limit {
+		titles = titles[:limit]
+	}
+
+	return titles, nil
 }
 
 // Named implements [NamedLog].
@@ -187,9 +230,9 @@ func (m *Memory) Named(_ context.Context, athleteID, activityID int64) (string, 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	title, ok := m.named[key{athleteID: athleteID, activityID: activityID}]
+	entry, ok := m.named[key{athleteID: athleteID, activityID: activityID}]
 
-	return title, ok, nil
+	return entry.Title, ok, nil
 }
 
 // Place implements [GeocodeCache].

@@ -211,10 +211,18 @@ func TestEveryMethodReportsAFailedClient(t *testing.T) {
 			_, err := firestoreStore.Enqueue(ctx, store.Pending{AthleteID: 1, ActivityID: 2})
 			return err
 		},
-		"Due":       func() error { _, err := firestoreStore.Due(ctx, storetest.Now); return err },
-		"Remove":    func() error { return firestoreStore.Remove(ctx, 1, 2) },
-		"Len":       func() error { _, err := firestoreStore.Len(ctx); return err },
-		"MarkNamed": func() error { return firestoreStore.MarkNamed(ctx, 1, 2, "t") },
+		"Due":    func() error { _, err := firestoreStore.Due(ctx, storetest.Now); return err },
+		"Remove": func() error { return firestoreStore.Remove(ctx, 1, 2) },
+		"Len":    func() error { _, err := firestoreStore.Len(ctx); return err },
+		"MarkNamed": func() error {
+			return firestoreStore.MarkNamed(ctx, store.Naming{
+				AthleteID: 1, ActivityID: 2, Title: "t", At: storetest.Now,
+			})
+		},
+		"RecentTitles": func() error {
+			_, err := firestoreStore.RecentTitles(ctx, 1, 5)
+			return err
+		},
 		"Named":     func() error { _, _, err := firestoreStore.Named(ctx, 1, 2); return err },
 		"Place":     func() error { _, _, err := firestoreStore.Place(ctx, "k"); return err },
 		"SavePlace": func() error { return firestoreStore.SavePlace(ctx, "k", store.Place{Name: "n"}) },
@@ -395,4 +403,116 @@ func TestFranchiseNamesThatAreNotValidDocumentIDs(t *testing.T) {
 				name, got, want)
 		}
 	}
+}
+
+// The declared index has to match the query, and nothing else checks that.
+//
+// The emulator serves any query without index definitions, so every test in
+// this package passes whether or not the Terraform declaration is right. The
+// mismatch shows up only against the real database, as an error on every
+// naming. Reading the declaration here turns "remember to eyeball it in
+// review" into something that fails a build.
+//
+// It asserts the shape the query needs — an equality on athlete_id with an
+// ordering on named_at descending — not the file's formatting.
+func TestTheDeclaredIndexMatchesTheRecentTitlesQuery(t *testing.T) {
+	t.Parallel()
+
+	const declaration = "../../../infra/firestore.tf"
+
+	raw, err := os.ReadFile(declaration)
+	if err != nil {
+		t.Fatalf("read the index declaration: %v", err)
+	}
+
+	terraform := string(raw)
+
+	block := strings.Index(terraform, `resource "google_firestore_index" "named_recent"`)
+	if block < 0 {
+		t.Fatal("no google_firestore_index.named_recent is declared; RecentTitles cannot run")
+	}
+
+	body := terraform[block:]
+	if end := strings.Index(body, "\nresource "); end > 0 {
+		body = body[:end]
+	}
+
+	// The collection the query runs against. Production sets no prefix, so the
+	// constant is the collection ID verbatim.
+	if want := `collection = "` + fsstore.CollectionNamed + `"`; !strings.Contains(body, want) {
+		t.Errorf("the index does not declare %s", want)
+	}
+
+	// Each field paired with its own order. Checking the two independently
+	// would pass a declaration of athlete_id descending and named_at
+	// ascending, which contains all four strings and is the wrong index.
+	blocks := fieldBlocks(body)
+
+	want := [][2]string{
+		{"athlete_id", "ASCENDING"},
+		{"named_at", "DESCENDING"},
+	}
+
+	if len(blocks) != len(want) {
+		t.Fatalf("the index declares %d fields, want %d: %v", len(blocks), len(want), blocks)
+	}
+
+	// Order matters too: a composite index is ordered, and athlete_id has to
+	// come first for an equality followed by a sort.
+	for index, pair := range want {
+		if blocks[index] != pair {
+			t.Errorf("field %d is %v, want %v", index, blocks[index], pair)
+		}
+	}
+}
+
+// fieldBlocks extracts each fields { field_path, order } pair, in order.
+func fieldBlocks(body string) [][2]string {
+	var pairs [][2]string
+
+	for rest := body; ; {
+		start := strings.Index(rest, "fields {")
+		if start < 0 {
+			return pairs
+		}
+
+		rest = rest[start+len("fields {"):]
+
+		end := strings.Index(rest, "}")
+		if end < 0 {
+			return pairs
+		}
+
+		block := rest[:end]
+		rest = rest[end:]
+
+		pairs = append(pairs, [2]string{
+			quoted(block, "field_path"),
+			quoted(block, "order"),
+		})
+	}
+}
+
+// quoted reads the quoted value of `name = "..."` from a block.
+func quoted(block, name string) string {
+	at := strings.Index(block, name)
+	if at < 0 {
+		return ""
+	}
+
+	rest := block[at:]
+
+	open := strings.Index(rest, `"`)
+	if open < 0 {
+		return ""
+	}
+
+	rest = rest[open+1:]
+
+	close := strings.Index(rest, `"`)
+	if close < 0 {
+		return ""
+	}
+
+	return rest[:close]
 }

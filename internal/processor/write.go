@@ -7,6 +7,7 @@ import (
 
 	"github.com/jkreileder/titelheld/internal/logsafe"
 	"github.com/jkreileder/titelheld/internal/naming"
+	"github.com/jkreileder/titelheld/internal/store"
 	"github.com/jkreileder/titelheld/internal/strava"
 )
 
@@ -50,7 +51,12 @@ func (p *Processor) write(
 	// activity reports, because that is the key the dedup read uses. Strava
 	// omitting athlete.id would otherwise file this under athlete 0, where the
 	// check that stops a second rename would never find it.
-	if err := p.deps.Store.MarkNamed(ctx, athleteID, activity.ID, title); err != nil {
+	if err := p.deps.Store.MarkNamed(ctx, store.Naming{
+		AthleteID:  athleteID,
+		ActivityID: activity.ID,
+		Title:      title,
+		At:         p.deps.Now(),
+	}); err != nil {
 		return false, fmt.Errorf("record the title before writing: %w", err)
 	}
 
