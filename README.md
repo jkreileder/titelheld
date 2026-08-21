@@ -11,10 +11,9 @@ everything that should stay boring untouched.
 > geocoding, the prompt builder and LLM providers, and the sweep that drains the queue and
 > writes the title. The infrastructure is applied and the service is deployed.
 >
-> Not built: the per-athlete configuration document, so the athlete's tiers, geofences, banned
-> words and franchise lists are still the shipped defaults; and the **Strava history import**,
-> which is what would give the title history something to work with before the first real
-> naming — see [What the prompt carries](#what-the-prompt-carries).
+> Not built: the athlete's tiers, geofences, banned words and language preferences, which still
+> ship as defaults in code and belong in the same configuration document franchises now live in;
+> and route repeats — see [What the prompt carries](#what-the-prompt-carries).
 >
 > **The scheduler is paused.** Nothing fires the sweep until it is unpaused by hand, which is
 > deliberate: the naming pipeline is reviewed end to end before it runs unattended.
@@ -566,11 +565,6 @@ To add one:
 **Still shipped in code:** the *default profile* — what applies until a document exists. Tiers,
 geofences, banned words and language preferences have not moved yet; they belong in this same
 document and will follow.
-**Still configuration-in-code.** The list lives in `internal/naming/franchise.go` rather than in
-a per-athlete configuration document, because that document is not built yet. Adding a
-franchise is therefore a code change today, which is the one thing "franchises are data" was
-meant to avoid. The shape is already right — the store holds a position and never a title — so
-what moves later is where the list is read from, not what is stored.
 
 ## Local development
 

@@ -105,16 +105,19 @@ type Processor struct {
 	examplesMu sync.Mutex
 	examples   map[int64]naming.Example
 
-	// franchiseCache holds the athlete's configured series, read once. A
-	// person edits configuration about as often as they name a bike, and a
-	// restart is what picks up an edit — the same trade the gear cache makes.
+	// franchiseCache holds each athlete's configured series, read once per
+	// athlete. A person edits configuration about as often as they name a
+	// bike, and a restart is what picks up an edit — the same trade the gear
+	// cache makes.
 	//
-	// franchiseLoaded is separate from the slice being nil, because "no
-	// franchises configured" is a real answer and must not be retried on
-	// every activity.
-	franchiseMu     sync.Mutex
-	franchiseCache  []naming.Franchise
-	franchiseLoaded bool
+	// Keyed by athlete because everything here is: one process serves one
+	// athlete today, and a cache that is not keyed would hand the first
+	// athlete's franchises to the second the day that stops being true. The
+	// map holds the answer including "none configured", which is a real
+	// answer and must not be re-read on every activity — so presence in the
+	// map is the loaded flag, and a nil value is a legitimate entry.
+	franchiseMu    sync.Mutex
+	franchiseCache map[int64][]naming.Franchise
 }
 
 // New builds a processor.
@@ -135,9 +138,10 @@ func New(deps Deps) (*Processor, error) {
 	}
 
 	return &Processor{
-		deps:     deps,
-		gear:     make(map[string]string),
-		examples: make(map[int64]naming.Example),
+		deps:           deps,
+		gear:           make(map[string]string),
+		examples:       make(map[int64]naming.Example),
+		franchiseCache: make(map[int64][]naming.Franchise),
 	}, nil
 }
 

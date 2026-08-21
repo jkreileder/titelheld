@@ -154,32 +154,40 @@ func (p *Processor) franchises(
 	p.franchiseMu.Lock()
 	defer p.franchiseMu.Unlock()
 
-	if p.franchiseLoaded {
-		return p.franchiseCache
+	if cached, ok := p.franchiseCache[athleteID]; ok {
+		return cached
 	}
-
-	p.franchiseCache = naming.DefaultProfile()
-	p.franchiseLoaded = true
 
 	config, ok, err := p.deps.Store.AthleteConfig(ctx, athleteID)
 	if err != nil {
-		logger.Error("could not read the athlete configuration; using the default profile",
+		// Not cached. Answering from the default profile is the right thing to
+		// do for this ride, and the wrong thing to keep doing: if the athlete
+		// removed or renamed a series, every later ride in the process would
+		// still be offered it, and AdvanceFranchise would durably count a
+		// position the configuration no longer names. A repeated read is
+		// cheap; a wrong write is not.
+		logger.Error("could not read the athlete configuration; naming this ride from the default profile",
 			"error", err)
 
-		return p.franchiseCache
+		return naming.DefaultProfile()
 	}
 
-	if !ok {
+	// A successful read is remembered, including "no document" — that is a
+	// real answer, and re-reading it on every activity would be a request per
+	// ride to learn the same thing.
+	resolved := naming.DefaultProfile()
+
+	if ok {
+		resolved = fromStored(config.Franchises)
+
+		logger.Info("loaded the athlete configuration", "franchises", len(resolved))
+	} else {
 		logger.Info("no athlete configuration; using the default franchise profile")
-
-		return p.franchiseCache
 	}
 
-	p.franchiseCache = fromStored(config.Franchises)
+	p.franchiseCache[athleteID] = resolved
 
-	logger.Info("loaded the athlete configuration", "franchises", len(p.franchiseCache))
-
-	return p.franchiseCache
+	return resolved
 }
 
 // fromStored converts the persisted shape into the one with behavior.
@@ -191,10 +199,20 @@ func fromStored(stored []store.Franchise) []naming.Franchise {
 	franchises := make([]naming.Franchise, 0, len(stored))
 
 	for _, entry := range stored {
+		// Typed by a person into a document now, not written as a Go literal.
+		// A trailing space on the gear name would make the series silently
+		// inapplicable forever, and an empty name is not a key: the position
+		// would be stored under an empty document ID, which is an error on
+		// every ride the series matches.
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+
 		franchises = append(franchises, naming.Franchise{
-			Name:       entry.Name,
+			Name:       name,
 			SportTypes: entry.SportTypes,
-			GearName:   entry.GearName,
+			GearName:   strings.TrimSpace(entry.GearName),
 			Titles:     entry.Titles,
 		})
 	}

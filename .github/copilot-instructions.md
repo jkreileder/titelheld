@@ -93,12 +93,14 @@ vertex count between rides), so it was removed rather than shipped inert. A
 replacement is designed and also unbuilt - comparing sets of visited cells by
 similarity - so no title can carry a route callback today.
 
-Not built yet: the per-athlete configuration document, so tiers, geofences,
-banned words and franchise lists are still shipped defaults in code; and the
-Strava history import, which is what would give the title history and the
-derived examples anything to work with before the first real naming. No Strava
-push subscription has been created, and the Cloud Scheduler job is
-deliberately paused.
+Franchises live in the per-athlete `config` document. Tiers, geofences, banned
+words and language preferences still ship as defaults in code and belong in
+that same document. What ships in code for franchises is the default profile:
+what applies until a document exists.
+
+Not built yet: route repeats, and the Strava push subscription. The Cloud
+Scheduler job is deliberately paused, and the title history is seeded by
+`cmd/titelheld-import` rather than accumulating on its own.
 
 ## Design Rules That Are Not Negotiable
 

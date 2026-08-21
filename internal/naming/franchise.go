@@ -39,7 +39,11 @@ func (f Franchise) Next(position int) (string, bool) {
 
 // Applies reports whether a ride belongs to this franchise.
 func (f Franchise) Applies(sportType, gearName string) bool {
-	if f.GearName != "" && !strings.EqualFold(strings.TrimSpace(gearName), f.GearName) {
+	// Both sides trimmed: the configured name is typed into a document, and a
+	// trailing space there would make the series match nothing with no log
+	// line to say why.
+	configured := strings.TrimSpace(f.GearName)
+	if configured != "" && !strings.EqualFold(strings.TrimSpace(gearName), configured) {
 		return false
 	}
 
