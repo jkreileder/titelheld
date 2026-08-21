@@ -551,7 +551,7 @@ The document's shape:
 franchise wins, so order is precedence. A franchise with no `name` is discarded: the name keys
 the stored position, and an empty one would store it under an empty document ID.
 
-Three states, and they are not the same:
+Four states, and they are not the same:
 
 | The document | What applies |
 | --- | --- |
@@ -569,15 +569,17 @@ To add one:
 
 1. Pick a `name` that will not change. It keys the stored position, so renaming it sends the
    athlete back to the first title.
-2. Add the entry to the document, in the Firestore console or with `gcloud firestore documents`.
-   The service reads the document once per process, so a running instance picks the change up on
-   its next cold start — which, scaling to zero, is the next sweep.
+2. Add the entry to the document, in the Firestore console or through the REST API — `gcloud`
+   has no command for editing documents, only for import, export and bulk delete. The service
+   reads the document once per process, so a running instance picks the change up on its next
+   cold start — which, scaling to zero, is the next sweep.
 3. **If some entries have already been used by hand**, either leave those titles out of `titles`
    (what the shipped Pink Panther profile does — the three films already used are simply absent),
    or seed the position. The position lives in `franchise/{athleteID}-{name}` as a single
    `position` integer, and setting it to the number already used is the whole of it.
 
-**Still shipped in code:** the *default profile* — what applies until a document exists. Tiers,
+**Still shipped in code:** the *default profile* — what applies when the document is absent or
+cannot be read. Tiers,
 geofences, banned words and language preferences have not moved yet; they belong in this same
 document and will follow.
 
