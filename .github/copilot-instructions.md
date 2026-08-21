@@ -73,16 +73,19 @@
   validator and are reported as it words them, with the audience that was
   required.
 
-The prompt carries three derived things beyond the ride: the last 25 titles,
-six few-shot examples rebuilt by re-reading past activities, and the next
-franchise entry when one applies. Only the title history is worth failing an
+The prompt carries three derived things beyond the ride: the last 25 titles a
+model wrote, six few-shot examples rebuilt by re-reading past activities, and
+the next franchise entry when one applies. Both title lists are filtered to
+model-written titles - a commute template is meant to repeat, and six of them
+would teach the model to name a gravel ride "Zur Arbeit". Only the title history is worth failing an
 activity for - the realistic cause is the composite index missing. Everything
 else degrades rather than blocking a title.
 
 Route repeats are specified and not built. Hashing a rounded polyline never
 matches a re-ride (0/50 under 5 m jitter; Strava's simplification changes the
-vertex count between rides), so it was removed rather than shipped inert. The
-replacement compares sets of visited cells by similarity.
+vertex count between rides), so it was removed rather than shipped inert. A
+replacement is designed and also unbuilt - comparing sets of visited cells by
+similarity - so no title can carry a route callback today.
 
 Not built yet: the per-athlete configuration document, so tiers, geofences,
 banned words and franchise lists are still shipped defaults in code; and the

@@ -23,17 +23,33 @@ const exampleCount = 6
 // backoff by the client.
 const maxExampleFailures = 2
 
+// gathered is the prompt context, plus what the caller has to remember about
+// how it was built.
+//
+// The franchise name travels with the entry it produced, so the series that
+// gets advanced is by construction the one the prompt was shown. Resolving it
+// twice would work today — the lookup is pure and the inputs are the same —
+// and would drift the moment either site's inputs or franchise list changed,
+// leaving the prompt offering one series while the store advanced another.
+type gathered struct {
+	Context naming.Context
+
+	// Franchise is the series the offered entry came from. Empty when none
+	// applied, which is also when Context.FranchiseNext is empty.
+	Franchise string
+}
+
 // promptContext gathers everything the prompt needs beyond the ride itself.
 //
-// The title history drives three of the four: the RECENT list, the few-shot
+// The title history drives two of the three: the RECENT list and the few-shot
 // examples derived from it, and nothing else uses it. A failure to read it is
 // a failure of the activity, not something to work around — see history.
 func (p *Processor) promptContext(
 	ctx context.Context, athleteID int64, ride naming.Ride, logger *slog.Logger,
-) (naming.Context, error) {
+) (gathered, error) {
 	history, err := p.history(ctx, athleteID)
 	if err != nil {
-		return naming.Context{}, err
+		return gathered{}, err
 	}
 
 	promptContext := naming.Context{
@@ -45,9 +61,10 @@ func (p *Processor) promptContext(
 		Examples:     p.examplesFrom(ctx, history, logger),
 	}
 
-	promptContext.FranchiseNext = p.franchiseNext(ctx, athleteID, ride, logger)
+	next, franchise := p.franchiseNext(ctx, athleteID, ride, logger)
+	promptContext.FranchiseNext = next
 
-	return promptContext, nil
+	return gathered{Context: promptContext, Franchise: franchise}, nil
 }
 
 // history reads the titles this service has written for an athlete.
@@ -75,17 +92,21 @@ func titlesOf(history []store.NamedTitle) []string {
 	return titles
 }
 
-// franchiseNext offers the next entry of a series the ride qualifies for.
+// franchiseNext offers the next entry of a series the ride qualifies for, and
+// names the series it came from.
+//
+// Both together, so a caller cannot advance a different series than the one
+// the prompt was shown.
 //
 // Never blocking. A gear lookup that fails, a franchise that has run out, an
 // athlete with no franchises: all of them mean this ride is named normally,
 // which is the same outcome as the feature being off.
 func (p *Processor) franchiseNext(
 	ctx context.Context, athleteID int64, ride naming.Ride, logger *slog.Logger,
-) string {
+) (next, franchiseName string) {
 	franchise, ok := naming.FranchiseFor(p.deps.Franchises, ride.SportType, ride.GearName)
 	if !ok {
-		return ""
+		return "", ""
 	}
 
 	position, err := p.deps.Store.FranchisePosition(ctx, athleteID, franchise.Name)
@@ -93,18 +114,18 @@ func (p *Processor) franchiseNext(
 		logger.Warn("could not read the franchise position; naming without it",
 			"franchise", logsafe.String(franchise.Name), "error", err)
 
-		return ""
+		return "", ""
 	}
 
-	next, ok := franchise.Next(position)
+	next, ok = franchise.Next(position)
 	if !ok {
 		logger.Info("franchise exhausted; naming normally",
 			"franchise", logsafe.String(franchise.Name), "position", position)
 
-		return ""
+		return "", ""
 	}
 
-	return next
+	return next, franchise.Name
 }
 
 // examplesFrom derives few-shot examples from the title history.
@@ -114,9 +135,10 @@ func (p *Processor) franchiseNext(
 // situation that produced it does not survive, so it is rebuilt by re-reading
 // the activity from Strava.
 //
-// That costs a read per example, which is why the result is cached against
-// the history it came from. The history changes only when something is named,
-// so a dry-run sweep repeating every five minutes pays once, not every time.
+// That costs a read per example, which is why each one is cached against the
+// activity it describes — see [Processor.example] for why the activity and
+// not the history. A past ride's situation does not change, so a derivation
+// is paid once however often the prompt is rebuilt.
 //
 // Failure is not fatal. Fewer examples, or the shipped synthetic set, is a
 // worse prompt and not a wrong one.

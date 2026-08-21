@@ -421,4 +421,15 @@ func TestAnExhaustedFranchiseStopsApplying(t *testing.T) {
 	if writes := h.strava.writes(); len(writes) != 1 {
 		t.Errorf("%d PUTs, want the ride named normally", len(writes))
 	}
+
+	// And nothing advanced. A series that keeps counting past its end would
+	// take a franchise extended later straight to the wrong entry.
+	position, err := h.store.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if want := len(naming.DefaultFranchises()[0].Titles); position != want {
+		t.Errorf("position = %d, want it to stop at %d", position, want)
+	}
 }

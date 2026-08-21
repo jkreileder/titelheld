@@ -161,8 +161,10 @@ are never touched.
 Beyond the ride itself, three things — all of them derived, none of them committed to this
 repository.
 
-**The last 25 titles.** The prompt forbids repeating any of them and invites referring back.
-They come from the named log, which is the record of what this service has written.
+**The last 25 titles a model wrote.** The prompt forbids repeating any of them and invites
+referring back. They come from the named log, filtered to the ones a model produced: a commute
+or errand template is meant to repeat, so listing it both forbids the right answer for the next
+commute and crowds the real titles out of a list of twenty-five.
 
 **Few-shot examples in the athlete's own style.** Six of them, rebuilt at prompt time: the
 named log keeps each title and the language it was written in, and the ride that produced it is
@@ -185,8 +187,12 @@ never stops a title being written.
 and not built: the first attempt identified a route by hashing its rounded polyline, which
 provably never matches a re-ride — 0 of 50 under 5 m of jitter, and Strava's polyline
 simplification changes the vertex count between rides anyway. It was removed rather than
-shipped inert. The replacement compares sets of visited cells by similarity instead of hashing
-a sequence, which is tolerant by construction.
+shipped inert.
+
+A replacement is designed and likewise unbuilt: comparing *sets* of visited cells by similarity
+rather than hashing a sequence, which is tolerant by construction and direction-blind because
+sets are unordered. Nothing in the service does this today, and no title can carry a route
+callback until it does.
 
 **The history starts empty.** Nothing has been named yet, so the recent-titles list and the
 derived examples only become useful once real namings accumulate. Seeding them from the

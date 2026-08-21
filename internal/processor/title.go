@@ -102,12 +102,12 @@ func (p *Processor) llmTitle(
 		ride.Country = summary.Country
 	}
 
-	promptContext, err := p.promptContext(ctx, athleteID, ride, logger)
+	gathered, err := p.promptContext(ctx, athleteID, ride, logger)
 	if err != nil {
 		return titled{}, err
 	}
 
-	prompt := naming.BuildPrompt(ride, promptContext)
+	prompt := naming.BuildPrompt(ride, gathered.Context)
 
 	raw, err := p.deps.Provider.Complete(ctx, prompt)
 	if err != nil {
@@ -125,16 +125,14 @@ func (p *Processor) llmTitle(
 		"language", string(title.Language),
 		"places", len(ride.Places),
 		"facts", len(ride.Facts),
-		"recent_titles", len(promptContext.RecentTitles),
-		"examples", len(promptContext.Examples),
-		"franchise_offered", promptContext.FranchiseNext != "")
+		"recent_titles", len(gathered.Context.RecentTitles),
+		"examples", len(gathered.Context.Examples),
+		"franchise_offered", gathered.Franchise != "")
 
-	result := titled{
-		Text:     title.Text,
-		Language: title.Language,
-		Source:   store.SourceLLM,
-	}
-
+	// The series that gets advanced is the one the prompt was shown, carried
+	// out of the single lookup that resolved it rather than resolved again
+	// here.
+	//
 	// Recorded as used whenever an entry was offered, without checking that
 	// the title resembles it. The model is invited to adapt the wording, so a
 	// title that used the entry and one that ignored it are not reliably
@@ -143,14 +141,12 @@ func (p *Processor) llmTitle(
 	// advances on a title that ignored it loses one entry, where one that
 	// does not advance offers the same entry until a model happens to use it
 	// verbatim.
-	if promptContext.FranchiseNext != "" {
-		if franchise, ok := naming.FranchiseFor(
-			p.deps.Franchises, ride.SportType, ride.GearName); ok {
-			result.Franchise = franchise.Name
-		}
-	}
-
-	return result, nil
+	return titled{
+		Text:      title.Text,
+		Language:  title.Language,
+		Source:    store.SourceLLM,
+		Franchise: gathered.Franchise,
+	}, nil
 }
 
 // gearName resolves a gear ID to the name a franchise matches on.
