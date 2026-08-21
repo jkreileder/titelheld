@@ -3,6 +3,7 @@ package strava
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,9 +50,19 @@ func (c *Client) GetGear(ctx context.Context, gearID string) (Gear, error) {
 	}
 	defer drainAndClose(response)
 
+	decoder := json.NewDecoder(io.LimitReader(response.Body, maxGearBytes))
+
 	var gear Gear
-	if err := json.NewDecoder(io.LimitReader(response.Body, maxGearBytes)).Decode(&gear); err != nil {
+	if err := decoder.Decode(&gear); err != nil {
 		return Gear{}, fmt.Errorf("strava: decode gear %q: %w", gearID, err)
+	}
+
+	// One JSON value and nothing after it. Decode stops at the end of the
+	// first value, so a valid object followed by anything at all — a second
+	// object, or trailing junk — would otherwise be accepted silently, and
+	// this reads a response the service did not produce.
+	if err := decoder.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		return Gear{}, fmt.Errorf("strava: gear %q: trailing data after the response", gearID)
 	}
 
 	return gear, nil

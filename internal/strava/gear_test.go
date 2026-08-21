@@ -142,3 +142,59 @@ func TestGetGearRejectsAMalformedBody(t *testing.T) {
 		t.Error("a malformed gear response was accepted")
 	}
 }
+
+// One JSON value, and nothing after it.
+//
+// Decode stops at the end of the first value, so a valid object followed by
+// anything at all would otherwise be accepted silently — and this reads a
+// response the service did not produce.
+func TestGetGearRejectsTrailingData(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "a second object", body: `{"id":"b1","name":"Musterrad"}{"id":"b2","name":"Anderes"}`},
+		{name: "trailing junk", body: `{"id":"b1","name":"Musterrad"} not json`},
+		{name: "an array after it", body: `{"id":"b1","name":"Musterrad"}[1,2,3]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			client := newTestClient(t, server, WriteModeDryRun)
+
+			if _, err := client.GetGear(t.Context(), "b1"); err == nil {
+				t.Errorf("%s was accepted", tc.name)
+			}
+		})
+	}
+}
+
+// Whitespace after the object is not trailing data.
+func TestGetGearAcceptsTrailingWhitespace(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{\"id\":\"b1\",\"name\":\"Musterrad\"}\n\n  "))
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, WriteModeDryRun)
+
+	gear, err := client.GetGear(t.Context(), "b1")
+	if err != nil {
+		t.Fatalf("GetGear: %v", err)
+	}
+
+	if gear.Name != "Musterrad" {
+		t.Errorf("Name = %q, want %q", gear.Name, "Musterrad")
+	}
+}

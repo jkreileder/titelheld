@@ -22,8 +22,11 @@
   defaults to on.
 - `internal/strava/` is the only package that talks to Strava: OAuth
   (`oauth.go`), the auto-refreshing token source (`tokensource.go`), the HTTP
-  client with rate-limit accounting and 429 backoff (`client.go`), and the two
-  API calls this service makes (`activity.go`).
+  client with rate-limit accounting and 429 backoff (`client.go`), and the
+  calls this service makes: the activity read and the two rename writes
+  (`activity.go`), and the gear read a franchise matches on (`gear.go`). Gear
+  is *read*, never written — the name is a string the athlete typed into
+  Strava, and a franchise keys on it.
 - `internal/store/` holds the persistence interfaces, an in-memory
   implementation, and `storetest`, the conformance suite both implementations
   must pass. `internal/store/firestore/` is the persistent one; its IAM is
