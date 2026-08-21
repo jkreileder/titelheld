@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"unicode"
 
 	"github.com/jkreileder/titelheld/internal/classifier"
 	"github.com/jkreileder/titelheld/internal/geo"
 	"github.com/jkreileder/titelheld/internal/logsafe"
 	"github.com/jkreileder/titelheld/internal/naming"
+	"github.com/jkreileder/titelheld/internal/store"
 	"github.com/jkreileder/titelheld/internal/strava"
 )
 
@@ -26,10 +29,18 @@ func (p *Processor) title(
 	case classifier.ActionCommuteTemplate:
 		// German templates, and the language is stated rather than guessed:
 		// the named log keeps it, and few-shot examples read it back.
-		return titled{Text: commuteTitle(decision, p.deps.Classifier), Language: naming.German}, nil
+		return titled{
+			Text:     commuteTitle(decision, p.deps.Classifier),
+			Language: naming.German,
+			Source:   store.SourceTemplate,
+		}, nil
 
 	case classifier.ActionErrandTemplate:
-		return titled{Text: errandTitle(activity), Language: naming.German}, nil
+		return titled{
+			Text:     errandTitle(activity),
+			Language: naming.German,
+			Source:   store.SourceTemplate,
+		}, nil
 
 	case classifier.ActionLLM, classifier.ActionLLMIndoor:
 		return p.llmTitle(ctx, athleteID, activity, decision, logger)
@@ -54,6 +65,10 @@ type titled struct {
 	// Fingerprint is the route, if it had one. Recorded with the write, so a
 	// naming that fails does not count a ride that never got a title.
 	Fingerprint string
+
+	// Source is how the title was produced, for the history. A template and a
+	// model's title are not interchangeable to a later prompt.
+	Source string
 }
 
 // llmTitle gathers, prompts, calls and validates.
@@ -93,7 +108,8 @@ func (p *Processor) llmTitle(
 		ride.Country = summary.Country
 
 		fingerprint = p.fingerprint(activity, logger)
-		ride.RepeatOfDate, ride.RepeatCount = p.routeHistory(ctx, athleteID, fingerprint, logger)
+		ride.RepeatOfDate, ride.RepeatCount = p.routeHistory(
+			ctx, athleteID, fingerprint, activity.StartDateLocal, logger)
 	}
 
 	promptContext, err := p.promptContext(ctx, athleteID, ride, logger)
@@ -124,11 +140,21 @@ func (p *Processor) llmTitle(
 		"franchise_offered", promptContext.FranchiseNext != "",
 		"route_repeat", ride.RepeatCount)
 
-	result := titled{Text: title.Text, Language: title.Language, Fingerprint: fingerprint}
+	result := titled{
+		Text:        title.Text,
+		Language:    title.Language,
+		Fingerprint: fingerprint,
+		Source:      store.SourceLLM,
+	}
 
-	// The franchise is recorded as used only if this title actually came from
-	// it. The model may adapt the wording, so an exact match is too strict and
-	// no check at all would advance the series on a title that ignored it.
+	// Recorded as used whenever an entry was offered, without checking that
+	// the title resembles it. The model is invited to adapt the wording, so a
+	// title that used the entry and one that ignored it are not reliably
+	// distinguishable — and the spec's rule is that the order may not be
+	// skipped, which makes advancing the safer error: a franchise that
+	// advances on a title that ignored it loses one entry, where one that
+	// does not advance offers the same entry until a model happens to use it
+	// verbatim.
 	if promptContext.FranchiseNext != "" {
 		if franchise, ok := naming.FranchiseFor(
 			p.deps.Franchises, ride.SportType, ride.GearName); ok {
@@ -164,11 +190,42 @@ func (p *Processor) gearName(ctx context.Context, gearID string, logger *slog.Lo
 		return ""
 	}
 
+	name := sanitizeGearName(gear.Name)
+
 	p.gearMu.Lock()
-	p.gear[gearID] = gear.Name
+	p.gear[gearID] = name
 	p.gearMu.Unlock()
 
-	return gear.Name
+	return name
+}
+
+// maxGearNameRunes bounds a gear name in the prompt.
+const maxGearNameRunes = 60
+
+// sanitizeGearName reduces a gear name to one short line.
+//
+// It is free text the athlete typed into Strava, and it reaches the prompt as
+// a field rather than through a parser or an allow-list, which is how every
+// other third-party string here is handled. A name containing newlines would
+// restructure the prompt's blocks. Self-inflicted at worst — nobody else can
+// set it — but the whole point of the other two defenses is that untrusted
+// text never reaches the prompt verbatim.
+func sanitizeGearName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || unicode.IsControl(r) {
+			return ' '
+		}
+
+		return r
+	}, name)
+
+	name = strings.Join(strings.Fields(name), " ")
+
+	if runes := []rune(name); len(runes) > maxGearNameRunes {
+		name = string(runes[:maxGearNameRunes])
+	}
+
+	return name
 }
 
 // fingerprint reduces the route to something the store can count.

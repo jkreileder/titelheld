@@ -57,6 +57,7 @@ func (p *Processor) write(
 		ActivityID: activity.ID,
 		Title:      title.Text,
 		Language:   string(title.Language),
+		Source:     title.Source,
 		At:         p.deps.Now(),
 	}); err != nil {
 		return false, fmt.Errorf("record the title before writing: %w", err)

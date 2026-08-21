@@ -42,6 +42,11 @@ type fakeStrava struct {
 	// getErrFor fails the fetch of specific activity IDs, so a test can make
 	// re-reading history fail while the activity being named still loads.
 	getErrFor map[int64]error
+
+	// byID serves distinct activities per ID. Without it every ID answers
+	// with the one shared activity, so naming any of them retitles all of
+	// them and the classifier declines the rest.
+	byID map[int64]strava.Activity
 }
 
 type put struct {
@@ -64,12 +69,16 @@ func (f *fakeStrava) GetActivity(_ context.Context, id int64) (*strava.Activity,
 		return nil, err
 	}
 
+	if activity, ok := f.byID[id]; ok {
+		return &activity, nil
+	}
+
 	copied := f.activity
 
 	return &copied, nil
 }
 
-func (f *fakeStrava) UpdateActivityName(_ context.Context, _ int64, name string) (*strava.Activity, error) {
+func (f *fakeStrava) UpdateActivityName(_ context.Context, id int64, name string) (*strava.Activity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -78,7 +87,13 @@ func (f *fakeStrava) UpdateActivityName(_ context.Context, _ int64, name string)
 	}
 
 	f.puts = append(f.puts, put{name: name})
-	f.activity.Name = name
+
+	if activity, ok := f.byID[id]; ok {
+		activity.Name = name
+		f.byID[id] = activity
+	} else {
+		f.activity.Name = name
+	}
 
 	return &f.activity, nil
 }

@@ -2,11 +2,10 @@ package processor
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jkreileder/titelheld/internal/logsafe"
 	"github.com/jkreileder/titelheld/internal/naming"
@@ -19,6 +18,11 @@ import (
 // The spec asks for about six. Each one costs a Strava read the first time it
 // is derived, so the number is also a budget.
 const exampleCount = 6
+
+// maxExampleFailures stops the derivation walking the whole history when
+// Strava is refusing reads. Each failed read has already been retried with
+// backoff by the client.
+const maxExampleFailures = 2
 
 // promptContext gathers everything the prompt needs beyond the ride itself.
 //
@@ -34,7 +38,11 @@ func (p *Processor) promptContext(
 	}
 
 	promptContext := naming.Context{
-		RecentTitles: titlesOf(history),
+		// "Never repeat a title listed under RECENT" is aimed at the ones a
+		// model invented. A commute template is meant to repeat, and listing
+		// it both forbids the right answer and crowds the real titles out of
+		// a list of twenty-five.
+		RecentTitles: titlesOf(llmTitlesOnly(history)),
 		Examples:     p.examplesFrom(ctx, history, logger),
 	}
 
@@ -116,67 +124,116 @@ func (p *Processor) franchiseNext(
 func (p *Processor) examplesFrom(
 	ctx context.Context, history []store.NamedTitle, logger *slog.Logger,
 ) []naming.Example {
+	// Only titles a model wrote. A commute template is the same two strings
+	// every working day, and six of them would teach the model to name a
+	// gravel ride "Zur Arbeit".
+	history = llmTitlesOnly(history)
+
 	if len(history) == 0 {
 		// Nothing written yet. The synthetic set is what it is for.
 		return naming.SyntheticExamples()
 	}
 
-	key := historyKey(history)
-
-	p.examplesMu.Lock()
-	if key == p.examplesKey && p.examples != nil {
-		cached := p.examples
-		p.examplesMu.Unlock()
-
-		return cached
-	}
-	p.examplesMu.Unlock()
-
 	examples := make([]naming.Example, 0, exampleCount)
 
+	// Failures are budgeted, not retried through the whole history. Client.do
+	// already retries a rate-limited read several times with backoff, so a
+	// Strava that is refusing everything would otherwise cost a hundred
+	// requests per activity, per sweep — amplifying the very condition that
+	// caused it.
+	failures := 0
+
 	for _, entry := range history {
-		if len(examples) >= exampleCount {
+		if len(examples) >= exampleCount || failures >= maxExampleFailures {
 			break
 		}
 
-		activity, err := p.deps.Activities.GetActivity(ctx, entry.ActivityID)
-		if err != nil {
-			logger.Warn("could not re-read an activity for a few-shot example",
-				"activity_id", entry.ActivityID, "error", err)
+		example, ok := p.example(ctx, entry, logger)
+		if !ok {
+			failures++
 
 			continue
 		}
 
-		examples = append(examples, naming.Example{
-			Situation: situationOf(activity),
-			Title:     entry.Title,
-			Language:  naming.Language(entry.Language),
-		})
+		examples = append(examples, example)
 	}
 
 	if len(examples) == 0 {
 		return naming.SyntheticExamples()
 	}
 
-	p.examplesMu.Lock()
-	p.examplesKey = key
-	p.examples = examples
-	p.examplesMu.Unlock()
-
 	return examples
 }
 
-// historyKey identifies a history, so a cached derivation can be recognized.
-func historyKey(history []store.NamedTitle) string {
-	var b strings.Builder
+// example builds one few-shot example, from cache if it has been built before.
+//
+// Cached per activity rather than per history. The history changes every time
+// something is named, so a cache keyed on the whole of it misses for every
+// activity after the first in a sweep — six Strava reads each, against a
+// hundred per fifteen minutes. A past activity's situation does not change,
+// so the entry that was derived for it stays valid however the history moves.
+func (p *Processor) example(
+	ctx context.Context, entry store.NamedTitle, logger *slog.Logger,
+) (naming.Example, bool) {
+	p.examplesMu.Lock()
+	cached, ok := p.examples[entry.ActivityID]
+	p.examplesMu.Unlock()
 
-	for _, entry := range history {
-		fmt.Fprintf(&b, "%d:%s\n", entry.ActivityID, entry.Title)
+	if ok {
+		return cached, true
 	}
 
-	digest := sha256.Sum256([]byte(b.String()))
+	activity, err := p.deps.Activities.GetActivity(ctx, entry.ActivityID)
+	if err != nil {
+		logger.Warn("could not re-read an activity for a few-shot example",
+			"activity_id", entry.ActivityID, "error", err)
 
-	return hex.EncodeToString(digest[:])
+		return naming.Example{}, false
+	}
+
+	example := naming.Example{
+		Situation: situationOf(activity),
+		Title:     entry.Title,
+		Language:  exampleLanguage(entry.Language),
+	}
+
+	p.examplesMu.Lock()
+	p.examples[entry.ActivityID] = example
+	p.examplesMu.Unlock()
+
+	return example, true
+}
+
+// exampleLanguage falls back rather than rendering an empty token.
+//
+// The prompt prints every example as "situation -> title (language)", so an
+// entry with no language — one written before the field existed, or by a path
+// that omits it — would put "()" in front of the model. German is this
+// athlete's default and a better guess than nothing.
+func exampleLanguage(language string) naming.Language {
+	switch naming.Language(language) {
+	case naming.German, naming.English:
+		return naming.Language(language)
+	default:
+		return naming.German
+	}
+}
+
+// llmTitlesOnly keeps the titles a model wrote.
+//
+// Entries recorded before the source field existed have none, and are kept:
+// there are none in production, and treating an unknown source as a template
+// would silently empty the history.
+func llmTitlesOnly(history []store.NamedTitle) []store.NamedTitle {
+	kept := make([]store.NamedTitle, 0, len(history))
+
+	for _, entry := range history {
+		if entry.Source != store.SourceTemplate {
+			kept = append(kept, entry)
+		}
+	}
+
+	return kept
 }
 
 // situationOf describes a ride in one line, for a few-shot example.
@@ -217,7 +274,8 @@ func situationOf(activity *strava.Activity) string {
 // a naming that fails does not inflate it. The count offered to the prompt is
 // this ride's ordinal, which is one more than what is stored.
 func (p *Processor) routeHistory(
-	ctx context.Context, athleteID int64, fingerprint string, logger *slog.Logger,
+	ctx context.Context, athleteID int64, fingerprint string,
+	ride time.Time, logger *slog.Logger,
 ) (string, int) {
 	if fingerprint == "" {
 		return "", 0
@@ -232,6 +290,14 @@ func (p *Processor) routeHistory(
 
 	if !ok {
 		return "", 1
+	}
+
+	// A stored first ride later than this one means this ride is the earliest
+	// and the store has not been told yet — an activity uploaded a fortnight
+	// after it was ridden. Counting it is right; naming a date in its own
+	// future is not.
+	if !ride.IsZero() && !route.FirstSeen.Before(ride) {
+		return "", route.Count + 1
 	}
 
 	return route.FirstSeen.Format("2 January 2006"), route.Count + 1

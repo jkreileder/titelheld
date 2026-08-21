@@ -93,14 +93,16 @@ type Processor struct {
 	gearMu sync.Mutex
 	gear   map[string]string
 
-	// examples caches the few-shot set derived from the title history, keyed
-	// by the history it was derived from. Deriving them re-reads activities
-	// from Strava, and the history only changes when something is named — so
-	// without this, a dry-run sweep would spend that budget again every five
-	// minutes for as long as the review window is open.
-	examplesMu  sync.Mutex
-	examplesKey string
-	examples    []naming.Example
+	// examples caches one few-shot example per past activity, for the life of
+	// the process. Deriving one re-reads the activity from Strava, and what a
+	// past ride looked like does not change.
+	//
+	// Keyed by activity rather than by the history as a whole: the history
+	// moves every time something is named, so a whole-history key would miss
+	// for every activity after the first in a sweep and pay six reads again
+	// each time, against a hundred per fifteen minutes.
+	examplesMu sync.Mutex
+	examples   map[int64]naming.Example
 }
 
 // New builds a processor.
@@ -124,7 +126,11 @@ func New(deps Deps) (*Processor, error) {
 		deps.Franchises = naming.DefaultFranchises()
 	}
 
-	return &Processor{deps: deps, gear: make(map[string]string)}, nil
+	return &Processor{
+		deps:     deps,
+		gear:     make(map[string]string),
+		examples: make(map[int64]naming.Example),
+	}, nil
 }
 
 // Result is what one sweep did.
