@@ -36,6 +36,7 @@ const (
 	CollectionNamed     = "named"
 	CollectionGeocache  = "geocache"
 	CollectionFranchise = "franchise"
+	CollectionRoutes    = "routes"
 )
 
 // Store implements [store.Store] on Firestore.
@@ -306,24 +307,73 @@ type namedDoc struct {
 	AthleteID  int64     `firestore:"athlete_id"`
 	ActivityID int64     `firestore:"activity_id"`
 	Title      string    `firestore:"title"`
+	Language   string    `firestore:"language"`
 	NamedAt    time.Time `firestore:"named_at"`
 }
 
 // MarkNamed implements [store.NamedLog].
-func (s *Store) MarkNamed(ctx context.Context, athleteID, activityID int64, title string) error {
+func (s *Store) MarkNamed(ctx context.Context, naming store.Naming) error {
 	doc := namedDoc{
-		AthleteID:  athleteID,
-		ActivityID: activityID,
-		Title:      title,
-		NamedAt:    time.Now().UTC(),
+		AthleteID:  naming.AthleteID,
+		ActivityID: naming.ActivityID,
+		Title:      naming.Title,
+		Language:   naming.Language,
+		NamedAt:    naming.At.UTC(),
 	}
 
-	_, err := s.collection(CollectionNamed).Doc(activityKey(athleteID, activityID)).Set(ctx, doc)
+	_, err := s.collection(CollectionNamed).
+		Doc(activityKey(naming.AthleteID, naming.ActivityID)).Set(ctx, doc)
 	if err != nil {
 		return fmt.Errorf("firestore: mark named: %w", err)
 	}
 
 	return nil
+}
+
+// RecentTitles returns the newest titles first.
+//
+// This is the one query in this package that needs a composite index: an
+// equality on athlete_id with an ordering on named_at. Terraform declares it,
+// and the deploy order in the README puts the apply before the sweep is
+// unpaused, because a missing index is a runtime error on every naming rather
+// than something that degrades quietly.
+//
+// The emulator will not tell you if the index is wrong. It serves any query
+// without one, so a mismatch between the declaration and this query passes
+// every test here and fails only in production.
+func (s *Store) RecentTitles(
+	ctx context.Context, athleteID int64, limit int,
+) ([]store.NamedTitle, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	snapshots, err := s.collection(CollectionNamed).
+		Where("athlete_id", "==", athleteID).
+		OrderBy("named_at", firestore.Desc).
+		Limit(limit).
+		Documents(ctx).GetAll()
+	if err != nil {
+		return nil, fmt.Errorf("firestore: read recent titles: %w", err)
+	}
+
+	titles := make([]store.NamedTitle, 0, len(snapshots))
+
+	for _, snapshot := range snapshots {
+		var doc namedDoc
+		if err := snapshot.DataTo(&doc); err != nil {
+			return nil, fmt.Errorf("firestore: decode recent title: %w", err)
+		}
+
+		titles = append(titles, store.NamedTitle{
+			ActivityID: doc.ActivityID,
+			Title:      doc.Title,
+			Language:   doc.Language,
+			NamedAt:    doc.NamedAt.UTC(),
+		})
+	}
+
+	return titles, nil
 }
 
 // Named implements [store.NamedLog].
@@ -545,4 +595,97 @@ func (s *Store) AdvanceFranchise(ctx context.Context, athleteID int64, franchise
 	}
 
 	return position, nil
+}
+
+// routeDoc is how often one athlete has ridden one route.
+//
+// The fingerprint is stored, never the polyline. It is a one-way digest of a
+// deliberately coarse rounding, so it answers "this route again" and cannot
+// answer "which route".
+type routeDoc struct {
+	AthleteID   int64     `firestore:"athlete_id"`
+	Fingerprint string    `firestore:"fingerprint"`
+	Count       int       `firestore:"count"`
+	FirstSeen   time.Time `firestore:"first_seen"`
+	LastSeen    time.Time `firestore:"last_seen"`
+}
+
+// routeKey is the document ID for one athlete's history of one route.
+//
+// Escaped like every other composed key here: the fingerprint is hex and safe
+// on its own, but the composition is what has to be a valid document ID.
+func routeKey(athleteID int64, fingerprint string) string {
+	return cacheDocID(strconv.FormatInt(athleteID, 10) + "-" + fingerprint)
+}
+
+// Route returns how often the athlete has ridden this route.
+func (s *Store) Route(
+	ctx context.Context, athleteID int64, fingerprint string,
+) (store.Route, bool, error) {
+	snapshot, err := s.collection(CollectionRoutes).
+		Doc(routeKey(athleteID, fingerprint)).Get(ctx)
+	if err != nil {
+		if notFound(err) {
+			return store.Route{}, false, nil
+		}
+
+		return store.Route{}, false, fmt.Errorf("firestore: read route: %w", err)
+	}
+
+	var doc routeDoc
+	if err := snapshot.DataTo(&doc); err != nil {
+		return store.Route{}, false, fmt.Errorf("firestore: decode route: %w", err)
+	}
+
+	return store.Route{
+		Count:     doc.Count,
+		FirstSeen: doc.FirstSeen.UTC(),
+		LastSeen:  doc.LastSeen.UTC(),
+	}, true, nil
+}
+
+// RecordRoute counts one more ride of this route.
+//
+// In a transaction for the same reason AdvanceFranchise is: the store decides
+// the number, so two sweeps cannot both read three and both write four.
+func (s *Store) RecordRoute(
+	ctx context.Context, athleteID int64, fingerprint string, at time.Time,
+) (store.Route, error) {
+	ref := s.collection(CollectionRoutes).Doc(routeKey(athleteID, fingerprint))
+
+	var route store.Route
+
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		route = store.Route{FirstSeen: at.UTC()}
+
+		snapshot, err := tx.Get(ref)
+		switch {
+		case err != nil && status.Code(err) != codes.NotFound:
+			return err
+		case err == nil:
+			var doc routeDoc
+			if err := snapshot.DataTo(&doc); err != nil {
+				return err
+			}
+
+			route.Count = doc.Count
+			route.FirstSeen = doc.FirstSeen.UTC()
+		}
+
+		route.Count++
+		route.LastSeen = at.UTC()
+
+		return tx.Set(ref, routeDoc{
+			AthleteID:   athleteID,
+			Fingerprint: fingerprint,
+			Count:       route.Count,
+			FirstSeen:   route.FirstSeen,
+			LastSeen:    route.LastSeen,
+		})
+	})
+	if err != nil {
+		return store.Route{}, fmt.Errorf("firestore: record route: %w", err)
+	}
+
+	return route, nil
 }

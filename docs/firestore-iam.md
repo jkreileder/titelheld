@@ -14,7 +14,7 @@ it does not.
 
 ## What is stored
 
-Five collections, and nothing else. Adding a sixth means changing this document.
+Six collections, and nothing else. Adding a seventh means changing this document.
 
 | Collection  | Document ID               | Contents                                         | Re-derivable?           |
 | ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
@@ -23,16 +23,26 @@ Five collections, and nothing else. Adding a sixth means changing this document.
 | `named`     | `{athleteID}-{activity}`  | Title this service wrote, and when               | Yes, from Strava        |
 | `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
 | `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
+| `routes`    | `{athleteID}-{digest}`    | How often a route fingerprint has been ridden    | Yes, from Strava        |
 
 `franchise` stores an integer, never the titles: the series is configuration, so renaming or
 reordering one must not require migrating anything here. It is re-derivable only by matching past
 titles against a series, which is why it is remembered rather than recomputed — and losing it
 costs a repeated or skipped entry, not a wrong write.
 
+`routes` stores a count and two dates against a one-way digest of a deliberately coarse
+rounding of the polyline. **No track is stored.** The fingerprint answers "this route again"
+and cannot answer "which route" — it is not reversible into a line on a map, and it is
+direction-insensitive on purpose, so an out-and-back matches its return. Losing it costs a
+missed callback in a title.
+
+`named` also stores the language each title was written in. That one field is not re-derivable:
+re-reading an activity returns the title but never says which language was chosen for it.
+
 Only `tokens` genuinely has to survive. Strava rotates the refresh token on every refresh and
 invalidates the previous one immediately, so losing that document means re-running the
-authorization flow by hand. The other four are a work queue, two caches, and franchise
-position state.
+authorization flow by hand. The other five are a work queue, two caches, franchise
+position state, and route counts.
 
 Location data is minimized, not absent. No coordinate is stored as a *field*: `geocache`
 documents hold place names only. The coordinate that produced a place does survive as the
@@ -91,7 +101,7 @@ startup.
 - `roles/datastore.owner` — no creating or deleting databases.
 - Import and export (`datastore.databases.import` / `.export`) — no bulk extraction of the
   athlete's data.
-- Index administration — the queries here need no composite index, see below.
+- Index administration — Terraform declares the one composite index, see below.
 - Any other Google Cloud service beyond the two the naming pipeline needs. The runtime account
   also holds a Secret Manager accessor on five named secrets, and `roles/aiplatform.user` so it
   can call Gemini on Vertex AI — which is what lets Gemini be keyless, since the call
@@ -114,18 +124,35 @@ the only irreplaceable thing stored.
 
 ## Indexes
 
-None to create. The only non-trivial query is the sweep's due lookup:
+One, declared in Terraform and created by an apply. The runtime account still needs no index
+administration permission: it uses indexes, it does not manage them.
+
+The title history is the query that needs it:
+
+```text
+where athlete_id == N  order by named_at desc  limit 25
+```
+
+An equality on one field with an ordering on another is what a composite index is for, so
+`google_firestore_index.named_recent` declares `athlete_id` ascending, `named_at` descending.
+It must exist before the sweep runs: a missing index is not a slow query, it is an error on
+every naming. That is why the apply comes before the scheduler is unpaused.
+
+The sweep's due lookup needs nothing:
 
 ```text
 where process_after <= now  order by process_after asc
 ```
 
 The inequality and the ordering are on the same field, so Firestore serves it from the
-automatic single-field index. There is no composite index to create, and therefore no index
-administration permission to grant.
+automatic single-field index.
 
-`franchise` does not change that. It is addressed by document ID in both directions — read the
-position, or increment it in a transaction — so it runs no query at all.
+`franchise` and `routes` need nothing either. Both are addressed by document ID in both
+directions — read a value, or increment it in a transaction — so they run no query at all.
+
+**The emulator will not tell you when this is wrong.** It serves any query without index
+definitions, so a mismatch between the Terraform declaration and the query in `RecentTitles`
+passes every test in this repository and fails only against the real database.
 
 ## Local and CI
 

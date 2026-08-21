@@ -108,6 +108,39 @@ type Store interface {
 	NamedLog
 	GeocodeCache
 	Franchises
+	Routes
+}
+
+// Routes remembers which routes an athlete has ridden before.
+//
+// A route is identified by a coarse fingerprint of its polyline, not by the
+// polyline itself: nothing here stores a track. The fingerprint is one-way and
+// deliberately blunt, so it answers "this again" and cannot answer "where".
+//
+// It exists so a title can make a callback — "same route as 3 May, ridden
+// four times" — which is the one thing a model cannot infer from a single
+// activity. Losing it costs a missed callback, never a wrong write.
+type Routes interface {
+	// Route returns how often this athlete has ridden the route and when they
+	// first did. A route never seen is the zero value and false, not an error.
+	Route(ctx context.Context, athleteID int64, fingerprint string) (Route, bool, error)
+
+	// RecordRoute counts one more ride of the route and returns the result.
+	//
+	// It increments rather than taking a count, for the same reason
+	// AdvanceFranchise does: the store decides the number.
+	RecordRoute(ctx context.Context, athleteID int64, fingerprint string, at time.Time) (Route, error)
+}
+
+// Route is how often one route has been ridden.
+type Route struct {
+	// Count is how many times it has been ridden, including the most recent.
+	Count int
+
+	// FirstSeen and LastSeen bound that. FirstSeen is what a callback names,
+	// because "same route as" means the first time, not the previous one.
+	FirstSeen time.Time
+	LastSeen  time.Time
 }
 
 // Franchises remembers how far along an ordered title series an athlete is.
@@ -146,9 +179,50 @@ type Franchises interface {
 // rather than treated as a human retitling the activity.
 type NamedLog interface {
 	// MarkNamed records that an activity was given a title by this service.
-	MarkNamed(ctx context.Context, athleteID, activityID int64, title string) error
+	MarkNamed(ctx context.Context, naming Naming) error
 
 	// Named reports whether the activity has already been named, and with what
 	// title.
 	Named(ctx context.Context, athleteID, activityID int64) (string, bool, error)
+
+	// RecentTitles returns the titles most recently written for an athlete,
+	// newest first, at most limit of them.
+	//
+	// The prompt carries these so the model does not repeat itself and can
+	// refer back. A limit of zero or less returns nothing rather than
+	// everything, because an unbounded read of this collection grows with the
+	// athlete's riding and the only caller wants the last handful.
+	RecentTitles(ctx context.Context, athleteID int64, limit int) ([]NamedTitle, error)
+}
+
+// Naming is one title this service wrote.
+//
+// A struct rather than four positional arguments, two of which are int64s
+// meaning different things and two of which are strings meaning different
+// things. Swapping either pair compiles.
+type Naming struct {
+	AthleteID  int64
+	ActivityID int64
+
+	// Title is what was written.
+	Title string
+
+	// Language is the language it was written in, as the naming layer reported
+	// it. Stored because it cannot be recovered afterwards: re-reading the
+	// activity gives the title back but never says which language was chosen,
+	// and few-shot examples derived from history need it.
+	Language string
+
+	// At is when it was written. Supplied by the caller rather than stamped by
+	// the store, as [Pending] does, so both implementations order the same way
+	// and a test can say what "newest" means.
+	At time.Time
+}
+
+// NamedTitle is one entry of the title history.
+type NamedTitle struct {
+	ActivityID int64
+	Title      string
+	Language   string
+	NamedAt    time.Time
 }

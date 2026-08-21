@@ -8,6 +8,7 @@ package storetest
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -49,6 +50,11 @@ func Suite(t *testing.T, newStore Factory) {
 		"FranchisesAreIndependent":   franchisesAreIndependent,
 		"FranchiseKeyedByAthlete":    franchiseKeyedByAthlete,
 		"FranchiseNamesAreArbitrary": franchiseNamesAreArbitrary,
+		"RecentTitlesNewestFirst":    recentTitlesNewestFirst,
+		"RecentTitlesKeyedByAthlete": recentTitlesKeyedByAthlete,
+		"RecentTitlesBounded":        recentTitlesBounded,
+		"RouteCountsRepeats":         routeCountsRepeats,
+		"RoutesAreIndependent":       routesAreIndependent,
 	}
 
 	for name, run := range tests {
@@ -292,7 +298,10 @@ func namedLogRoundTrip(t *testing.T, s store.Store) {
 		t.Fatalf("Named on an empty log = %v, %v", named, err)
 	}
 
-	if err := s.MarkNamed(t.Context(), 1, 5, "The Pink Panther Strikes Again"); err != nil {
+	if err := s.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 1, ActivityID: 5,
+		Title: "The Pink Panther Strikes Again", Language: "en", At: Now,
+	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 
@@ -306,7 +315,9 @@ func namedLogRoundTrip(t *testing.T, s store.Store) {
 }
 
 func namedLogKeyedByAthlete(t *testing.T, s store.Store) {
-	if err := s.MarkNamed(t.Context(), 1, 5, "title"); err != nil {
+	if err := s.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 1, ActivityID: 5, Title: "title", At: Now,
+	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 
@@ -486,5 +497,179 @@ func franchiseNamesAreArbitrary(t *testing.T, s store.Store) {
 			t.Errorf("FranchisePosition(%q) = %d, want %d: two names share a position",
 				name, got, want)
 		}
+	}
+}
+
+// The title history reads newest first, which is the order the prompt wants:
+// the most recent titles are the ones a new one must not repeat.
+func recentTitlesNewestFirst(t *testing.T, s store.Store) {
+	t.Helper()
+
+	for index, title := range []string{"oldest", "middle", "newest"} {
+		if err := s.MarkNamed(t.Context(), store.Naming{
+			AthleteID:  7,
+			ActivityID: int64(100 + index),
+			Title:      title,
+			Language:   "de",
+			At:         Now.Add(time.Duration(index) * time.Hour),
+		}); err != nil {
+			t.Fatalf("MarkNamed(%q): %v", title, err)
+		}
+	}
+
+	titles, err := s.RecentTitles(t.Context(), 7, 10)
+	if err != nil {
+		t.Fatalf("RecentTitles: %v", err)
+	}
+
+	got := make([]string, 0, len(titles))
+	for _, entry := range titles {
+		got = append(got, entry.Title)
+	}
+
+	want := []string{"newest", "middle", "oldest"}
+	if !slices.Equal(got, want) {
+		t.Errorf("RecentTitles = %v, want %v", got, want)
+	}
+
+	// The language round-trips: it cannot be recovered from Strava later, so
+	// losing it here loses it for good.
+	if len(titles) > 0 && titles[0].Language != "de" {
+		t.Errorf("language = %q, want %q", titles[0].Language, "de")
+	}
+}
+
+// One athlete's history is not another's.
+func recentTitlesKeyedByAthlete(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if err := s.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 8, ActivityID: 200, Title: "theirs", At: Now,
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	titles, err := s.RecentTitles(t.Context(), 9, 10)
+	if err != nil {
+		t.Fatalf("RecentTitles: %v", err)
+	}
+
+	if len(titles) != 0 {
+		t.Errorf("RecentTitles for another athlete returned %d entries", len(titles))
+	}
+}
+
+// The limit is honored, and a limit of zero means nothing rather than
+// everything — an unbounded read grows with the athlete's riding.
+func recentTitlesBounded(t *testing.T, s store.Store) {
+	t.Helper()
+
+	for index := range 5 {
+		if err := s.MarkNamed(t.Context(), store.Naming{
+			AthleteID:  10,
+			ActivityID: int64(300 + index),
+			Title:      "title",
+			At:         Now.Add(time.Duration(index) * time.Minute),
+		}); err != nil {
+			t.Fatalf("MarkNamed: %v", err)
+		}
+	}
+
+	titles, err := s.RecentTitles(t.Context(), 10, 2)
+	if err != nil {
+		t.Fatalf("RecentTitles: %v", err)
+	}
+
+	if len(titles) != 2 {
+		t.Errorf("RecentTitles(limit 2) returned %d entries", len(titles))
+	}
+
+	for _, limit := range []int{0, -1} {
+		titles, err := s.RecentTitles(t.Context(), 10, limit)
+		if err != nil {
+			t.Fatalf("RecentTitles(limit %d): %v", limit, err)
+		}
+
+		if len(titles) != 0 {
+			t.Errorf("RecentTitles(limit %d) returned %d entries, want none", limit, len(titles))
+		}
+	}
+}
+
+// A route ridden again is counted, and the first ride is what a callback
+// names — "same route as" means the first time, not the previous one.
+func routeCountsRepeats(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if _, ok, err := s.Route(t.Context(), 11, "abc123"); err != nil || ok {
+		t.Fatalf("Route on an unridden route = %v, %v", ok, err)
+	}
+
+	first := Now
+	second := Now.Add(48 * time.Hour)
+
+	route, err := s.RecordRoute(t.Context(), 11, "abc123", first)
+	if err != nil {
+		t.Fatalf("RecordRoute: %v", err)
+	}
+
+	if route.Count != 1 {
+		t.Errorf("first ride counted %d, want 1", route.Count)
+	}
+
+	route, err = s.RecordRoute(t.Context(), 11, "abc123", second)
+	if err != nil {
+		t.Fatalf("RecordRoute: %v", err)
+	}
+
+	if route.Count != 2 {
+		t.Errorf("second ride counted %d, want 2", route.Count)
+	}
+
+	if !route.FirstSeen.Equal(first.UTC()) {
+		t.Errorf("FirstSeen = %v, want the first ride at %v", route.FirstSeen, first.UTC())
+	}
+
+	if !route.LastSeen.Equal(second.UTC()) {
+		t.Errorf("LastSeen = %v, want the second ride at %v", route.LastSeen, second.UTC())
+	}
+
+	stored, ok, err := s.Route(t.Context(), 11, "abc123")
+	if err != nil || !ok {
+		t.Fatalf("Route after recording = %v, %v", ok, err)
+	}
+
+	if stored.Count != 2 {
+		t.Errorf("stored count = %d, want 2", stored.Count)
+	}
+}
+
+// Two routes, and two athletes, count separately.
+func routesAreIndependent(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if _, err := s.RecordRoute(t.Context(), 12, "route-a", Now); err != nil {
+		t.Fatalf("RecordRoute: %v", err)
+	}
+
+	if _, err := s.RecordRoute(t.Context(), 12, "route-a", Now); err != nil {
+		t.Fatalf("RecordRoute: %v", err)
+	}
+
+	if _, err := s.RecordRoute(t.Context(), 12, "route-b", Now); err != nil {
+		t.Fatalf("RecordRoute: %v", err)
+	}
+
+	other, ok, err := s.Route(t.Context(), 12, "route-b")
+	if err != nil || !ok {
+		t.Fatalf("Route: %v, %v", ok, err)
+	}
+
+	if other.Count != 1 {
+		t.Errorf("a second route counted %d, want 1", other.Count)
+	}
+
+	if _, ok, _ := s.Route(t.Context(), 13, "route-a"); ok {
+		t.Error("routes leaked across athletes")
 	}
 }

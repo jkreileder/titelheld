@@ -287,7 +287,10 @@ func TestAlreadyNamedActivityIsDropped(t *testing.T) {
 
 	// This is the self-caused update: the rename we performed comes back as an
 	// event, and the named log makes it a no-op.
-	if err := memory.MarkNamed(t.Context(), 7, 5, "The Pink Panther Strikes Again"); err != nil {
+	if err := memory.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 7, ActivityID: 5,
+		Title: "The Pink Panther Strikes Again", At: time.Now(),
+	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 

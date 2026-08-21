@@ -43,12 +43,12 @@ func (f *faultyStore) Named(ctx context.Context, athleteID, activityID int64) (s
 	return f.Store.Named(ctx, athleteID, activityID)
 }
 
-func (f *faultyStore) MarkNamed(ctx context.Context, athleteID, activityID int64, title string) error {
+func (f *faultyStore) MarkNamed(ctx context.Context, naming store.Naming) error {
 	if f.markNamedErr != nil {
 		return f.markNamedErr
 	}
 
-	return f.Store.MarkNamed(ctx, athleteID, activityID, title)
+	return f.Store.MarkNamed(ctx, naming)
 }
 
 func (f *faultyStore) Remove(ctx context.Context, athleteID, activityID int64) error {

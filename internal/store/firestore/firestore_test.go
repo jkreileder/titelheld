@@ -211,10 +211,26 @@ func TestEveryMethodReportsAFailedClient(t *testing.T) {
 			_, err := firestoreStore.Enqueue(ctx, store.Pending{AthleteID: 1, ActivityID: 2})
 			return err
 		},
-		"Due":       func() error { _, err := firestoreStore.Due(ctx, storetest.Now); return err },
-		"Remove":    func() error { return firestoreStore.Remove(ctx, 1, 2) },
-		"Len":       func() error { _, err := firestoreStore.Len(ctx); return err },
-		"MarkNamed": func() error { return firestoreStore.MarkNamed(ctx, 1, 2, "t") },
+		"Due":    func() error { _, err := firestoreStore.Due(ctx, storetest.Now); return err },
+		"Remove": func() error { return firestoreStore.Remove(ctx, 1, 2) },
+		"Len":    func() error { _, err := firestoreStore.Len(ctx); return err },
+		"MarkNamed": func() error {
+			return firestoreStore.MarkNamed(ctx, store.Naming{
+				AthleteID: 1, ActivityID: 2, Title: "t", At: storetest.Now,
+			})
+		},
+		"RecentTitles": func() error {
+			_, err := firestoreStore.RecentTitles(ctx, 1, 5)
+			return err
+		},
+		"Route": func() error {
+			_, _, err := firestoreStore.Route(ctx, 1, "fp")
+			return err
+		},
+		"RecordRoute": func() error {
+			_, err := firestoreStore.RecordRoute(ctx, 1, "fp", storetest.Now)
+			return err
+		},
 		"Named":     func() error { _, _, err := firestoreStore.Named(ctx, 1, 2); return err },
 		"Place":     func() error { _, _, err := firestoreStore.Place(ctx, "k"); return err },
 		"SavePlace": func() error { return firestoreStore.SavePlace(ctx, "k", store.Place{Name: "n"}) },
@@ -393,6 +409,58 @@ func TestFranchiseNamesThatAreNotValidDocumentIDs(t *testing.T) {
 		if got != want {
 			t.Errorf("FranchisePosition(%q) = %d, want %d: two names share a document",
 				name, got, want)
+		}
+	}
+}
+
+// The declared index has to match the query, and nothing else checks that.
+//
+// The emulator serves any query without index definitions, so every test in
+// this package passes whether or not the Terraform declaration is right. The
+// mismatch shows up only against the real database, as an error on every
+// naming. Reading the declaration here turns "remember to eyeball it in
+// review" into something that fails a build.
+//
+// It asserts the shape the query needs — an equality on athlete_id with an
+// ordering on named_at descending — not the file's formatting.
+func TestTheDeclaredIndexMatchesTheRecentTitlesQuery(t *testing.T) {
+	t.Parallel()
+
+	const declaration = "../../../infra/firestore.tf"
+
+	raw, err := os.ReadFile(declaration)
+	if err != nil {
+		t.Fatalf("read the index declaration: %v", err)
+	}
+
+	terraform := string(raw)
+
+	block := strings.Index(terraform, `resource "google_firestore_index" "named_recent"`)
+	if block < 0 {
+		t.Fatal("no google_firestore_index.named_recent is declared; RecentTitles cannot run")
+	}
+
+	body := terraform[block:]
+	if end := strings.Index(body, "\nresource "); end > 0 {
+		body = body[:end]
+	}
+
+	// The collection the query runs against. Production sets no prefix, so the
+	// constant is the collection ID verbatim.
+	if want := `collection = "` + fsstore.CollectionNamed + `"`; !strings.Contains(body, want) {
+		t.Errorf("the index does not declare %s", want)
+	}
+
+	for _, want := range []struct{ field, order string }{
+		{field: "athlete_id", order: "ASCENDING"},
+		{field: "named_at", order: "DESCENDING"},
+	} {
+		if !strings.Contains(body, `field_path = "`+want.field+`"`) {
+			t.Errorf("the index does not cover %q, which RecentTitles filters or orders on", want.field)
+		}
+
+		if !strings.Contains(body, `order      = "`+want.order+`"`) {
+			t.Errorf("the index does not declare %s for %q", want.order, want.field)
 		}
 	}
 }

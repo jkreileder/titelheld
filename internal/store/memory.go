@@ -24,12 +24,21 @@ type Memory struct {
 	mu      sync.RWMutex
 	tokens  map[int64]strava.Token
 	pending map[key]Pending
-	named   map[key]string
+	named   map[key]NamedTitle
 	places  map[string]Place
 
 	// franchises is keyed by athlete and franchise name, so two athletes walk
 	// the same series independently.
 	franchises map[franchiseKey]int
+
+	// routes counts how often each athlete has ridden each fingerprint.
+	routes map[routeKey]Route
+}
+
+// routeKey identifies one athlete's history of one route.
+type routeKey struct {
+	athleteID   int64
+	fingerprint string
 }
 
 // franchiseKey identifies one athlete's position in one franchise.
@@ -48,9 +57,10 @@ func NewMemory() *Memory {
 	return &Memory{
 		tokens:     make(map[int64]strava.Token),
 		pending:    make(map[key]Pending),
-		named:      make(map[key]string),
+		named:      make(map[key]NamedTitle),
 		places:     make(map[string]Place),
 		franchises: make(map[franchiseKey]int),
+		routes:     make(map[routeKey]Route),
 	}
 }
 
@@ -173,13 +183,55 @@ func (m *Memory) Len(_ context.Context) (int, error) {
 }
 
 // MarkNamed implements [NamedLog].
-func (m *Memory) MarkNamed(_ context.Context, athleteID, activityID int64, title string) error {
+func (m *Memory) MarkNamed(_ context.Context, naming Naming) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.named[key{athleteID: athleteID, activityID: activityID}] = title
+	m.named[key{athleteID: naming.AthleteID, activityID: naming.ActivityID}] = NamedTitle{
+		ActivityID: naming.ActivityID,
+		Title:      naming.Title,
+		Language:   naming.Language,
+		NamedAt:    naming.At.UTC(),
+	}
 
 	return nil
+}
+
+// RecentTitles returns the newest titles first.
+//
+// Ties on the timestamp break by activity ID, descending, so the order is
+// total rather than merely sorted. Two activities named in the same sweep
+// share a clock reading, and a test that could not say which came first would
+// be asserting on map iteration order.
+func (m *Memory) RecentTitles(_ context.Context, athleteID int64, limit int) ([]NamedTitle, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	titles := make([]NamedTitle, 0, len(m.named))
+
+	for id, entry := range m.named {
+		if id.athleteID == athleteID {
+			titles = append(titles, entry)
+		}
+	}
+
+	slices.SortFunc(titles, func(a, b NamedTitle) int {
+		if order := b.NamedAt.Compare(a.NamedAt); order != 0 {
+			return order
+		}
+
+		return cmp.Compare(b.ActivityID, a.ActivityID)
+	})
+
+	if len(titles) > limit {
+		titles = titles[:limit]
+	}
+
+	return titles, nil
 }
 
 // Named implements [NamedLog].
@@ -187,9 +239,9 @@ func (m *Memory) Named(_ context.Context, athleteID, activityID int64) (string, 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	title, ok := m.named[key{athleteID: athleteID, activityID: activityID}]
+	entry, ok := m.named[key{athleteID: athleteID, activityID: activityID}]
 
-	return title, ok, nil
+	return entry.Title, ok, nil
 }
 
 // Place implements [GeocodeCache].
@@ -229,4 +281,35 @@ func (m *Memory) AdvanceFranchise(_ context.Context, athleteID int64, franchise 
 	m.franchises[k]++
 
 	return m.franchises[k], nil
+}
+
+// Route returns how often the athlete has ridden this route.
+func (m *Memory) Route(_ context.Context, athleteID int64, fingerprint string) (Route, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	route, ok := m.routes[routeKey{athleteID: athleteID, fingerprint: fingerprint}]
+
+	return route, ok, nil
+}
+
+// RecordRoute counts one more ride of this route.
+func (m *Memory) RecordRoute(
+	_ context.Context, athleteID int64, fingerprint string, at time.Time,
+) (Route, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	id := routeKey{athleteID: athleteID, fingerprint: fingerprint}
+
+	route, ok := m.routes[id]
+	if !ok {
+		route = Route{FirstSeen: at.UTC()}
+	}
+
+	route.Count++
+	route.LastSeen = at.UTC()
+	m.routes[id] = route
+
+	return route, nil
 }
