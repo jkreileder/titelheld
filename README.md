@@ -6,11 +6,17 @@ everything that should stay boring untouched.
 
 *Titelheld* is German for the character a piece is named after: the one in the title role.
 
-> **Status: early construction.** The classifier, configuration, the store (in-memory *and*
-> Firestore), the Strava client with OAuth, the webhook with its delay-queue enqueue, and
-> geocoding are implemented, and the binary runs. The prompt builder, the LLM interface, the
-> sweep and writer, and the Cloud Run deployment are not built yet. Operator documentation
-> (GCP setup, Strava app registration, config schema, franchises) lands with those phases.
+> **Status: under construction.** The naming pipeline is complete end to end — classifier,
+> configuration, both stores, the Strava client with OAuth, the webhook and its delay queue,
+> geocoding, the prompt builder and LLM providers, and the sweep that drains the queue and
+> writes the title. The infrastructure is applied and the service is deployed.
+>
+> Not built: the per-athlete configuration document, so the athlete's tiers, geofences and
+> banned words are still the shipped defaults; and franchise *selection*, though the position
+> store it needs is in place — see [Franchises](#franchises).
+>
+> **The scheduler is paused.** Nothing fires the sweep until it is unpaused by hand, which is
+> deliberate: the naming pipeline is reviewed end to end before it runs unattended.
 >
 > **No Strava push subscription exists yet.** With `FIRESTORE_PROJECT` unset the service runs
 > on the in-memory store and forgets the OAuth token on restart; see
@@ -29,6 +35,7 @@ everything that should stay boring untouched.
 - [Development](#development)
 - [Security and privacy](#security-and-privacy)
 - [Geography](#geography)
+- [Franchises](#franchises)
 - [Local development](#local-development)
 - [Infrastructure](#infrastructure)
   - [What Terraform manages](#what-terraform-manages)
@@ -164,6 +171,27 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
 | `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
 
+The sweep that drains the delay queue is configured by three variables. Terraform sets all
+three; nothing else does, and none of them is written by hand.
+
+Set none of them and the sweep route is not mounted at all, which is the local case. Set some
+of them and the service refuses to start: ignoring the rest would leave the queue silently
+undrained, and inferring the missing one would mean inventing the identity the endpoint trusts.
+
+`SWEEP_AUDIENCE` is the one exception, and it is not a special case so much as the first apply.
+The path is generated and the service account exists from the start, so Terraform always sets
+both; the audience is built from the service's own URL, which Cloud Run has not minted yet. An
+empty audience therefore means "no sweep route yet" and the service starts normally — treating
+it as fatal would stop the very apply that creates the service. The route appears on the second
+apply, with the audience filled in. The unsafe reading, *accept any audience*, is the one thing
+that never happens.
+
+| Variable                | Required | Default | Purpose                                          |
+| ----------------------- | -------- | ------- | ------------------------------------------------ |
+| `SWEEP_PATH`            | no       | —       | Full sweep path; Terraform generates the segment |
+| `SWEEP_AUDIENCE`        | no       | —       | Audience the Scheduler's OIDC token must carry   |
+| `SWEEP_SERVICE_ACCOUNT` | no       | —       | Email of the only identity allowed to sweep      |
+
 Naming. The default provider is keyless — Gemini is called through Vertex AI with the runtime
 service account's own credentials, so `LLM_API_KEY` exists only for the Anthropic alternative
 and is required only when that is selected.
@@ -265,6 +293,7 @@ returned a truncated fragment, and stopped at `MAX_TOKENS`. The provider therefo
 | `GET /auth/callback`     | Completes it, verifies the granted scopes, stores the token |
 | `GET /webhook/<secret>`  | Strava's subscription validation handshake                  |
 | `POST /webhook/<secret>` | Event intake; queues the activity after the delay           |
+| `POST /sweep/<secret>`   | Drains the delay queue; Cloud Scheduler only                |
 
 Both the webhook and the authorization start are mounted at their full secret paths, so
 guessing the prefix but not the segment is a 404 from the router. Starting the flow is what
@@ -285,7 +314,55 @@ so the ordering costs nothing that is not already handled.
 The delay is served by a **Cloud Scheduler sweep** rather than Cloud Tasks: it needs no second
 GCP service and no client library, a failed activity simply stays queued until the next sweep
 instead of needing its own retry policy, and ten-minute precision makes the scheduler's coarse
-granularity irrelevant. This phase only enqueues; the sweep endpoint lands with the writer.
+granularity irrelevant.
+
+The sweep is the one route that makes this service act on its own initiative rather than
+answering somebody, so it is the one route with an identity check. It has to do that check
+itself: `allUsers` holds `roles/run.invoker` — Strava cannot present a Google credential, and
+the webhook and the sweep share one service — so Cloud Run authenticates nobody, and a request
+arriving here has been let through rather than vouched for. The unguessable path is
+obfuscation; the OIDC token is the authentication.
+
+Four things are checked, and a request that fails any of them gets a bare `401`:
+
+- the `Authorization` header carries a Bearer token,
+- the token validates against `SWEEP_AUDIENCE`, signature and expiry included,
+- its issuer is `https://accounts.google.com`,
+- its `email` is `SWEEP_SERVICE_ACCOUNT` and its `email_verified` is `true`.
+
+The response never says which failed; the log says as much as it honestly can. Issuer, `email`
+and `email_verified` are named individually. Signature, expiry and audience are not
+distinguishable — they come back as one error from the token validator — so the log records the
+validator's own wording alongside the audience that was required, which is enough to recognize
+a misconfigured audience without claiming to have identified it. A caller who guessed the path
+learns only "no".
+
+The scheduler account is separate from the runtime account and holds invoke permission and
+nothing else, so the identity that can trigger work cannot read the athlete's data.
+
+Terraform feeds one value to both sides of the audience, because a mismatch does not announce
+itself: the scheduler keeps firing, the handler keeps answering `401`, and the queue quietly
+stops draining.
+
+Overlapping fires run one sweep, not two. The scheduler's attempt deadline is longer than the
+interval between fires, so this is a scheduled event rather than a hypothetical, and two sweeps
+over one queue can both read the named log for an activity before either writes it — and rename
+it twice. The second fire is answered immediately rather than made to wait, because waiting
+would only spend its deadline on a queue the first sweep is already draining.
+
+A sweep that names nothing, or that fails on every activity, is still a `200`. Failed
+activities stay queued and the next fire retries them; a non-2xx would make Cloud Scheduler
+retry at once, straight back into whatever rate limit caused the failure. Only a queue that
+could not be read at all is a `500`, and its body does not repeat the internal error.
+
+A shutdown is not a failure either. Cloud Run gives a container a short grace period, and the
+sweep stops at an activity boundary rather than part-way through one — so the worst case is an
+entry left queued, never a rename sent with nothing recorded. The response is a `200` whose
+`cancelled` field is true, carrying the counts of what was finished before it stopped:
+
+```json
+{"due":12,"named":3,"skipped":1,"failed":0,"cancelled":true}
+```
 
 ## Development
 
@@ -337,6 +414,38 @@ out-and-back does not spend the budget geocoding its start twice.
 
 The naming layer receives a `geo.Summary`, whose fields are all names. There is nowhere in it to
 put a coordinate.
+
+## Franchises
+
+A franchise is an ordered list of titles walked one entry at a time. The shipped example is the
+Pink Panther films, for gravel rides on the gear of the same name: each such ride takes the next
+film in the sequence. The model may adapt an entry to the ride — it may not skip the order.
+
+Franchises are **data, not code**. Adding one is a configuration change and needs no release.
+
+Firestore stores a single integer per athlete per franchise: how many entries have been used.
+It never stores the titles. That is what lets a franchise be renamed, reordered or extended
+without a migration, and it is why removing a franchise from configuration is safe — a position
+for a franchise that no longer exists is simply never read. `FranchisePosition` returns `0` for
+a franchise never used and for one that does not exist, and those two cases are deliberately
+indistinguishable.
+
+`AdvanceFranchise` increments and returns the new position in one transaction, so the store
+decides the next number rather than a caller reading, adding one and writing back.
+
+To add a franchise:
+
+1. Pick a name that will not change. It is the document key, so renaming it resets the athlete
+   to the start of the series.
+2. Add the name, the ordered titles, and the rule that selects it — a sport type, a gear ID, or
+   both — to the athlete's configuration document.
+3. If the athlete has already used some entries by hand, set the position to that count. Leaving
+   it unset starts at the first title.
+
+**Not yet wired.** The position store, its conformance tests and its Firestore IAM are in place;
+the selection step that consults it during naming is not, and neither is the per-athlete
+configuration document the list would live in. Until both land, no activity is named from a
+franchise.
 
 ## Local development
 

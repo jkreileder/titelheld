@@ -12,11 +12,10 @@ resource "google_cloud_scheduler_job" "sweep" {
 
   attempt_deadline = "320s"
 
-  # Paused until the sweep handler exists. Left running, this would POST to a
-  # route the service does not serve every five minutes: two 404s per fire,
-  # and an instance woken each time, so min_instance_count = 0 would never
-  # actually mean an idle service - which is what the budget assumes.
-  # Unpause in the same change that ships the handler.
+  # Paused. The handler exists, so this is no longer waiting on code - it is
+  # unpaused by hand, deliberately, after the naming pipeline has been reviewed
+  # end to end. Until then nothing fires, which is what keeps a service whose
+  # min_instance_count is 0 genuinely idle, and the budget honest.
   paused = true
 
   retry_config {
@@ -37,7 +36,9 @@ resource "google_cloud_scheduler_job" "sweep" {
     # README.md, "Why the service is publicly invokable".
     oidc_token {
       service_account_email = google_service_account.scheduler.email
-      audience              = google_cloud_run_v2_service.this.uri
+
+      # The same local the service is told to expect. See run.tf.
+      audience = local.sweep_audience
     }
   }
 

@@ -1,5 +1,5 @@
 // Package server assembles the service's HTTP surface: a health check, the
-// one-time OAuth bootstrap, and the Strava webhook.
+// one-time OAuth bootstrap, the Strava webhook, and the scheduled sweep.
 //
 // The OAuth handlers are deliberately the only interactive thing here. They are
 // plumbing for a one-time authorization, not a user interface.
@@ -31,7 +31,15 @@ type Deps struct {
 	OAuth   *strava.OAuth
 	Tokens  strava.TokenStore
 	Webhook http.Handler
-	Logger  *slog.Logger
+
+	// Sweep drains the delay queue. Optional: nil, or a configuration with no
+	// sweep settings, means the route is not mounted at all. That is the local
+	// case, and the first-apply case before Cloud Run has minted the URL the
+	// scheduler's audience is built from. Mounting a sweep route that cannot
+	// verify who is calling it is the one outcome worth ruling out here.
+	Sweep http.Handler
+
+	Logger *slog.Logger
 
 	// Bound reports the athlete this service is already bound to, and whether
 	// there is one. Consulted only when no athlete ID is configured. Optional.
@@ -111,6 +119,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+s.deps.Config.AuthPath, s.authStart)
 	mux.HandleFunc("GET "+config.AuthCallbackPath, s.authCallback)
 	mux.Handle(s.deps.Config.WebhookPath, s.deps.Webhook)
+
+	// POST only, unlike the webhook: Strava sends the subscription handshake
+	// as a GET to the same path it later POSTs events to, but Cloud Scheduler
+	// only ever POSTs. Narrowing the method means a GET that guessed the path
+	// is a 404 from the mux, before any token handling runs.
+	if s.deps.Sweep != nil && s.deps.Config.Sweep.Enabled() {
+		mux.Handle("POST "+s.deps.Config.Sweep.Path, s.deps.Sweep)
+	}
 
 	return mux
 }

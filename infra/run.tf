@@ -14,6 +14,18 @@ locals {
   placeholder_image = "us-docker.pkg.dev/cloudrun/container/hello"
 
   sweep_path = "/sweep/${random_password.sweep_path.result}"
+
+  # The audience Cloud Scheduler mints its OIDC token for, and the audience the
+  # sweep handler requires. One value feeds both sides, because a mismatch is
+  # not a visible failure: the scheduler keeps firing, the handler keeps
+  # answering 401, and the queue quietly stops draining.
+  #
+  # It cannot be read from google_cloud_run_v2_service.this.uri here. The env
+  # block below is inside that resource, so referencing its own URL is a cycle.
+  # var.base_url is the same string by the time either side runs - it is set
+  # from the service_url output on the second apply - and it is the value that
+  # stays correct if a custom domain is ever put in front.
+  sweep_audience = var.base_url
 }
 
 resource "google_cloud_run_v2_service" "this" {
@@ -82,6 +94,21 @@ resource "google_cloud_run_v2_service" "this" {
       env {
         name  = "SWEEP_PATH"
         value = local.sweep_path
+      }
+
+      # What the handler checks the Scheduler's OIDC token against. Empty on
+      # the first apply, when base_url is not known yet; the handler treats
+      # that as "do not mount the sweep route at all" rather than as "accept
+      # any audience", so the window before the second apply is closed rather
+      # than open.
+      env {
+        name  = "SWEEP_AUDIENCE"
+        value = local.sweep_audience
+      }
+
+      env {
+        name  = "SWEEP_SERVICE_ACCOUNT"
+        value = google_service_account.scheduler.email
       }
 
       env {
