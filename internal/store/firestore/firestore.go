@@ -655,8 +655,10 @@ func (s *Store) RecordRoute(
 
 	var route store.Route
 
+	at = at.UTC()
+
 	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		route = store.Route{FirstSeen: at.UTC()}
+		route = store.Route{FirstSeen: at, LastSeen: at}
 
 		snapshot, err := tx.Get(ref)
 		switch {
@@ -670,10 +672,21 @@ func (s *Store) RecordRoute(
 
 			route.Count = doc.Count
 			route.FirstSeen = doc.FirstSeen.UTC()
+			route.LastSeen = doc.LastSeen.UTC()
+		}
+
+		// Earliest and latest ride, not first and last recorded. See the note
+		// on the in-memory implementation: rides do not arrive in the order
+		// they happened.
+		if at.Before(route.FirstSeen) {
+			route.FirstSeen = at
+		}
+
+		if at.After(route.LastSeen) {
+			route.LastSeen = at
 		}
 
 		route.Count++
-		route.LastSeen = at.UTC()
 
 		return tx.Set(ref, routeDoc{
 			AthleteID:   athleteID,

@@ -55,6 +55,7 @@ func Suite(t *testing.T, newStore Factory) {
 		"RecentTitlesBounded":        recentTitlesBounded,
 		"RouteCountsRepeats":         routeCountsRepeats,
 		"RoutesAreIndependent":       routesAreIndependent,
+		"RouteBoundsFromTimestamps":  routeBoundsFromTimestamps,
 	}
 
 	for name, run := range tests {
@@ -671,5 +672,43 @@ func routesAreIndependent(t *testing.T, s store.Store) {
 
 	if _, ok, _ := s.Route(t.Context(), 13, "route-a"); ok {
 		t.Error("routes leaked across athletes")
+	}
+}
+
+// Route bounds come from when the rides happened, not when they were recorded.
+//
+// Rides do not arrive in the order they happened: an activity uploaded days
+// late is processed after more recent ones, and a history import arrives in
+// whatever order it reads. "Same route as" names the earliest ride, so taking
+// the first one recorded would put the wrong date in a title.
+func routeBoundsFromTimestamps(t *testing.T, s store.Store) {
+	t.Helper()
+
+	middle := Now
+	earliest := Now.Add(-720 * time.Hour)
+	latest := Now.Add(72 * time.Hour)
+
+	// Deliberately out of order.
+	for _, at := range []time.Time{middle, latest, earliest} {
+		if _, err := s.RecordRoute(t.Context(), 14, "out-of-order", at); err != nil {
+			t.Fatalf("RecordRoute: %v", err)
+		}
+	}
+
+	route, ok, err := s.Route(t.Context(), 14, "out-of-order")
+	if err != nil || !ok {
+		t.Fatalf("Route: %v, %v", ok, err)
+	}
+
+	if route.Count != 3 {
+		t.Errorf("count = %d, want 3", route.Count)
+	}
+
+	if !route.FirstSeen.Equal(earliest.UTC()) {
+		t.Errorf("FirstSeen = %v, want the earliest ride at %v", route.FirstSeen, earliest.UTC())
+	}
+
+	if !route.LastSeen.Equal(latest.UTC()) {
+		t.Errorf("LastSeen = %v, want the latest ride at %v", route.LastSeen, latest.UTC())
 	}
 }

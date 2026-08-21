@@ -20,7 +20,7 @@ Six collections, and nothing else. Adding a seventh means changing this document
 | ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
 | `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes   | **No**                  |
 | `pending`   | `{athleteID}-{activity}`  | Queued activity and its `process_after` deadline | Yes                     |
-| `named`     | `{athleteID}-{activity}`  | Title this service wrote, and when               | Yes, from Strava        |
+| `named`     | `{athleteID}-{activity}`  | Title this service wrote, its language, and when | Mostly, from Strava     |
 | `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
 | `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
 | `routes`    | `{athleteID}-{digest}`    | How often a route fingerprint has been ridden    | Yes, from Strava        |

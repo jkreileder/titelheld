@@ -302,13 +302,27 @@ func (m *Memory) RecordRoute(
 
 	id := routeKey{athleteID: athleteID, fingerprint: fingerprint}
 
+	at = at.UTC()
+
 	route, ok := m.routes[id]
 	if !ok {
-		route = Route{FirstSeen: at.UTC()}
+		route = Route{FirstSeen: at, LastSeen: at}
+	}
+
+	// The earliest and latest ride, not the first and last recorded. Rides do
+	// not arrive in the order they happened: an activity uploaded days late is
+	// processed after more recent ones, and a history import would arrive in
+	// whatever order it reads. "Same route as" names the earliest, so taking
+	// the first one recorded would name the wrong day.
+	if at.Before(route.FirstSeen) {
+		route.FirstSeen = at
+	}
+
+	if at.After(route.LastSeen) {
+		route.LastSeen = at
 	}
 
 	route.Count++
-	route.LastSeen = at.UTC()
 	m.routes[id] = route
 
 	return route, nil
