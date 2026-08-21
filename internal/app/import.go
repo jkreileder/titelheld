@@ -44,7 +44,18 @@ func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string
 
 	defer closeStore()
 
-	return importWith(ctx, cfg, dataStore, nil, logger)
+	token, err := dataStore.AnyToken(ctx)
+	if err != nil {
+		return fmt.Errorf(
+			"import: no single bound athlete; run the authorization flow first: %w", err)
+	}
+
+	client, err := importClient(cfg, dataStore, token.AthleteID)
+	if err != nil {
+		return err
+	}
+
+	return importWith(ctx, cfg, dataStore, client, logger)
 }
 
 // importWith runs the import against an already-open store.
@@ -54,8 +65,8 @@ func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string
 // only what needs a real environment — reading it, refusing an in-memory one,
 // and opening Firestore.
 //
-// A nil activities builds the real client. A test passes its own, which is the
-// only way to exercise this without reaching Strava.
+// The listing arrives already built, so this has no branch a test cannot
+// reach: Import supplies the real read-only client, a test supplies its own.
 func importWith(
 	ctx context.Context, cfg config.Config, dataStore boundStore,
 	activities importer.Activities, logger *slog.Logger,
@@ -64,15 +75,6 @@ func importWith(
 	if err != nil {
 		return fmt.Errorf(
 			"import: no single bound athlete; run the authorization flow first: %w", err)
-	}
-
-	if activities == nil {
-		client, err := importClient(cfg, dataStore, token.AthleteID)
-		if err != nil {
-			return err
-		}
-
-		activities = client
 	}
 
 	rules, err := classifierConfig(cfg)

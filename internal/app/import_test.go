@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -189,5 +190,39 @@ func TestTheImportClientCannotWrite(t *testing.T) {
 	if _, err := client.UpdateActivityNameAndDescription(
 		t.Context(), 1, "Neuer Titel", "Neue Beschreibung"); err == nil {
 		t.Error("the import's client accepted a rename with a description")
+	}
+}
+
+// The whole import, against a real Firestore.
+//
+// Everything above this exercises the assembled path with an in-memory store;
+// what is left is what only a database can cover — opening it, resolving the
+// bound athlete out of it, and the refusal that guards against importing into
+// a store that vanishes when the process exits.
+//
+// Skipped without the emulator, like the store's own conformance suite. CI
+// runs one for the whole test run.
+func TestImportAgainstTheEmulator(t *testing.T) {
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set; start the Firestore emulator to run this")
+	}
+
+	// A database of its own, so a parallel run of anything else cannot see it.
+	project := "titelheld-import-test"
+
+	getenv := env(map[string]string{
+		"FIRESTORE_PROJECT":  project,
+		"FIRESTORE_DATABASE": "(default)",
+	})
+
+	// No athlete bound yet: the import must say so rather than import nothing
+	// and report success.
+	err := Import(t.Context(), quietLogger(), getenv)
+	if err == nil {
+		t.Fatal("the import ran with no athlete bound")
+	}
+
+	if !strings.Contains(err.Error(), "authorization flow") {
+		t.Errorf("error %q does not say what to do about it", err)
 	}
 }

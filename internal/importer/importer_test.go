@@ -511,3 +511,50 @@ func (s *sizeRecorder) ListActivities(_ context.Context, _, perPage int) ([]stra
 
 	return nil, nil
 }
+
+// Run supplies a logger and a pause when it is given neither.
+//
+// The command passes both; a caller that does not must not panic on a nil
+// logger or hang on a nil pause.
+func TestRunSuppliesItsOwnLoggerAndPause(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+
+	// One page, so the default pause is assigned but never waited on — the
+	// loop only pauses between pages.
+	list := &pages{activities: []strava.Activity{activity(80, "Eine Runde", 1)}}
+
+	result, err := Run(t.Context(), Deps{
+		Activities: list,
+		Store:      memory,
+		AthleteID:  4242,
+		PerPage:    strava.MaxActivitiesPerPage,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result.Imported != 1 {
+		t.Errorf("imported %d, want 1", result.Imported)
+	}
+}
+
+// A context that is already done stops before the first request.
+func TestRunStopsOnAnAlreadyCancelledContext(t *testing.T) {
+	t.Parallel()
+
+	list := &pages{activities: []strava.Activity{activity(81, "Eine Runde", 1)}}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := Run(ctx, deps(t, store.NewMemory(), list))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v, want context.Canceled", err)
+	}
+
+	if list.calls != 0 {
+		t.Errorf("Strava was called %d times with a cancelled context", list.calls)
+	}
+}

@@ -167,3 +167,44 @@ func TestListActivitiesRejectsAMalformedBody(t *testing.T) {
 		t.Error("a malformed page was accepted")
 	}
 }
+
+// A transport failure is reported rather than read as the end of the history.
+//
+// An empty page ends the listing, so an error that came back as "no
+// activities" would stop an import early and look like success.
+func TestListActivitiesReportsATransportFailure(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, WriteModeDryRun)
+
+	if _, err := client.ListActivities(t.Context(), 1, 10); err == nil {
+		t.Error("a 500 was read as the end of the history")
+	}
+}
+
+// A page padded past the byte cap is refused, not truncated.
+//
+// io.LimitReader reports EOF once its budget is gone, so without the headroom
+// check a body larger than the cap would decode whatever fitted and look
+// complete.
+func TestListActivitiesRejectsAnOversizedPage(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":1,"name":"Eine Runde"}]`))
+		_, _ = w.Write([]byte(strings.Repeat(" ", maxActivityListBytes)))
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, WriteModeDryRun)
+
+	if _, err := client.ListActivities(t.Context(), 1, 10); err == nil {
+		t.Error("a page past the byte cap was accepted")
+	}
+}
