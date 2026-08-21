@@ -28,7 +28,7 @@ import (
 // the caller leaves the activity queued on the strength of it.
 func (p *Processor) write(
 	ctx context.Context, athleteID int64, activity *strava.Activity,
-	title string, logger *slog.Logger,
+	title titled, logger *slog.Logger,
 ) (bool, error) {
 	if !p.deps.WritesEnabled {
 		// No re-read here. Dry run leaves the activity queued, so the pipeline
@@ -37,8 +37,9 @@ func (p *Processor) write(
 		// minutes budget on a line in a log. The copy the classifier fetched
 		// answers the only question the log asks.
 		logger.Info("dry run: not writing",
-			"would_title", logsafe.String(title),
-			"would_attribute", p.wouldAttribute(activity))
+			"would_title", logsafe.String(title.Text),
+			"would_attribute", p.wouldAttribute(activity),
+			"would_advance_franchise", logsafe.String(title.Franchise))
 
 		return false, nil
 	}
@@ -54,24 +55,34 @@ func (p *Processor) write(
 	if err := p.deps.Store.MarkNamed(ctx, store.Naming{
 		AthleteID:  athleteID,
 		ActivityID: activity.ID,
-		Title:      title,
+		Title:      title.Text,
+		Language:   string(title.Language),
+		Source:     title.Source,
 		At:         p.deps.Now(),
 	}); err != nil {
 		return false, fmt.Errorf("record the title before writing: %w", err)
 	}
 
+	// Recorded before the write, for the same reason the named log is. A
+	// crash between here and the PUT skips a franchise entry; the other order
+	// would issue one entry twice, which is the failure the series exists to
+	// prevent.
+	p.recordFranchise(ctx, athleteID, title, logger)
+
 	var err error
 	if attribute {
-		_, err = p.deps.Activities.UpdateActivityNameAndDescription(ctx, activity.ID, title, description)
+		_, err = p.deps.Activities.UpdateActivityNameAndDescription(
+			ctx, activity.ID, title.Text, description)
 	} else {
-		_, err = p.deps.Activities.UpdateActivityName(ctx, activity.ID, title)
+		_, err = p.deps.Activities.UpdateActivityName(ctx, activity.ID, title.Text)
 	}
 
 	if err != nil {
 		return false, fmt.Errorf("write the title: %w", err)
 	}
 
-	logger.Info("wrote the title", "title", logsafe.String(title), "attributed", attribute)
+	logger.Info("wrote the title",
+		"title", logsafe.String(title.Text), "attributed", attribute)
 
 	return true, nil
 }
@@ -84,6 +95,30 @@ func (p *Processor) write(
 // being right about it is not worth a Strava request on every sweep.
 func (p *Processor) wouldAttribute(activity *strava.Activity) bool {
 	return !p.deps.DisableAttribution && !naming.HasAttribution(activity.Description)
+}
+
+// recordFranchise advances the series this title came from.
+//
+// Never fatal. A position that could not be advanced means the next ride is
+// offered the same entry again — a repeat, which is worse than a gap but not
+// worth abandoning a title that is about to be written and already recorded.
+func (p *Processor) recordFranchise(
+	ctx context.Context, athleteID int64, title titled, logger *slog.Logger,
+) {
+	if title.Franchise == "" {
+		return
+	}
+
+	position, err := p.deps.Store.AdvanceFranchise(ctx, athleteID, title.Franchise)
+	if err != nil {
+		logger.Error("could not advance the franchise; the next ride may repeat this entry",
+			"franchise", logsafe.String(title.Franchise), "error", err)
+
+		return
+	}
+
+	logger.Info("advanced the franchise",
+		"franchise", logsafe.String(title.Franchise), "position", position)
 }
 
 // description decides what description to send, if any.

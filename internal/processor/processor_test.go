@@ -32,6 +32,21 @@ type fakeStrava struct {
 	// getCalls counts fetches; puts records each write in order.
 	getCalls int
 	puts     []put
+
+	// gearName is what GetGear answers with, and gearCalls counts how often
+	// it was asked — the name is cached, so "once" is the assertion.
+	gearName  string
+	gearErr   error
+	gearCalls int
+
+	// getErrFor fails the fetch of specific activity IDs, so a test can make
+	// re-reading history fail while the activity being named still loads.
+	getErrFor map[int64]error
+
+	// byID serves distinct activities per ID. Without it every ID answers
+	// with the one shared activity, so naming any of them retitles all of
+	// them and the classifier declines the rest.
+	byID map[int64]strava.Activity
 }
 
 type put struct {
@@ -40,7 +55,7 @@ type put struct {
 	hadDesc     bool
 }
 
-func (f *fakeStrava) GetActivity(_ context.Context, _ int64) (*strava.Activity, error) {
+func (f *fakeStrava) GetActivity(_ context.Context, id int64) (*strava.Activity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -50,12 +65,20 @@ func (f *fakeStrava) GetActivity(_ context.Context, _ int64) (*strava.Activity, 
 		return nil, f.getErr
 	}
 
+	if err, ok := f.getErrFor[id]; ok {
+		return nil, err
+	}
+
+	if activity, ok := f.byID[id]; ok {
+		return &activity, nil
+	}
+
 	copied := f.activity
 
 	return &copied, nil
 }
 
-func (f *fakeStrava) UpdateActivityName(_ context.Context, _ int64, name string) (*strava.Activity, error) {
+func (f *fakeStrava) UpdateActivityName(_ context.Context, id int64, name string) (*strava.Activity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -64,7 +87,13 @@ func (f *fakeStrava) UpdateActivityName(_ context.Context, _ int64, name string)
 	}
 
 	f.puts = append(f.puts, put{name: name})
-	f.activity.Name = name
+
+	if activity, ok := f.byID[id]; ok {
+		activity.Name = name
+		f.byID[id] = activity
+	} else {
+		f.activity.Name = name
+	}
 
 	return &f.activity, nil
 }
@@ -84,6 +113,20 @@ func (f *fakeStrava) UpdateActivityNameAndDescription(
 	f.activity.Description = description
 
 	return &f.activity, nil
+}
+
+// GetGear answers the gear lookup a franchise needs.
+func (f *fakeStrava) GetGear(_ context.Context, gearID string) (strava.Gear, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.gearCalls++
+
+	if f.gearErr != nil {
+		return strava.Gear{}, f.gearErr
+	}
+
+	return strava.Gear{ID: gearID, Name: f.gearName}, nil
 }
 
 func (f *fakeStrava) writes() []put {
@@ -456,6 +499,10 @@ type failFirstStrava struct {
 	calls int
 }
 
+func (f *failFirstStrava) GetGear(ctx context.Context, gearID string) (strava.Gear, error) {
+	return f.inner.GetGear(ctx, gearID)
+}
+
 func (f *failFirstStrava) GetActivity(ctx context.Context, id int64) (*strava.Activity, error) {
 	f.calls++
 
@@ -524,6 +571,10 @@ func TestAttributionFailureDoesNotBlockTheTitle(t *testing.T) {
 type failSecondGet struct {
 	inner *fakeStrava
 	calls int
+}
+
+func (f *failSecondGet) GetGear(ctx context.Context, gearID string) (strava.Gear, error) {
+	return f.inner.GetGear(ctx, gearID)
 }
 
 func (f *failSecondGet) GetActivity(ctx context.Context, id int64) (*strava.Activity, error) {

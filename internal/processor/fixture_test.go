@@ -47,14 +47,25 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 	}
 
 	var (
-		mu       sync.Mutex
-		puts     []map[string]string
-		getCalls int
+		mu        sync.Mutex
+		puts      []map[string]string
+		getCalls  int
+		gearCalls int
 	)
 
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if strings.HasPrefix(r.URL.Path, "/gear/") {
+			gearCalls++
+
+			_, _ = w.Write([]byte(`{"id":"b0000000","name":"Pink Panther"}`))
+
+			return
+		}
 
 		if r.Method == http.MethodPut {
 			body, _ := io.ReadAll(r.Body)
@@ -69,7 +80,6 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 			getCalls++
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(fixture)
 	}))
 	defer api.Close()
@@ -186,13 +196,24 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 		t.Errorf("the model was called %d times, want 1", provider.calls)
 	}
 
-	// Two GETs for a named activity, and exactly two: the classifier's fetch,
-	// and the re-read immediately before the write that merges the description.
-	// Pinned because Strava allows 100 requests per 15 minutes and an
-	// accidental third fetch in this path would not otherwise show up anywhere.
+	// Two activity GETs for a named activity, and exactly two: the
+	// classifier's fetch, and the re-read immediately before the write that
+	// merges the description. Pinned because Strava allows 100 requests per
+	// 15 minutes and an accidental extra fetch would not otherwise show up.
 	if getCalls != 2 {
-		t.Errorf("%d GETs for one named activity, want 2", getCalls)
+		t.Errorf("%d activity GETs for one named activity, want 2", getCalls)
 	}
+
+	// One gear lookup, for the franchise match. The name is cached for the
+	// life of the process, so a second activity on the same bike costs
+	// nothing — a bike's name changes about never.
+	if gearCalls != 1 {
+		t.Errorf("%d gear lookups, want 1", gearCalls)
+	}
+
+	// The first naming has no history to derive examples from, so nothing was
+	// re-read for few-shots — which is exactly why no third activity GET
+	// appears above. That is what the synthetic set is for.
 }
 
 // parseForm decodes an application/x-www-form-urlencoded body.

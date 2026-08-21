@@ -3,11 +3,13 @@ package processor
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jkreileder/titelheld/internal/classifier"
 	"github.com/jkreileder/titelheld/internal/geo"
+	"github.com/jkreileder/titelheld/internal/naming"
 	"github.com/jkreileder/titelheld/internal/store"
 )
 
@@ -25,6 +27,20 @@ type faultyStore struct {
 	namedErr     error
 	markNamedErr error
 	removeErr    error
+
+	recentTitlesErr      error
+	franchisePositionErr error
+	advanceFranchiseErr  error
+}
+
+func (f *faultyStore) RecentTitles(
+	ctx context.Context, athleteID int64, limit int,
+) ([]store.NamedTitle, error) {
+	if f.recentTitlesErr != nil {
+		return nil, f.recentTitlesErr
+	}
+
+	return f.Store.RecentTitles(ctx, athleteID, limit)
 }
 
 func (f *faultyStore) Due(ctx context.Context, at time.Time) ([]store.Pending, error) {
@@ -298,5 +314,122 @@ func TestAnEmptyGeographyStillNames(t *testing.T) {
 
 	if writes := h.strava.writes(); len(writes) != 1 {
 		t.Errorf("%d PUTs, want 1: %+v", len(writes), writes)
+	}
+}
+
+func (f *faultyStore) FranchisePosition(
+	ctx context.Context, athleteID int64, franchise string,
+) (int, error) {
+	if f.franchisePositionErr != nil {
+		return 0, f.franchisePositionErr
+	}
+
+	return f.Store.FranchisePosition(ctx, athleteID, franchise)
+}
+
+func (f *faultyStore) AdvanceFranchise(
+	ctx context.Context, athleteID int64, franchise string,
+) (int, error) {
+	if f.advanceFranchiseErr != nil {
+		return 0, f.advanceFranchiseErr
+	}
+
+	return f.Store.AdvanceFranchise(ctx, athleteID, franchise)
+}
+
+// None of the extras may cost a title.
+//
+// The history is the one thing worth failing for; the franchise position and
+// advancing it make the title slightly worse and must never stop it being
+// written. Either would otherwise be a ride left with a Strava default
+// because a series position could not be looked up.
+func TestNoOptionalStoreFailureCostsATitle(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("firestore: unavailable")
+
+	for _, tc := range []struct {
+		name  string
+		apply func(*faultyStore)
+	}{
+		{
+			name:  "the franchise position cannot be read",
+			apply: func(f *faultyStore) { f.franchisePositionErr = sentinel },
+		},
+		{
+			name:  "the franchise cannot be advanced",
+			apply: func(f *faultyStore) { f.advanceFranchiseErr = sentinel },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, true, nil)
+
+			h.strava.gearName = "Pink Panther"
+			h.strava.activity.GearID = "b1234567"
+
+			faulty := &faultyStore{Store: h.store}
+			tc.apply(faulty)
+			h.proc.deps.Store = faulty
+
+			h.enqueue(t, "create")
+
+			result, err := h.proc.Sweep(t.Context())
+			if err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+
+			if result.Named != 1 {
+				t.Errorf("result %+v, want the activity named anyway", result)
+			}
+
+			if writes := h.strava.writes(); len(writes) != 1 {
+				t.Errorf("%d PUTs, want 1 despite %s", len(writes), tc.name)
+			}
+		})
+	}
+}
+
+// A franchise whose entries are used up stops applying.
+func TestAnExhaustedFranchiseStopsApplying(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	h.strava.gearName = "Pink Panther"
+	h.strava.activity.GearID = "b1234567"
+
+	// Walk the whole series.
+	for range len(naming.DefaultFranchises()[0].Titles) {
+		if _, err := h.store.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
+			t.Fatalf("AdvanceFranchise: %v", err)
+		}
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if strings.Contains(capture.prompt.User, "FRANCHISE") {
+		t.Errorf("an exhausted franchise was still offered:\n%s", capture.prompt.User)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs, want the ride named normally", len(writes))
+	}
+
+	// And nothing advanced. A series that keeps counting past its end would
+	// take a franchise extended later straight to the wrong entry.
+	position, err := h.store.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if want := len(naming.DefaultFranchises()[0].Titles); position != want {
+		t.Errorf("position = %d, want it to stop at %d", position, want)
 	}
 }

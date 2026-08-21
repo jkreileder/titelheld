@@ -462,7 +462,7 @@ func TestAnUnhandledActionIsReported(t *testing.T) {
 	activity := sportRide()
 
 	_, err := h.proc.title(
-		t.Context(), &activity,
+		t.Context(), 4242, &activity,
 		classifier.Decision{Action: classifier.Action(99)}, quiet())
 	if err == nil {
 		t.Fatal("an unknown action was accepted")

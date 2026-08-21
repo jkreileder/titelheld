@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jkreileder/titelheld/internal/classifier"
@@ -42,6 +43,7 @@ import (
 // a test supplies it without a transport.
 type Activities interface {
 	GetActivity(ctx context.Context, activityID int64) (*strava.Activity, error)
+	GetGear(ctx context.Context, gearID string) (strava.Gear, error)
 	UpdateActivityName(ctx context.Context, activityID int64, name string) (*strava.Activity, error)
 	UpdateActivityNameAndDescription(ctx context.Context, activityID int64, name, description string) (*strava.Activity, error)
 }
@@ -60,6 +62,11 @@ type Deps struct {
 	Classifier classifier.Config
 	Validator  naming.Validator
 
+	// Franchises are the ordered title series that may apply. Nil means the
+	// shipped set; an empty non-nil slice means none, which is how a
+	// deployment turns the feature off.
+	Franchises []naming.Franchise
+
 	// Attribution is on unless this says otherwise. The field is negative so
 	// that the zero value means the spec's default rather than its opposite.
 	DisableAttribution bool
@@ -77,6 +84,25 @@ type Deps struct {
 // Processor names activities that are due.
 type Processor struct {
 	deps Deps
+
+	// gear caches gear names for the life of the process. A bike's name
+	// changes about never, and the alternative is a Strava request per named
+	// activity for a string that was the same last time. A restart re-reads
+	// them, which is the right cost for a cache that must not go stale
+	// forever.
+	gearMu sync.Mutex
+	gear   map[string]string
+
+	// examples caches one few-shot example per past activity, for the life of
+	// the process. Deriving one re-reads the activity from Strava, and what a
+	// past ride looked like does not change.
+	//
+	// Keyed by activity rather than by the history as a whole: the history
+	// moves every time something is named, so a whole-history key would miss
+	// for every activity after the first in a sweep and pay six reads again
+	// each time, against a hundred per fifteen minutes.
+	examplesMu sync.Mutex
+	examples   map[int64]naming.Example
 }
 
 // New builds a processor.
@@ -96,7 +122,15 @@ func New(deps Deps) (*Processor, error) {
 		deps.Now = time.Now
 	}
 
-	return &Processor{deps: deps}, nil
+	if deps.Franchises == nil {
+		deps.Franchises = naming.DefaultFranchises()
+	}
+
+	return &Processor{
+		deps:     deps,
+		gear:     make(map[string]string),
+		examples: make(map[int64]naming.Example),
+	}, nil
 }
 
 // Result is what one sweep did.
@@ -243,7 +277,7 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 		return outcomeSkipped, nil
 	}
 
-	title, err := p.title(ctx, activity, decision, logger)
+	title, err := p.title(ctx, pending.AthleteID, activity, decision, logger)
 	if err != nil {
 		return outcomeSkipped, err
 	}
