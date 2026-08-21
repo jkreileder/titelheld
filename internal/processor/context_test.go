@@ -1072,7 +1072,13 @@ func TestAConfiguredFranchiseToleratesTypedWhitespace(t *testing.T) {
 
 	if err := h.store.SaveAthleteConfig(t.Context(), 4242, store.AthleteConfig{
 		Franchises: []store.Franchise{
-			{Name: "  ", GearName: "Ignored", Titles: []string{"Never Offered"}},
+			// First, and matching every bike — so if a nameless series were
+			// kept it would win the match ahead of the one below, and its
+			// position would be stored under an empty document ID. Giving it
+			// a gear that cannot match would let it pass for the wrong
+			// reason: not offered because of the gear, not because of the
+			// name.
+			{Name: "  ", Titles: []string{"Never Offered"}},
 			{Name: " surfer ", GearName: " Silver Surfer ", Titles: []string{"Herald of Galactus"}},
 		},
 	}); err != nil {
@@ -1107,5 +1113,41 @@ func TestAConfiguredFranchiseToleratesTypedWhitespace(t *testing.T) {
 	// stored under an empty document ID.
 	if strings.Contains(capture.prompt.User, "Never Offered") {
 		t.Errorf("a franchise with no name was offered:\n%s", capture.prompt.User)
+	}
+}
+
+// An empty franchise list is a decision, not a missing document.
+//
+// The three states are distinct and an operator has to be able to tell them
+// apart: no document means the shipped defaults, an unreadable document means
+// the shipped defaults for that ride only, and a document saying
+// "franchises": [] means this athlete has none — which must switch the
+// defaults off rather than be mistaken for one of the other two.
+func TestAnEmptyFranchiseListDisablesTheDefaults(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) { d.Franchises = nil })
+	capture := withCapture(h)
+
+	if err := h.store.SaveAthleteConfig(t.Context(), 4242, store.AthleteConfig{}); err != nil {
+		t.Fatalf("SaveAthleteConfig: %v", err)
+	}
+
+	// The bike the shipped profile names.
+	h.strava.gearName = "Pink Panther"
+	h.strava.activity.GearID = "b1234567"
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if strings.Contains(capture.prompt.User, "FRANCHISE") {
+		t.Errorf("an explicitly empty list still offered a franchise:\n%s", capture.prompt.User)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs, want the ride named normally", len(writes))
 	}
 }

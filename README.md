@@ -548,7 +548,22 @@ The document's shape:
 ```
 
 `sport_types` empty means any sport; `gear_name` empty means any bike. The first matching
-franchise wins, so order is precedence.
+franchise wins, so order is precedence. A franchise with no `name` is discarded: the name keys
+the stored position, and an empty one would store it under an empty document ID.
+
+Three states, and they are not the same:
+
+| The document | What applies |
+| --- | --- |
+| absent | the shipped default profile |
+| present, with franchises | exactly those; the default profile does not apply |
+| present, `"franchises": []` | none — the athlete has no series, and the defaults stay off |
+| unreadable | the default profile, for that ride only |
+
+The last two are the ones worth keeping apart. An empty list is a decision and is remembered; a
+failed read is not remembered, so the next ride tries again — otherwise one transient Firestore
+error would pin the defaults for the life of the process, and a series you had removed would go
+on being offered and its position go on advancing.
 
 To add one:
 
