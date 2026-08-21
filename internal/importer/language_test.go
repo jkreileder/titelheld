@@ -67,3 +67,48 @@ func TestLanguageIgnoresSharedWords(t *testing.T) {
 		}
 	}
 }
+
+// German has to win against English markers, not merely by default.
+//
+// Language falls back to German, so a case with no English signal proves
+// nothing: it passes with the German markers emptied and the umlaut scoring
+// deleted. These carry English markers, so German has to actually outscore
+// them.
+func TestGermanIsDetectedRatherThanAssumed(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		title string
+		why   string
+	}{
+		{title: "Über the hills", why: "an umlaut against an English article"},
+		{title: "Nach Hause with the wind", why: "German markers against English ones"},
+		{title: "Die große Runde in the rain", why: "umlaut and markers against English ones"},
+		{title: "Straße to the top", why: "ß against an English preposition"},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			t.Parallel()
+
+			if got := Language(tc.title); got != "de" {
+				t.Errorf("Language(%q) = %q, want de — %s", tc.title, got, tc.why)
+			}
+		})
+	}
+}
+
+// And English has to win where the signal really is English.
+//
+// Without this the fallback would look like detection for every case above.
+func TestEnglishOutscoresTheDefault(t *testing.T) {
+	t.Parallel()
+
+	for _, title := range []string{
+		"Into the hills with a headwind",
+		"The long way home",
+		"Every climb was a mistake",
+	} {
+		if got := Language(title); got != "en" {
+			t.Errorf("Language(%q) = %q, want en", title, got)
+		}
+	}
+}

@@ -79,6 +79,7 @@ func TestImportSeedsOnlyTheAthletesOwnTitles(t *testing.T) {
 		activity(2, "Morning Ride", 2),
 		activity(3, "Difficult Mixed Breakaway Specialist Ride", 3),
 		activity(4, "Nach Hause über den Berg", 4),
+		activity(6, "The long way home", 6),
 		activity(5, "Afternoon Gravel Ride", 5),
 	}}
 
@@ -87,12 +88,12 @@ func TestImportSeedsOnlyTheAthletesOwnTitles(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if result.Seen != 5 {
-		t.Errorf("Seen = %d, want 5", result.Seen)
+	if result.Seen != 6 {
+		t.Errorf("Seen = %d, want 6", result.Seen)
 	}
 
-	if result.Imported != 2 {
-		t.Errorf("Imported = %d, want 2", result.Imported)
+	if result.Imported != 3 {
+		t.Errorf("Imported = %d, want 3", result.Imported)
 	}
 
 	if result.Skipped != 3 {
@@ -127,8 +128,21 @@ func TestImportSeedsOnlyTheAthletesOwnTitles(t *testing.T) {
 		t.Errorf("source = %q, want %q", entry.Source, store.SourceImported)
 	}
 
+	// Detected, not defaulted: "Gegenwind bis Musterdorf" carries no marker,
+	// so asserting German on it would pass with the heuristic gutted. The
+	// English title below is what makes the language a result rather than a
+	// constant.
 	if entry.Language != "de" {
 		t.Errorf("language = %q, want de", entry.Language)
+	}
+
+	english, ok := got["The long way home"]
+	if !ok {
+		t.Fatal("the English title was not seeded")
+	}
+
+	if english.Language != "en" {
+		t.Errorf("language = %q, want en", english.Language)
 	}
 }
 
