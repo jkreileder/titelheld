@@ -13,11 +13,15 @@
 // Cloud Run rather than vouched for by it. The unguessable path is
 // obfuscation; the token verified below is the authentication.
 //
-// Rejection is deliberately noisy about which claim failed and silent to the
-// caller. The log names the claim so a misconfigured audience is a five-second
-// diagnosis instead of an afternoon; the response is a bare 401, because
-// telling an unauthenticated caller which half of the token was wrong is
-// telling them how to fix it.
+// Rejection is as specific as it honestly can be in the log and silent to the
+// caller. The issuer, the email and email_verified are named individually.
+// Signature, expiry and audience are not separable — the validator reports
+// them as one error — so the log carries its wording together with the
+// audience that was required, which is enough to recognize a misconfigured
+// audience without claiming to have identified it.
+//
+// The response is a bare 401 in every case, because telling an unauthenticated
+// caller which half of the token was wrong is telling them how to fix it.
 package sweep
 
 import (

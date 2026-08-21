@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/api/idtoken"
 
@@ -33,12 +33,27 @@ type countingSweeper struct {
 	result  processor.Result
 	err     error
 	release chan struct{}
+
+	// entered is signalled once the sweep is inside Sweep, so a test waits on
+	// a deadline rather than spinning until a counter moves. A regression that
+	// returns before reaching Sweep then fails on the deadline instead of
+	// hanging until the package timeout.
+	entered chan struct{}
 }
 
 func (c *countingSweeper) Sweep(ctx context.Context) (processor.Result, error) {
 	c.mu.Lock()
 	c.calls++
 	c.mu.Unlock()
+
+	if c.entered != nil {
+		// Non-blocking: only the first sweep is waited on, and a second one
+		// must not stall here if nothing is listening.
+		select {
+		case c.entered <- struct{}{}:
+		default:
+		}
+	}
 
 	if c.release != nil {
 		select {
@@ -298,6 +313,44 @@ func TestTheSchedulersTokenIsAccepted(t *testing.T) {
 	if body.Due != 4 || body.Named != 2 || body.Skipped != 1 || body.Failed != 1 {
 		t.Errorf("body %+v does not report the sweep's counts", body)
 	}
+
+	if body.Cancelled {
+		t.Error("a sweep that ran to the end reported itself cancelled")
+	}
+}
+
+// A sweep stopped by shutdown says so, and still answers 200.
+//
+// Cancellation is a distinct reported state rather than a failure: what was
+// named is named, and the rest is still queued. Nothing else pins the field,
+// so a regression that drops or inverts it would otherwise stay green.
+func TestACancelledSweepIsReportedInTheResponse(t *testing.T) {
+	t.Parallel()
+
+	fix := newFixture(t, goodPayload(), nil)
+	fix.sweeper.result = processor.Result{Due: 3, Named: 1, Cancelled: true}
+
+	rec := fix.post(t, "Bearer t")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var body struct {
+		Due, Named, Skipped, Failed int
+		Cancelled                   bool
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the response is not JSON: %v (%q)", err, rec.Body.String())
+	}
+
+	if !body.Cancelled {
+		t.Errorf("body %+v does not report that the sweep stopped early", body)
+	}
+
+	if body.Named != 1 {
+		t.Errorf("body %+v lost the count of what was named before it stopped", body)
+	}
 }
 
 // A sweep with failures is still a 200.
@@ -344,23 +397,23 @@ func TestAnOverlappingFireDoesNotStartASecondSweep(t *testing.T) {
 
 	fix := newFixture(t, goodPayload(), nil)
 	fix.sweeper.release = make(chan struct{})
+	fix.sweeper.entered = make(chan struct{}, 1)
 
-	started := make(chan struct{})
 	done := make(chan int, 1)
 
 	go func() {
-		close(started)
-
 		rec := fix.post(t, "Bearer t")
 		done <- rec.Code
 	}()
 
-	<-started
-
 	// Wait until the first sweep is genuinely inside Sweep, so the second
-	// request meets a held lock rather than racing to it.
-	for fix.sweeper.count() == 0 {
-		runtime.Gosched()
+	// request meets a held lock rather than racing to it. On a deadline, so a
+	// handler that stops reaching Sweep fails here instead of hanging until
+	// the package timeout takes the whole run down with it.
+	select {
+	case <-fix.sweeper.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first request never reached Sweep")
 	}
 
 	second := fix.post(t, "Bearer t")

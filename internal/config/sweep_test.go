@@ -93,6 +93,46 @@ func TestAPartialSweepConfigurationIsAnError(t *testing.T) {
 	}
 }
 
+// Only the exact first-apply shape is forgiven.
+//
+// A missing audience is not a licence to accept anything else that is also
+// missing. SWEEP_PATH on its own is a mistake and has to be reported as one,
+// or the all-or-none contract holds only when the audience happens to be set.
+func TestOnlyTheFirstApplyShapeIsForgiven(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		overrides map[string]string
+	}{
+		{
+			name: "the path alone",
+			overrides: map[string]string{
+				EnvSweepAudience: "", EnvSweepServiceAccount: "",
+			},
+		},
+		{
+			name: "the service account alone",
+			overrides: map[string]string{
+				EnvSweepPath: "", EnvSweepAudience: "",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := Load(sweepEnv(tc.overrides))
+			if err == nil {
+				t.Fatal("a partial sweep configuration was accepted as a first apply")
+			}
+
+			if cfg.Sweep.Enabled() {
+				t.Errorf("the sweep is enabled despite the error: %+v", cfg.Sweep)
+			}
+		})
+	}
+}
+
 // A missing audience alone is the first Terraform apply, not a mistake.
 //
 // The path is generated and the service account exists from the start, so

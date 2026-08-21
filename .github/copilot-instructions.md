@@ -61,9 +61,14 @@
   *before* the title is sent, so the failure mode is a ride that keeps its
   default title rather than one renamed twice.
 - `internal/sweep/` serves the scheduled drain. It verifies Cloud Scheduler's
-  OIDC token itself - audience, issuer, and the scheduler service account -
-  because `allUsers` holds `roles/run.invoker` and the platform authenticates
-  nobody. The log names the failing claim; the response is a bare 401.
+  OIDC token itself - a Bearer token that validates against the configured
+  audience, an issuer of `https://accounts.google.com`, and an `email` that is
+  the scheduler service account with `email_verified` true - because `allUsers`
+  holds `roles/run.invoker` and the platform authenticates nobody. The response
+  is a bare 401. The log names the issuer, email and `email_verified` failures
+  individually; signature, expiry and audience arrive as one error from the
+  validator and are reported as it words them, with the audience that was
+  required.
 
 Not built yet: the per-athlete configuration document, so tiers, geofences and
 banned words are still the shipped defaults; and franchise *selection*, though

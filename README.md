@@ -330,10 +330,15 @@ Four things are checked, and a request that fails any of them gets a bare `401`:
 - its issuer is `https://accounts.google.com`,
 - its `email` is `SWEEP_SERVICE_ACCOUNT` and its `email_verified` is `true`.
 
-The log names which of those failed; the response never does. A misconfigured audience is then
-a five-second diagnosis, while a caller who guessed the path learns only "no". The scheduler
-account is separate from the runtime account and holds invoke permission and nothing else, so
-the identity that can trigger work cannot read the athlete's data.
+The response never says which failed; the log says as much as it honestly can. Issuer, `email`
+and `email_verified` are named individually. Signature, expiry and audience are not
+distinguishable — they come back as one error from the token validator — so the log records the
+validator's own wording alongside the audience that was required, which is enough to recognize
+a misconfigured audience without claiming to have identified it. A caller who guessed the path
+learns only "no".
+
+The scheduler account is separate from the runtime account and holds invoke permission and
+nothing else, so the identity that can trigger work cannot read the athlete's data.
 
 Terraform feeds one value to both sides of the audience, because a mismatch does not announce
 itself: the scheduler keeps firing, the handler keeps answering `401`, and the queue quietly
@@ -348,7 +353,16 @@ would only spend its deadline on a queue the first sweep is already draining.
 A sweep that names nothing, or that fails on every activity, is still a `200`. Failed
 activities stay queued and the next fire retries them; a non-2xx would make Cloud Scheduler
 retry at once, straight back into whatever rate limit caused the failure. Only a queue that
-could not be read at all is a `500`.
+could not be read at all is a `500`, and its body does not repeat the internal error.
+
+A shutdown is not a failure either. Cloud Run gives a container a short grace period, and the
+sweep stops at an activity boundary rather than part-way through one — so the worst case is an
+entry left queued, never a rename sent with nothing recorded. The response is a `200` whose
+`cancelled` field is true, carrying the counts of what was finished before it stopped:
+
+```json
+{"due":12,"named":3,"skipped":1,"failed":0,"cancelled":true}
+```
 
 ## Development
 

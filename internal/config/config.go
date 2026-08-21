@@ -366,17 +366,18 @@ func loadSweep(getenv func(string) string, errs *[]error) SweepConfig {
 		return SweepConfig{}
 	}
 
-	// A missing audience on its own is the first Terraform apply, not a
-	// mistake. The path is generated and the service account exists from the
-	// start, so both are always set; the audience is built from the service's
-	// own URL, which Cloud Run has not minted yet. Terraform therefore
-	// produces exactly this combination once, by design, and treating it as
-	// fatal would stop the very apply that creates the service.
+	// The first Terraform apply, and only that. The path is generated and the
+	// service account exists from the start, so Terraform always sets both;
+	// the audience is built from the service's own URL, which Cloud Run has
+	// not minted yet. That one combination is produced by design, and treating
+	// it as fatal would stop the very apply that creates the service.
 	//
-	// Disabling the route is the safe reading and the one the deployment
-	// documents. The alternative — accepting any audience — is what must never
-	// happen, and does not.
-	if sweep.Audience == "" {
+	// The other two fields are required here rather than assumed, or the test
+	// would forgive any configuration that merely happens to lack an audience
+	// — SWEEP_PATH on its own, say, which is a mistake and has to be reported
+	// as one. Disabling the route is the safe reading; the unsafe one,
+	// accepting any audience, is what never happens.
+	if sweep.Audience == "" && sweep.Path != "" && sweep.ServiceAccount != "" {
 		return SweepConfig{}
 	}
 
