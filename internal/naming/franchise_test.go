@@ -95,7 +95,7 @@ func TestFranchiseNext(t *testing.T) {
 func TestDefaultFranchisesOmitTheUsedEntries(t *testing.T) {
 	t.Parallel()
 
-	franchises := DefaultFranchises()
+	franchises := DefaultProfile()
 	if len(franchises) == 0 {
 		t.Fatal("no franchise is shipped")
 	}

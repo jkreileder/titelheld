@@ -44,6 +44,12 @@
   CI runs. CI never applies: applies are by hand. Secret Manager *values* never
   appear in code, tfvars or state - only the secret resources are managed.
 
+- `internal/importer/` seeds the title history from Strava. A one-shot run by
+  hand, not a route: the service is invokable by `allUsers`, so an endpoint
+  that exists for a job run once is surface for no reason. Idempotent and
+  resumable with no state of its own — an activity already in the named log is
+  left alone.
+
 - `internal/naming/` builds the prompt, validates what comes back, and holds
   the two LLM implementations behind one interface it defines itself. No HTTP
   client of its own beyond the providers, no Firestore: a caller assembles a
@@ -87,12 +93,14 @@ vertex count between rides), so it was removed rather than shipped inert. A
 replacement is designed and also unbuilt - comparing sets of visited cells by
 similarity - so no title can carry a route callback today.
 
-Not built yet: the per-athlete configuration document, so tiers, geofences,
-banned words and franchise lists are still shipped defaults in code; and the
-Strava history import, which is what would give the title history and the
-derived examples anything to work with before the first real naming. No Strava
-push subscription has been created, and the Cloud Scheduler job is
-deliberately paused.
+Franchises live in the per-athlete `config` document. Tiers, geofences, banned
+words and language preferences still ship as defaults in code and belong in
+that same document. What ships in code for franchises is the default profile:
+what applies until a document exists.
+
+Not built yet: route repeats, and the Strava push subscription. The Cloud
+Scheduler job is deliberately paused, and the title history is seeded by
+`cmd/titelheld-import` rather than accumulating on its own.
 
 ## Design Rules That Are Not Negotiable
 
@@ -112,7 +120,9 @@ deliberately paused.
   wires everything together.
 - **Config is data, per athlete.** Thresholds, `zwift_mode`, geofences, banned
   words and franchises are configuration, not code, and every field is safe at its
-  zero value.
+  zero value. Franchises live in the `config` collection now; the rest still
+  ship as defaults in code and follow into the same document. What ships in
+  code is the *default profile* — what applies until a document exists.
 - **No new dependencies without asking.** Allowed: a polyline decoder, the
   Firestore client, an HTTP router. Everything else needs a decision first.
   There are still none: OAuth, the HTTP client and routing are standard library.

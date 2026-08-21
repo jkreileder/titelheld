@@ -104,7 +104,8 @@ func titlesOf(history []store.NamedTitle) []string {
 func (p *Processor) franchiseNext(
 	ctx context.Context, athleteID int64, ride naming.Ride, logger *slog.Logger,
 ) (next, franchiseName string) {
-	franchise, ok := naming.FranchiseFor(p.deps.Franchises, ride.SportType, ride.GearName)
+	franchise, ok := naming.FranchiseFor(
+		p.franchises(ctx, athleteID, logger), ride.SportType, ride.GearName)
 	if !ok {
 		return "", ""
 	}
@@ -126,6 +127,97 @@ func (p *Processor) franchiseNext(
 	}
 
 	return next, franchise.Name
+}
+
+// franchises are the athlete's configured series.
+//
+// Read from the configuration document, because a franchise is data: adding
+// one is an edit to a document, not a release. An athlete with no document
+// gets the shipped default profile, which is what every deployment starts
+// with and what a first document is seeded from.
+//
+// A document that cannot be read degrades to the default profile rather than
+// failing the naming. A franchise is garnish — the ride still gets a title —
+// and the alternative is a ride left with its Strava default because a
+// configuration read timed out. The failure is logged rather than swallowed.
+//
+// Cached for the life of the process. Configuration changes about as often as
+// a person edits it, and a restart is what picks it up: the same trade the
+// gear cache makes, for the same reason.
+func (p *Processor) franchises(
+	ctx context.Context, athleteID int64, logger *slog.Logger,
+) []naming.Franchise {
+	if p.deps.Franchises != nil {
+		return p.deps.Franchises
+	}
+
+	p.franchiseMu.Lock()
+	defer p.franchiseMu.Unlock()
+
+	if cached, ok := p.franchiseCache[athleteID]; ok {
+		return cached
+	}
+
+	config, ok, err := p.deps.Store.AthleteConfig(ctx, athleteID)
+	if err != nil {
+		// Not cached. Answering from the default profile is the right thing to
+		// do for this ride, and the wrong thing to keep doing: if the athlete
+		// removed or renamed a series, every later ride in the process would
+		// still be offered it, and AdvanceFranchise would durably count a
+		// position the configuration no longer names. A repeated read is
+		// cheap; a wrong write is not.
+		logger.Error("could not read the athlete configuration; naming this ride from the default profile",
+			"error", err)
+
+		return naming.DefaultProfile()
+	}
+
+	// A successful read is remembered, including "no document" — that is a
+	// real answer, and re-reading it on every activity would be a request per
+	// ride to learn the same thing.
+	resolved := naming.DefaultProfile()
+
+	if ok {
+		resolved = fromStored(config.Franchises)
+
+		logger.Info("loaded the athlete configuration", "franchises", len(resolved))
+	} else {
+		logger.Info("no athlete configuration; using the default franchise profile")
+	}
+
+	p.franchiseCache[athleteID] = resolved
+
+	return resolved
+}
+
+// fromStored converts the persisted shape into the one with behavior.
+//
+// The two are deliberately separate types: a franchise has methods here and a
+// schema on disk, and letting one type be both means a refactor in this
+// package silently rewrites what Firestore expects.
+func fromStored(stored []store.Franchise) []naming.Franchise {
+	franchises := make([]naming.Franchise, 0, len(stored))
+
+	for _, entry := range stored {
+		// Typed by a person into a document now, not written as a Go literal.
+		// A trailing space on the gear name would make the series silently
+		// inapplicable forever, and an empty name is not a key: the position
+		// would be stored under an empty document ID, which is an error on
+		// every ride the series matches.
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+
+		franchises = append(franchises, naming.Franchise{
+			Name:       name,
+			SportTypes: entry.SportTypes,
+			GearName:   strings.TrimSpace(entry.GearName),
+			Titles:     entry.Titles,
+		})
+	}
+
+	return franchises
 }
 
 // examplesFrom derives few-shot examples from the title history.

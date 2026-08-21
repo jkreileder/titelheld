@@ -62,9 +62,10 @@ type Deps struct {
 	Classifier classifier.Config
 	Validator  naming.Validator
 
-	// Franchises are the ordered title series that may apply. Nil means the
-	// shipped set; an empty non-nil slice means none, which is how a
-	// deployment turns the feature off.
+	// Franchises overrides the athlete's configured series. Nil means read
+	// them from the configuration document, falling back to the shipped
+	// default profile; an empty non-nil slice means none, which is how a test
+	// turns the feature off without a document.
 	Franchises []naming.Franchise
 
 	// Attribution is on unless this says otherwise. The field is negative so
@@ -103,6 +104,20 @@ type Processor struct {
 	// each time, against a hundred per fifteen minutes.
 	examplesMu sync.Mutex
 	examples   map[int64]naming.Example
+
+	// franchiseCache holds each athlete's configured series, read once per
+	// athlete. A person edits configuration about as often as they name a
+	// bike, and a restart is what picks up an edit — the same trade the gear
+	// cache makes.
+	//
+	// Keyed by athlete because everything here is: one process serves one
+	// athlete today, and a cache that is not keyed would hand the first
+	// athlete's franchises to the second the day that stops being true. The
+	// map holds the answer including "none configured", which is a real
+	// answer and must not be re-read on every activity — so presence in the
+	// map is the loaded flag, and a nil value is a legitimate entry.
+	franchiseMu    sync.Mutex
+	franchiseCache map[int64][]naming.Franchise
 }
 
 // New builds a processor.
@@ -122,14 +137,11 @@ func New(deps Deps) (*Processor, error) {
 		deps.Now = time.Now
 	}
 
-	if deps.Franchises == nil {
-		deps.Franchises = naming.DefaultFranchises()
-	}
-
 	return &Processor{
-		deps:     deps,
-		gear:     make(map[string]string),
-		examples: make(map[int64]naming.Example),
+		deps:           deps,
+		gear:           make(map[string]string),
+		examples:       make(map[int64]naming.Example),
+		franchiseCache: make(map[int64][]naming.Franchise),
 	}, nil
 }
 

@@ -11,10 +11,9 @@ everything that should stay boring untouched.
 > geocoding, the prompt builder and LLM providers, and the sweep that drains the queue and
 > writes the title. The infrastructure is applied and the service is deployed.
 >
-> Not built: the per-athlete configuration document, so the athlete's tiers, geofences, banned
-> words and franchise lists are still the shipped defaults; and the **Strava history import**,
-> which is what would give the title history something to work with before the first real
-> naming — see [What the prompt carries](#what-the-prompt-carries).
+> Not built: the athlete's tiers, geofences, banned words and language preferences, which still
+> ship as defaults in code and belong in the same configuration document franchises now live in;
+> and route repeats — see [What the prompt carries](#what-the-prompt-carries).
 >
 > **The scheduler is paused.** Nothing fires the sweep until it is unpaused by hand, which is
 > deliberate: the naming pipeline is reviewed end to end before it runs unattended.
@@ -527,25 +526,62 @@ indistinguishable.
 `AdvanceFranchise` increments and returns the new position in one transaction, so the store
 decides the next number rather than a caller reading, adding one and writing back.
 
-To add a franchise:
+Franchises live in the athlete's Firestore configuration document, one document per athlete in
+the `config` collection keyed by athlete ID. Adding one is an edit to that document — no release,
+no deploy. An athlete with no document gets the shipped default profile.
 
-1. Pick a name that will not change. It is the document key, so renaming it resets the athlete
-   to the start of the series.
-2. Add the name, the ordered titles, and the rule that selects it — a sport type, a gear ID, or
-   both — to the athlete's configuration document.
-3. If the athlete has already used some entries by hand, set the position to that count. Leaving
-   it unset starts at the first title.
+The document's shape:
 
-The shipped list deliberately omits the three entries already used by hand — "The Pink Panther
-Checks Inn", "The Pink Panther Strikes Again" and "Revenge of the Pink Panther". The store
-starts every franchise at zero and nothing can seed it, so listing them would hand out a title
-the athlete already has. A franchise added later that has never been used needs no such care.
+```json
+{
+  "athlete_id": 12345678,
+  "franchises": [
+    {
+      "name": "silver-surfer",
+      "sport_types": ["GravelRide", "Ride"],
+      "gear_name": "Silver Surfer",
+      "titles": ["Herald of Galactus", "The Power Cosmic"]
+    }
+  ],
+  "updated_at": "2026-08-21T12:00:00Z"
+}
+```
 
-**Still configuration-in-code.** The list lives in `internal/naming/franchise.go` rather than in
-a per-athlete configuration document, because that document is not built yet. Adding a
-franchise is therefore a code change today, which is the one thing "franchises are data" was
-meant to avoid. The shape is already right — the store holds a position and never a title — so
-what moves later is where the list is read from, not what is stored.
+`sport_types` empty means any sport; `gear_name` empty means any bike. The first matching
+franchise wins, so order is precedence. A franchise with no `name` is discarded: the name keys
+the stored position, and an empty one would store it under an empty document ID.
+
+Four states, and they are not the same:
+
+| The document | What applies |
+| --- | --- |
+| absent | the shipped default profile |
+| present, with franchises | exactly those; the default profile does not apply |
+| present, `"franchises": []` | none — the athlete has no series, and the defaults stay off |
+| unreadable | the default profile, for that ride only |
+
+The last two are the ones worth keeping apart. An empty list is a decision and is remembered; a
+failed read is not remembered, so the next ride tries again — otherwise one transient Firestore
+error would pin the defaults for the life of the process, and a series you had removed would go
+on being offered and its position go on advancing.
+
+To add one:
+
+1. Pick a `name` that will not change. It keys the stored position, so renaming it sends the
+   athlete back to the first title.
+2. Add the entry to the document, in the Firestore console or through the REST API — `gcloud`
+   has no command for editing documents, only for import, export and bulk delete. The service
+   reads the document once per process, so a running instance picks the change up on its next
+   cold start — which, scaling to zero, is the next sweep.
+3. **If some entries have already been used by hand**, either leave those titles out of `titles`
+   (what the shipped Pink Panther profile does — the three films already used are simply absent),
+   or seed the position. The position lives in `franchise/{athleteID}-{name}` as a single
+   `position` integer, and setting it to the number already used is the whole of it.
+
+**Still shipped in code:** the *default profile* — what applies when the document is absent or
+cannot be read. Tiers,
+geofences, banned words and language preferences have not moved yet; they belong in this same
+document and will follow.
 
 ## Local development
 

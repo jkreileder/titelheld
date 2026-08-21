@@ -31,6 +31,17 @@ type faultyStore struct {
 	recentTitlesErr      error
 	franchisePositionErr error
 	advanceFranchiseErr  error
+	athleteConfigErr     error
+}
+
+func (f *faultyStore) AthleteConfig(
+	ctx context.Context, athleteID int64,
+) (store.AthleteConfig, bool, error) {
+	if f.athleteConfigErr != nil {
+		return store.AthleteConfig{}, false, f.athleteConfigErr
+	}
+
+	return f.Store.AthleteConfig(ctx, athleteID)
 }
 
 func (f *faultyStore) RecentTitles(
@@ -402,7 +413,7 @@ func TestAnExhaustedFranchiseStopsApplying(t *testing.T) {
 	h.strava.activity.GearID = "b1234567"
 
 	// Walk the whole series.
-	for range len(naming.DefaultFranchises()[0].Titles) {
+	for range len(naming.DefaultProfile()[0].Titles) {
 		if _, err := h.store.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
 			t.Fatalf("AdvanceFranchise: %v", err)
 		}
@@ -429,7 +440,7 @@ func TestAnExhaustedFranchiseStopsApplying(t *testing.T) {
 		t.Fatalf("FranchisePosition: %v", err)
 	}
 
-	if want := len(naming.DefaultFranchises()[0].Titles); position != want {
+	if want := len(naming.DefaultProfile()[0].Titles); position != want {
 		t.Errorf("position = %d, want it to stop at %d", position, want)
 	}
 }
