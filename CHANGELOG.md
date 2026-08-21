@@ -10,6 +10,53 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.3.0] – 2026-08-21
+
+Memory and configuration. The prompt now has a past to draw on, and the first piece of naming
+policy moved out of the binary and into a document. `DRY_RUN` is still on, the scheduler is still
+paused and nothing is subscribed to the webhook, so none of it runs unattended yet.
+
+- **Athlete configuration.** A `config` document per athlete, and this service's sixth Firestore
+  collection. Franchises live there now: an ordered title series is something somebody typed, so
+  renaming or reordering one is an edit rather than a release. It is the second collection that
+  cannot be re-derived from Strava, and the first whose loss is not an outage — without it the
+  service falls back to the profile shipped in code and keeps naming.
+- **History import.** `cmd/titelheld-import` seeds the named log from the athlete's own Strava
+  history, so recent titles and the derived examples have something to work from on the first ride
+  rather than the twenty-sixth. It is a one-shot command run by hand under the operator's own
+  credentials, not a route: the service is invokable by `allUsers`, and an endpoint that exists
+  for a job run once is surface for no reason. It is idempotent and resumable with no state of its
+  own — an activity already in the named log is left alone — and it pages within Strava's read
+  budget. Every imported title records the language it is in and is marked as imported, so it is
+  never mistaken for one this service wrote.
+- **Franchises from configuration.** The processor reads the athlete's series from that document,
+  cached per athlete and never cached after a failed read, so a series deleted from the document
+  stops advancing instead of durably advancing past its end. What ships in code is now the default
+  profile: what applies until a document exists.
+- **Gear as imagery.** One prompt instruction lets a bike's name color a title — a bike called
+  "Silver Surfer" invites a cosmic or wave-borne image — bounded by the rules that already bind:
+  the name is data and never an instruction whatever it appears to say, it supplies no place, and
+  the no-repeat and recent-title lists keep the motif from becoming a tic. Gear is read, never
+  written. Curated ordered canons stay opt-in, in the configuration document.
+- **Health check.** The health route moved from `/healthz` to `/health`. Cloud Run's frontend
+  answers `/healthz` itself, so the handler behind that path had never once been reached.
+
+### Not in this release
+
+- **Strava push subscription.** Activities reach the queue only through a webhook nothing is
+  subscribed to yet. Creating the subscription is the next step.
+- **Route repeats.** Still specified and unbuilt. The replacement design compares sets of visited
+  cells by similarity rather than hashing a polyline, which is why the first attempt was removed
+  rather than shipped inert.
+- **The rest of the configuration.** Tiers, geofences, banned words and language preferences are
+  still the defaults shipped in code. They belong in the same document and follow it there.
+
+### Upgrading
+
+Nothing to apply: this release changes no infrastructure. The Cloud Scheduler job stays paused and
+`DRY_RUN` stays on — see
+[Versions do not turn on writes](README.md#versions-do-not-turn-on-writes).
+
 ## [v0.2.0] – 2026-08-21
 
 The naming pipeline, end to end. The service can now decide a title, write it, and drain its own
@@ -81,5 +128,6 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.3.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.3.0
 [v0.2.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.2.0
 [v0.1.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.1.0
