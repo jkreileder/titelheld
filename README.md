@@ -344,7 +344,7 @@ guessing the prefix but not the segment is a 404 from the router. Starting the f
 needs protecting: a bare `/auth` would let anyone authorize their own Strava account and have
 this service store their token. The callback stays at a fixed, registered URL and is guarded
 by the single-use state that only the start route issues; with no `STRAVA_ATHLETE_ID` set, the
-service binds to whoever authorizes first and refuses anyone else afterwards.
+service binds to whoever authorizes first and refuses anyone else afterward.
 
 The verify token is compared in constant time over hashes, so neither its contents nor its
 length leak. `WEBHOOK_PATH_SECRET` is validated at load: a segment containing a space would
@@ -761,7 +761,7 @@ and stores nothing.
 | Draft  | `release.yaml`       | A draft GitHub release for you to publish                                                                     |
 
 The image is built exactly once. Everything after it refers to the digest, never to a version
-tag, so moving a tag afterwards cannot change what is running.
+tag, so moving a tag afterward cannot change what is running.
 
 The build and attest steps live together in `release-image.yaml` rather than in the calling
 workflow. Signed provenance records the workflow *file* that produced it, so keeping both jobs
@@ -778,7 +778,7 @@ gh attestation verify \
 ### Versions do not turn on writes
 
 `DRY_RUN` is Terraform's to set, and it is set to `1`. The deploy step reads it back from the
-running service afterwards and fails the release if it is anything else. There is no version
+running service afterward and fails the release if it is anything else. There is no version
 number that means *now write to Strava*: turning writes on is a deliberate infrastructure
 change, never a side effect of shipping.
 

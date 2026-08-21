@@ -38,7 +38,7 @@ none of that unattended yet.
   one. Commute and errand templates are kept out of both lists: they are meant to repeat.
 - **Persistence.** Title history as a query over the named log, which is this service's only
   composite index; the language and source of every title, neither of which is recoverable
-  afterwards; and franchise positions, stored as an integer so a series can be renamed or
+  afterward; and franchise positions, stored as an integer so a series can be renamed or
   reordered without a migration.
 
 ### Not in this release
@@ -81,4 +81,5 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.2.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.2.0
 [v0.1.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.1.0
