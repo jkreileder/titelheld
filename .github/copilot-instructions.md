@@ -126,6 +126,16 @@ Scheduler job is deliberately paused, and the title history is seeded by
 - **No new dependencies without asking.** Allowed: a polyline decoder, the
   Firestore client, an HTTP router. Everything else needs a decision first.
   There are still none: OAuth, the HTTP client and routing are standard library.
+- **Every behavioral test carries a negative control.** Break the behavior, watch
+  the test fail, restore it. A test that passes either way proves nothing, and
+  several here did: an idempotency test that passed because the classifier
+  declined the replay rather than the named log; a tolerance test whose uniform
+  offset happened not to cross a cell boundary; an index guard that accepted
+  `athlete_id` descending; a trailing-data check defeated by padding to the byte
+  cap. Assert against the thing itself, never a stand-in you control — the
+  emulator serves queries no index exists for, and `make lint` is not the
+  binary CI runs.
+
 - **Dry run is the safe zero value.** `strava.WriteMode` and
   `config.Config.WritesEnabled` are both written so that an unset or
   zero-valued configuration cannot write to Strava. Writes are refused in
