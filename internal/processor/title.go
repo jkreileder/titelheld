@@ -62,10 +62,6 @@ type titled struct {
 	// Franchise is the series this title came from, if any.
 	Franchise string
 
-	// Fingerprint is the route, if it had one. Recorded with the write, so a
-	// naming that fails does not count a ride that never got a title.
-	Fingerprint string
-
 	// Source is how the title was produced, for the history. A template and a
 	// model's title are not interchangeable to a later prompt.
 	Source string
@@ -94,9 +90,7 @@ func (p *Processor) llmTitle(
 
 	// An indoor ride is named from effort and season only. Watopia is not in
 	// the Solomon Islands, and geocoding a fictional coordinate would produce
-	// a confidently wrong place name. It has no route to recognize either.
-	var fingerprint string
-
+	// a confidently wrong place name.
 	if decision.Action == classifier.ActionLLM {
 		summary, err := p.geography(ctx, activity, logger)
 		if err != nil {
@@ -106,10 +100,6 @@ func (p *Processor) llmTitle(
 		ride.Places = summary.Names()
 		ride.Region = summary.Region
 		ride.Country = summary.Country
-
-		fingerprint = p.fingerprint(activity, logger)
-		ride.RepeatOfDate, ride.RepeatCount = p.routeHistory(
-			ctx, athleteID, fingerprint, activity.StartDateLocal, logger)
 	}
 
 	promptContext, err := p.promptContext(ctx, athleteID, ride, logger)
@@ -137,14 +127,12 @@ func (p *Processor) llmTitle(
 		"facts", len(ride.Facts),
 		"recent_titles", len(promptContext.RecentTitles),
 		"examples", len(promptContext.Examples),
-		"franchise_offered", promptContext.FranchiseNext != "",
-		"route_repeat", ride.RepeatCount)
+		"franchise_offered", promptContext.FranchiseNext != "")
 
 	result := titled{
-		Text:        title.Text,
-		Language:    title.Language,
-		Fingerprint: fingerprint,
-		Source:      store.SourceLLM,
+		Text:     title.Text,
+		Language: title.Language,
+		Source:   store.SourceLLM,
 	}
 
 	// Recorded as used whenever an entry was offered, without checking that
@@ -226,23 +214,6 @@ func sanitizeGearName(name string) string {
 	}
 
 	return name
-}
-
-// fingerprint reduces the route to something the store can count.
-//
-// A malformed polyline is logged and dropped rather than failing the naming:
-// the ride is still nameable, it just cannot be recognized as one ridden
-// before.
-func (p *Processor) fingerprint(activity *strava.Activity, logger *slog.Logger) string {
-	value, err := geo.Fingerprint(activity.Map.SummaryPolyline)
-	if err != nil {
-		logger.Warn("could not fingerprint the route; naming without route history",
-			"error", err)
-
-		return ""
-	}
-
-	return value
 }
 
 // geography resolves place names, or reports why it could not.

@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jkreileder/titelheld/internal/geo"
 	"github.com/jkreileder/titelheld/internal/naming"
 	"github.com/jkreileder/titelheld/internal/store"
 	"github.com/jkreileder/titelheld/internal/strava"
@@ -234,98 +233,6 @@ func TestTheGearNameIsCached(t *testing.T) {
 	}
 }
 
-// A route ridden before is offered to the prompt as a callback.
-func TestARepeatedRouteReachesThePrompt(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t, true, nil)
-	capture := withCapture(h)
-
-	h.strava.activity.Map.SummaryPolyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
-
-	// Ridden twice before, first on a date the callback should name.
-	fingerprint := mustFingerprint(t, h.strava.activity.Map.SummaryPolyline)
-	first := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
-
-	for _, at := range []time.Time{first, first.Add(240 * time.Hour)} {
-		if _, err := h.store.RecordRoute(t.Context(), 4242, fingerprint, at); err != nil {
-			t.Fatalf("RecordRoute: %v", err)
-		}
-	}
-
-	h.enqueue(t, "create")
-
-	if _, err := h.proc.Sweep(t.Context()); err != nil {
-		t.Fatalf("Sweep: %v", err)
-	}
-
-	user := capture.prompt.User
-	if !strings.Contains(user, "Route history") {
-		t.Fatalf("the prompt has no route history:\n%s", user)
-	}
-
-	if !strings.Contains(user, "3 May 2026") {
-		t.Errorf("the prompt does not name the first ride:\n%s", user)
-	}
-
-	// This ride is the third.
-	if !strings.Contains(user, "3 times") {
-		t.Errorf("the prompt does not say how many times:\n%s", user)
-	}
-
-	// And it is now counted.
-	route, ok, err := h.store.Route(t.Context(), 4242, fingerprint)
-	if err != nil || !ok {
-		t.Fatalf("Route: %v, %v", ok, err)
-	}
-
-	if route.Count != 3 {
-		t.Errorf("route count = %d, want 3", route.Count)
-	}
-}
-
-// A route ridden for the first time says nothing about repeats.
-func TestAFirstRideMentionsNoRouteHistory(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t, true, nil)
-	capture := withCapture(h)
-
-	h.strava.activity.Map.SummaryPolyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
-
-	h.enqueue(t, "create")
-
-	if _, err := h.proc.Sweep(t.Context()); err != nil {
-		t.Fatalf("Sweep: %v", err)
-	}
-
-	if strings.Contains(capture.prompt.User, "Route history") {
-		t.Errorf("a first ride was described as a repeat:\n%s", capture.prompt.User)
-	}
-}
-
-// Dry run counts no routes, for the same reason it advances no franchise.
-func TestDryRunCountsNoRoutes(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t, false, nil)
-	h.strava.activity.Map.SummaryPolyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
-
-	h.enqueue(t, "create")
-
-	for range 3 {
-		if _, err := h.proc.Sweep(t.Context()); err != nil {
-			t.Fatalf("Sweep: %v", err)
-		}
-	}
-
-	fingerprint := mustFingerprint(t, h.strava.activity.Map.SummaryPolyline)
-
-	if _, ok, _ := h.store.Route(t.Context(), 4242, fingerprint); ok {
-		t.Error("dry run counted a ride of the route")
-	}
-}
-
 // An unreadable title history fails the activity rather than naming without it.
 //
 // The realistic cause is the composite index missing, which is a deployment
@@ -355,17 +262,6 @@ func TestAnUnreadableHistoryFailsTheActivity(t *testing.T) {
 	if writes := h.strava.writes(); len(writes) != 0 {
 		t.Errorf("%d PUTs without the title history: %+v", len(writes), writes)
 	}
-}
-
-func mustFingerprint(t *testing.T, polyline string) string {
-	t.Helper()
-
-	value, err := geo.Fingerprint(polyline)
-	if err != nil {
-		t.Fatalf("Fingerprint: %v", err)
-	}
-
-	return value
 }
 
 // Few-shot examples are derived from the athlete's own titles.
@@ -585,74 +481,6 @@ func TestSituationOfAnActivityWithoutASportType(t *testing.T) {
 	}
 }
 
-// A route is dated by the ride, not by when the sweep got round to it.
-//
-// The store keeps the earliest ride as the one a callback names. An activity
-// uploaded days late is processed after more recent ones, so recording it
-// under "now" would both date it wrongly and, once it is the earliest ride of
-// a route, put the wrong day in a title.
-func TestARouteIsDatedByTheRideNotTheSweep(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t, true, nil)
-
-	polyline := "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
-	h.strava.activity.Map.SummaryPolyline = polyline
-
-	// A ride from a fortnight ago, uploaded today.
-	ridden := time.Date(2026, 8, 1, 9, 30, 0, 0, time.UTC)
-	h.strava.activity.StartDateLocal = ridden
-
-	h.enqueue(t, "create")
-
-	if _, err := h.proc.Sweep(t.Context()); err != nil {
-		t.Fatalf("Sweep: %v", err)
-	}
-
-	route, ok, err := h.store.Route(t.Context(), 4242, mustFingerprint(t, polyline))
-	if err != nil || !ok {
-		t.Fatalf("Route: %v, %v", ok, err)
-	}
-
-	if !route.FirstSeen.Equal(ridden.UTC()) {
-		t.Errorf("FirstSeen = %v, want the day it was ridden (%v)", route.FirstSeen, ridden.UTC())
-	}
-
-	if route.FirstSeen.Equal(h.now.UTC()) {
-		t.Error("the route was dated by the sweep rather than by the ride")
-	}
-}
-
-// An activity with no start date still counts, dated by the sweep.
-//
-// The fallback exists because a route with no date at all would break the
-// bounds the store keeps; "when we saw it" is a worse answer than the ride's
-// own date and a better one than the zero time.
-func TestARouteWithoutARideDateFallsBackToNow(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t, true, nil)
-
-	polyline := "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
-	h.strava.activity.Map.SummaryPolyline = polyline
-	h.strava.activity.StartDateLocal = time.Time{}
-
-	h.enqueue(t, "create")
-
-	if _, err := h.proc.Sweep(t.Context()); err != nil {
-		t.Fatalf("Sweep: %v", err)
-	}
-
-	route, ok, err := h.store.Route(t.Context(), 4242, mustFingerprint(t, polyline))
-	if err != nil || !ok {
-		t.Fatalf("Route: %v, %v", ok, err)
-	}
-
-	if !route.FirstSeen.Equal(h.now.UTC()) {
-		t.Errorf("FirstSeen = %v, want the sweep's clock (%v)", route.FirstSeen, h.now.UTC())
-	}
-}
-
 // A sweep that names several activities derives each example once.
 //
 // The history changes every time something is named, so a cache keyed on the
@@ -852,60 +680,5 @@ func TestAnExampleWithoutALanguageFallsBack(t *testing.T) {
 
 	if strings.Contains(capture.prompt.User, "()") {
 		t.Errorf("an example rendered an empty language:\n%s", capture.prompt.User)
-	}
-}
-
-// A callback never names a date in the ride's own future.
-//
-// A ride uploaded a fortnight late is named after more recent ones, so the
-// route's stored first ride can be later than the ride being titled. Counting
-// it is right; saying "same route as 3 May" for a ride that happened in March
-// is not.
-func TestARouteCallbackIsNeverInTheRidesFuture(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t, true, nil)
-	capture := withCapture(h)
-
-	polyline := "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
-	h.strava.activity.Map.SummaryPolyline = polyline
-
-	// The ride being named happened in March.
-	h.strava.activity.StartDateLocal = time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
-
-	// The route is already known, but only from rides in May.
-	fingerprint := mustFingerprint(t, polyline)
-	for _, at := range []time.Time{
-		time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC),
-		time.Date(2026, 5, 17, 9, 0, 0, 0, time.UTC),
-	} {
-		if _, err := h.store.RecordRoute(t.Context(), 4242, fingerprint, at); err != nil {
-			t.Fatalf("RecordRoute: %v", err)
-		}
-	}
-
-	h.enqueue(t, "create")
-
-	if _, err := h.proc.Sweep(t.Context()); err != nil {
-		t.Fatalf("Sweep: %v", err)
-	}
-
-	if strings.Contains(capture.prompt.User, "May 2026") {
-		t.Errorf("the prompt names a first ride later than the ride being named:\n%s",
-			capture.prompt.User)
-	}
-
-	// It is still counted, and the store now knows March was the earliest.
-	route, ok, err := h.store.Route(t.Context(), 4242, fingerprint)
-	if err != nil || !ok {
-		t.Fatalf("Route: %v, %v", ok, err)
-	}
-
-	if route.Count != 3 {
-		t.Errorf("count = %d, want 3", route.Count)
-	}
-
-	if route.FirstSeen.Month() != time.March {
-		t.Errorf("FirstSeen = %v, want the March ride", route.FirstSeen)
 	}
 }

@@ -158,7 +158,7 @@ are never touched.
 
 ## What the prompt carries
 
-Beyond the ride itself, four things — all of them derived, none of them committed to this
+Beyond the ride itself, three things — all of them derived, none of them committed to this
 repository.
 
 **The last 25 titles.** The prompt forbids repeating any of them and invites referring back.
@@ -174,17 +174,19 @@ small synthetic set ships as the cold start.
 **The next entry of a franchise**, when the ride qualifies — see [Franchises](#franchises). The
 model may adapt the wording; it may not skip the position.
 
-**Whether this route has been ridden before**, as "same route as 3 May 2026, ridden four
-times". A route is identified by a one-way digest of a deliberately coarse rounding of the
-polyline, so what is stored answers "this again" and cannot answer "where". It is
-direction-insensitive: an out-and-back ridden the other way is the same ride.
-
 Only the title history is worth failing for. If it cannot be read the activity stays queued,
 because the realistic cause is the composite index missing — a deployment error that fixes
 itself on the next apply, where naming without history in the meantime would produce exactly
 the repetition the history exists to prevent. Everything else degrades: a gear lookup, a
-franchise position, a route count or an example that cannot be fetched makes the prompt
-slightly poorer and never stops a title being written.
+franchise position or an example that cannot be fetched makes the prompt slightly poorer and
+never stops a title being written.
+
+**Route repeats are not among them.** A "same loop as 3 May, third time" callback is specified
+and not built: the first attempt identified a route by hashing its rounded polyline, which
+provably never matches a re-ride — 0 of 50 under 5 m of jitter, and Strava's polyline
+simplification changes the vertex count between rides anyway. It was removed rather than
+shipped inert. The replacement compares sets of visited cells by similarity instead of hashing
+a sequence, which is tolerant by construction.
 
 **The history starts empty.** Nothing has been named yet, so the recent-titles list and the
 derived examples only become useful once real namings accumulate. Seeding them from the

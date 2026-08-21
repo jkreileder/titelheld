@@ -166,8 +166,6 @@ func TestBuildPrompt(t *testing.T) {
 		Country:             "Testland",
 		Achievements:        []string{"PR on Musterhöhe"},
 		Facts:               []Fact{{Label: "Xert difficulty", Value: "Difficult"}},
-		RepeatOfDate:        "2026-07-04",
-		RepeatCount:         3,
 	}
 
 	prompt := BuildPrompt(ride, Context{
@@ -179,7 +177,6 @@ func TestBuildPrompt(t *testing.T) {
 	for _, want := range []string{
 		"GravelRide", "67.6 km", "181 min", "Musterdorf", "Musterbach",
 		"Musterregion", "PR on Musterhöhe", "Xert difficulty",
-		"same route as 2026-07-04, ridden 3 times",
 		"The Pink Panther Strikes Again", "RECENT", "EXAMPLES",
 	} {
 		if !strings.Contains(prompt.User, want) {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/jkreileder/titelheld/internal/logsafe"
 	"github.com/jkreileder/titelheld/internal/naming"
@@ -266,39 +265,4 @@ func situationOf(activity *strava.Activity) string {
 	}
 
 	return strings.Join(parts, ", ")
-}
-
-// routeHistory reports how often this route has been ridden before.
-//
-// Read, never written, at this point: the count is recorded with the title, so
-// a naming that fails does not inflate it. The count offered to the prompt is
-// this ride's ordinal, which is one more than what is stored.
-func (p *Processor) routeHistory(
-	ctx context.Context, athleteID int64, fingerprint string,
-	ride time.Time, logger *slog.Logger,
-) (string, int) {
-	if fingerprint == "" {
-		return "", 0
-	}
-
-	route, ok, err := p.deps.Store.Route(ctx, athleteID, fingerprint)
-	if err != nil {
-		logger.Warn("could not read the route history; naming without it", "error", err)
-
-		return "", 0
-	}
-
-	if !ok {
-		return "", 1
-	}
-
-	// A stored first ride later than this one means this ride is the earliest
-	// and the store has not been told yet — an activity uploaded a fortnight
-	// after it was ridden. Counting it is right; naming a date in its own
-	// future is not.
-	if !ride.IsZero() && !route.FirstSeen.Before(ride) {
-		return "", route.Count + 1
-	}
-
-	return route.FirstSeen.Format("2 January 2006"), route.Count + 1
 }

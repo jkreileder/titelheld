@@ -64,11 +64,6 @@ type Ride struct {
 	// counts. They arrive already parsed so that the raw description, which is
 	// text this service did not write, never reaches the prompt verbatim.
 	Facts []Fact
-
-	// RepeatOfDate and RepeatCount describe a route ridden before, so the
-	// model can make a callback. Empty and zero mean a route not seen before.
-	RepeatOfDate string
-	RepeatCount  int
 }
 
 // Fact is one parsed observation about a ride.
@@ -185,11 +180,6 @@ func BuildPrompt(ride Ride, ctx Context) Prompt {
 	}
 
 	writeField(&b, "Bike", ride.GearName)
-
-	if ride.RepeatCount > 1 && ride.RepeatOfDate != "" {
-		writeField(&b, "Route history",
-			fmt.Sprintf("same route as %s, ridden %d times", ride.RepeatOfDate, ride.RepeatCount))
-	}
 
 	writeList(&b, "PLACES", ride.Places)
 

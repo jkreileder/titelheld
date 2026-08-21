@@ -63,12 +63,11 @@ func (p *Processor) write(
 		return false, fmt.Errorf("record the title before writing: %w", err)
 	}
 
-	// Both recorded before the write, for the same reason the named log is.
-	// A crash between here and the PUT skips a franchise entry and counts a
-	// route that kept its default title; the other order would issue one
-	// entry twice, which is the failure the series exists to prevent.
+	// Recorded before the write, for the same reason the named log is. A
+	// crash between here and the PUT skips a franchise entry; the other order
+	// would issue one entry twice, which is the failure the series exists to
+	// prevent.
 	p.recordFranchise(ctx, athleteID, title, logger)
-	p.recordRoute(ctx, athleteID, activity, title, logger)
 
 	var err error
 	if attribute {
@@ -120,34 +119,6 @@ func (p *Processor) recordFranchise(
 
 	logger.Info("advanced the franchise",
 		"franchise", logsafe.String(title.Franchise), "position", position)
-}
-
-// recordRoute counts this ride of the route.
-//
-// Dated by the ride rather than by now. The store keeps the earliest ride as
-// the one a callback names — "same route as 3 May" — and a ride uploaded days
-// late would otherwise be recorded under the day it was processed. For a ride
-// uploaded promptly the two are minutes apart; for one uploaded from a head
-// unit a week later they are not.
-//
-// Never fatal: an uncounted ride costs a callback in a later title.
-func (p *Processor) recordRoute(
-	ctx context.Context, athleteID int64, activity *strava.Activity,
-	title titled, logger *slog.Logger,
-) {
-	if title.Fingerprint == "" {
-		return
-	}
-
-	at := activity.StartDateLocal
-	if at.IsZero() {
-		at = p.deps.Now()
-	}
-
-	if _, err := p.deps.Store.RecordRoute(
-		ctx, athleteID, title.Fingerprint, at); err != nil {
-		logger.Warn("could not count this ride of the route", "error", err)
-	}
 }
 
 // description decides what description to send, if any.
