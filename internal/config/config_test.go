@@ -495,3 +495,23 @@ func TestLLMRejectsAMalformedVertexLocation(t *testing.T) {
 		}
 	}
 }
+
+// The health route must not drift back onto a path the platform answers.
+//
+// Cloud Run's frontend serves "/healthz" itself: a request for it never
+// reaches the container, and the route was unreachable in production from the
+// first deploy without anything failing. Every other test here routes through
+// the constant, so moving it back would pass the whole suite — this is the one
+// assertion that would not.
+func TestHealthPathAvoidsThePlatformsReservedPath(t *testing.T) {
+	t.Parallel()
+
+	if HealthPath == "/healthz" {
+		t.Fatal("HealthPath is /healthz, which Cloud Run's frontend answers before the container")
+	}
+
+	if HealthPath != "/health" {
+		t.Errorf("HealthPath = %q; if this moved deliberately, move this assertion with it",
+			HealthPath)
+	}
+}

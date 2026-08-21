@@ -177,7 +177,15 @@ const (
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.
 const (
 	AuthCallbackPath = "/auth/callback"
-	HealthPath       = "/healthz"
+
+	// HealthPath is deliberately not "/healthz". Cloud Run's frontend answers
+	// that exact path itself: a request for it never reaches the container,
+	// returns Google's HTML error page rather than this service's plain-text
+	// one, and produces no request log line — while "/healthz/", "/health"
+	// and every other path arrive normally. The health route was therefore
+	// unreachable in production from the first deploy, and nothing noticed
+	// because nothing depends on it: Cloud Run probes the port, not a path.
+	HealthPath = "/health"
 
 	// authCallbackSegment is the one path secret that would collide with the
 	// callback route.
