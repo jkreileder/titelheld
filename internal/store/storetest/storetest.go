@@ -605,15 +605,23 @@ func recentTitlesBounded(t *testing.T, s store.Store) {
 	}
 }
 
+// Values the configuration cases assert on in more than one place, named so
+// the expectation and the fixture cannot drift apart.
+const (
+	testGravelRide   = "GravelRide"
+	testFirstEntry   = "The Pink Panther"
+	testFranchiseKey = "pink-panther"
+)
+
 // testFranchises is a configuration document with one ordered series.
 func testFranchises() store.AthleteConfig {
 	return store.AthleteConfig{
 		Franchises: []store.Franchise{
 			{
-				Name:       "pink-panther",
-				SportTypes: []string{"GravelRide", "Ride"},
+				Name:       testFranchiseKey,
+				SportTypes: []string{testGravelRide, "Ride"},
 				GearName:   "Pink Panther",
-				Titles:     []string{"The Pink Panther", "A Shot in the Dark"},
+				Titles:     []string{testFirstEntry, "A Shot in the Dark"},
 			},
 		},
 	}
@@ -723,8 +731,11 @@ func athleteConfigIsCopied(t *testing.T, s store.Store) {
 		t.Fatalf("SaveAthleteConfig: %v", err)
 	}
 
-	// Reach into the value that was handed to the store.
+	// Reach into the value that was handed to the store. Every slice, not
+	// just the one: a store that copies Titles and aliases SportTypes passes
+	// a test that only checks Titles.
 	config.Franchises[0].Titles[0] = "Mutated After Saving"
+	config.Franchises[0].SportTypes[0] = "MutatedSport"
 	config.Franchises[0].Name = "mutated"
 
 	got, ok, err := s.AthleteConfig(t.Context(), 25)
@@ -732,12 +743,38 @@ func athleteConfigIsCopied(t *testing.T, s store.Store) {
 		t.Fatalf("AthleteConfig = %v, %v", ok, err)
 	}
 
-	if got.Franchises[0].Titles[0] != "The Pink Panther" {
+	if got.Franchises[0].Titles[0] != testFirstEntry {
 		t.Errorf("a caller's later edit reached the stored series: %q",
 			got.Franchises[0].Titles[0])
 	}
 
-	if got.Franchises[0].Name != "pink-panther" {
+	if got.Franchises[0].SportTypes[0] != testGravelRide {
+		t.Errorf("a caller's later edit reached the stored sport types: %q",
+			got.Franchises[0].SportTypes[0])
+	}
+
+	if got.Franchises[0].Name != testFranchiseKey {
 		t.Errorf("a caller's later edit reached the stored name: %q", got.Franchises[0].Name)
+	}
+
+	// And the other boundary: what a reader is given is theirs to change.
+	// Firestore hands back a fresh decode every time, so aliasing on the way
+	// out would make one implementation mutable through its readers and the
+	// other not.
+	got.Franchises[0].Titles[0] = "Mutated After Reading"
+	got.Franchises[0].SportTypes[0] = "MutatedSport"
+
+	again, ok, err := s.AthleteConfig(t.Context(), 25)
+	if err != nil || !ok {
+		t.Fatalf("AthleteConfig = %v, %v", ok, err)
+	}
+
+	if again.Franchises[0].Titles[0] != testFirstEntry {
+		t.Errorf("a reader's edit reached the stored series: %q", again.Franchises[0].Titles[0])
+	}
+
+	if again.Franchises[0].SportTypes[0] != testGravelRide {
+		t.Errorf("a reader's edit reached the stored sport types: %q",
+			again.Franchises[0].SportTypes[0])
 	}
 }
