@@ -11,9 +11,10 @@ everything that should stay boring untouched.
 > geocoding, the prompt builder and LLM providers, and the sweep that drains the queue and
 > writes the title. The infrastructure is applied and the service is deployed.
 >
-> Not built: the per-athlete configuration document, so the athlete's tiers, geofences and
-> banned words are still the shipped defaults; and franchise *selection*, though the position
-> store it needs is in place — see [Franchises](#franchises).
+> Not built: the per-athlete configuration document, so the athlete's tiers, geofences, banned
+> words and franchise lists are still the shipped defaults; and the **Strava history import**,
+> which is what would give the title history something to work with before the first real
+> naming — see [What the prompt carries](#what-the-prompt-carries).
 >
 > **The scheduler is paused.** Nothing fires the sweep until it is unpaused by hand, which is
 > deliberate: the naming pipeline is reviewed end to end before it runs unattended.
@@ -30,6 +31,7 @@ everything that should stay boring untouched.
 - [The classifier](#the-classifier)
 - [Writes and dry run](#writes-and-dry-run)
 - [What gets written](#what-gets-written)
+- [What the prompt carries](#what-the-prompt-carries)
 - [Configuration](#configuration)
 - [HTTP surface](#http-surface)
 - [Development](#development)
@@ -153,6 +155,40 @@ and Zwift rides left alone never get it, because they never got a title either.
 
 Nothing else is ours to change. Sport type, gear and the workout summaries other tools write
 are never touched.
+
+## What the prompt carries
+
+Beyond the ride itself, four things — all of them derived, none of them committed to this
+repository.
+
+**The last 25 titles.** The prompt forbids repeating any of them and invites referring back.
+They come from the named log, which is the record of what this service has written.
+
+**Few-shot examples in the athlete's own style.** Six of them, rebuilt at prompt time: the
+named log keeps each title and the language it was written in, and the ride that produced it is
+re-read from Strava to describe the situation. Deriving them costs a read per example, so the
+result is cached against the history it came from — the history only changes when something is
+named, so a sweep repeating every five minutes pays once. Before anything has been named, a
+small synthetic set ships as the cold start.
+
+**The next entry of a franchise**, when the ride qualifies — see [Franchises](#franchises). The
+model may adapt the wording; it may not skip the position.
+
+**Whether this route has been ridden before**, as "same route as 3 May 2026, ridden four
+times". A route is identified by a one-way digest of a deliberately coarse rounding of the
+polyline, so what is stored answers "this again" and cannot answer "where". It is
+direction-insensitive: an out-and-back ridden the other way is the same ride.
+
+Only the title history is worth failing for. If it cannot be read the activity stays queued,
+because the realistic cause is the composite index missing — a deployment error that fixes
+itself on the next apply, where naming without history in the meantime would produce exactly
+the repetition the history exists to prevent. Everything else degrades: a gear lookup, a
+franchise position, a route count or an example that cannot be fetched makes the prompt
+slightly poorer and never stops a title being written.
+
+**The history starts empty.** Nothing has been named yet, so the recent-titles list and the
+derived examples only become useful once real namings accumulate. Seeding them from the
+athlete's existing Strava activities is the history import, which is not built.
 
 ## Configuration
 
@@ -442,10 +478,16 @@ To add a franchise:
 3. If the athlete has already used some entries by hand, set the position to that count. Leaving
    it unset starts at the first title.
 
-**Not yet wired.** The position store, its conformance tests and its Firestore IAM are in place;
-the selection step that consults it during naming is not, and neither is the per-athlete
-configuration document the list would live in. Until both land, no activity is named from a
-franchise.
+The shipped list deliberately omits the three entries already used by hand — "The Pink Panther
+Checks Inn", "The Pink Panther Strikes Again" and "Revenge of the Pink Panther". The store
+starts every franchise at zero and nothing can seed it, so listing them would hand out a title
+the athlete already has. A franchise added later that has never been used needs no such care.
+
+**Still configuration-in-code.** The list lives in `internal/naming/franchise.go` rather than in
+a per-athlete configuration document, because that document is not built yet. Adding a
+franchise is therefore a code change today, which is the one thing "franchises are data" was
+meant to avoid. The shape is already right — the store holds a position and never a title — so
+what moves later is where the list is read from, not what is stored.
 
 ## Local development
 

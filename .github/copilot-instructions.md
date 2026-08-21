@@ -73,10 +73,18 @@
   validator and are reported as it words them, with the audience that was
   required.
 
-Not built yet: the per-athlete configuration document, so tiers, geofences and
-banned words are still the shipped defaults; and franchise *selection*, though
-its position store is in place. No Strava push subscription has been created,
-and the Cloud Scheduler job is deliberately paused.
+The prompt carries four derived things beyond the ride: the last 25 titles,
+six few-shot examples rebuilt by re-reading past activities, the next franchise
+entry when one applies, and whether the route has been ridden before. Only the
+title history is worth failing an activity for - the realistic cause is the
+composite index missing. Everything else degrades rather than blocking a title.
+
+Not built yet: the per-athlete configuration document, so tiers, geofences,
+banned words and franchise lists are still shipped defaults in code; and the
+Strava history import, which is what would give the title history and the
+derived examples anything to work with before the first real naming. No Strava
+push subscription has been created, and the Cloud Scheduler job is
+deliberately paused.
 
 ## Design Rules That Are Not Negotiable
 

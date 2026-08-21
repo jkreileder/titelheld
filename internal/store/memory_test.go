@@ -375,3 +375,32 @@ func TestPlaceEmpty(t *testing.T) {
 		t.Error("a Place with a country is not empty")
 	}
 }
+
+// Titles written in the same sweep share a clock reading, so the order has to
+// be total rather than merely sorted — otherwise it is map iteration order.
+func TestRecentTitlesBreakTiesDeterministically(t *testing.T) {
+	t.Parallel()
+
+	memory := NewMemory()
+	at := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+
+	for _, id := range []int64{3, 1, 2} {
+		if err := memory.MarkNamed(t.Context(), Naming{
+			AthleteID: 1, ActivityID: id, Title: "title", At: at,
+		}); err != nil {
+			t.Fatalf("MarkNamed: %v", err)
+		}
+	}
+
+	for range 20 {
+		titles, err := memory.RecentTitles(t.Context(), 1, 10)
+		if err != nil {
+			t.Fatalf("RecentTitles: %v", err)
+		}
+
+		got := []int64{titles[0].ActivityID, titles[1].ActivityID, titles[2].ActivityID}
+		if got[0] != 3 || got[1] != 2 || got[2] != 1 {
+			t.Fatalf("RecentTitles = %v, want activity IDs descending on a tie", got)
+		}
+	}
+}

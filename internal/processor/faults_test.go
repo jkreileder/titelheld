@@ -3,11 +3,13 @@ package processor
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jkreileder/titelheld/internal/classifier"
 	"github.com/jkreileder/titelheld/internal/geo"
+	"github.com/jkreileder/titelheld/internal/naming"
 	"github.com/jkreileder/titelheld/internal/store"
 )
 
@@ -25,6 +27,22 @@ type faultyStore struct {
 	namedErr     error
 	markNamedErr error
 	removeErr    error
+
+	recentTitlesErr      error
+	franchisePositionErr error
+	advanceFranchiseErr  error
+	routeErr             error
+	recordRouteErr       error
+}
+
+func (f *faultyStore) RecentTitles(
+	ctx context.Context, athleteID int64, limit int,
+) ([]store.NamedTitle, error) {
+	if f.recentTitlesErr != nil {
+		return nil, f.recentTitlesErr
+	}
+
+	return f.Store.RecentTitles(ctx, athleteID, limit)
 }
 
 func (f *faultyStore) Due(ctx context.Context, at time.Time) ([]store.Pending, error) {
@@ -298,5 +316,167 @@ func TestAnEmptyGeographyStillNames(t *testing.T) {
 
 	if writes := h.strava.writes(); len(writes) != 1 {
 		t.Errorf("%d PUTs, want 1: %+v", len(writes), writes)
+	}
+}
+
+func (f *faultyStore) FranchisePosition(
+	ctx context.Context, athleteID int64, franchise string,
+) (int, error) {
+	if f.franchisePositionErr != nil {
+		return 0, f.franchisePositionErr
+	}
+
+	return f.Store.FranchisePosition(ctx, athleteID, franchise)
+}
+
+func (f *faultyStore) AdvanceFranchise(
+	ctx context.Context, athleteID int64, franchise string,
+) (int, error) {
+	if f.advanceFranchiseErr != nil {
+		return 0, f.advanceFranchiseErr
+	}
+
+	return f.Store.AdvanceFranchise(ctx, athleteID, franchise)
+}
+
+func (f *faultyStore) Route(
+	ctx context.Context, athleteID int64, fingerprint string,
+) (store.Route, bool, error) {
+	if f.routeErr != nil {
+		return store.Route{}, false, f.routeErr
+	}
+
+	return f.Store.Route(ctx, athleteID, fingerprint)
+}
+
+func (f *faultyStore) RecordRoute(
+	ctx context.Context, athleteID int64, fingerprint string, at time.Time,
+) (store.Route, error) {
+	if f.recordRouteErr != nil {
+		return store.Route{}, f.recordRouteErr
+	}
+
+	return f.Store.RecordRoute(ctx, athleteID, fingerprint, at)
+}
+
+// None of the extras may cost a title.
+//
+// The history is the one thing worth failing for; everything else here — the
+// franchise position, advancing it, reading or counting a route — makes the
+// title slightly worse and must never stop it being written. Each of these
+// would otherwise be a ride left with a Strava default because a callback
+// could not be looked up.
+func TestNoOptionalStoreFailureCostsATitle(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("firestore: unavailable")
+
+	for _, tc := range []struct {
+		name  string
+		apply func(*faultyStore)
+	}{
+		{
+			name:  "the franchise position cannot be read",
+			apply: func(f *faultyStore) { f.franchisePositionErr = sentinel },
+		},
+		{
+			name:  "the franchise cannot be advanced",
+			apply: func(f *faultyStore) { f.advanceFranchiseErr = sentinel },
+		},
+		{
+			name:  "the route history cannot be read",
+			apply: func(f *faultyStore) { f.routeErr = sentinel },
+		},
+		{
+			name:  "the route cannot be counted",
+			apply: func(f *faultyStore) { f.recordRouteErr = sentinel },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, true, nil)
+
+			h.strava.gearName = "Pink Panther"
+			h.strava.activity.GearID = "b1234567"
+			h.strava.activity.Map.SummaryPolyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
+
+			faulty := &faultyStore{Store: h.store}
+			tc.apply(faulty)
+			h.proc.deps.Store = faulty
+
+			h.enqueue(t, "create")
+
+			result, err := h.proc.Sweep(t.Context())
+			if err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+
+			if result.Named != 1 {
+				t.Errorf("result %+v, want the activity named anyway", result)
+			}
+
+			if writes := h.strava.writes(); len(writes) != 1 {
+				t.Errorf("%d PUTs, want 1 despite %s", len(writes), tc.name)
+			}
+		})
+	}
+}
+
+// A franchise whose entries are used up stops applying.
+func TestAnExhaustedFranchiseStopsApplying(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	h.strava.gearName = "Pink Panther"
+	h.strava.activity.GearID = "b1234567"
+
+	// Walk the whole series.
+	for range len(naming.DefaultFranchises()[0].Titles) {
+		if _, err := h.store.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
+			t.Fatalf("AdvanceFranchise: %v", err)
+		}
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if strings.Contains(capture.prompt.User, "FRANCHISE") {
+		t.Errorf("an exhausted franchise was still offered:\n%s", capture.prompt.User)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs, want the ride named normally", len(writes))
+	}
+}
+
+// A polyline that cannot be decoded costs the route history, not the title.
+func TestAMalformedPolylineDoesNotBlockTheTitle(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	// Decodable enough for the geocoder stub, not for the fingerprint.
+	h.strava.activity.Map.SummaryPolyline = "\x01\x02not a polyline"
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs, want 1: a bad polyline must not block a title", len(writes))
+	}
+
+	if strings.Contains(capture.prompt.User, "Route history") {
+		t.Errorf("a route that could not be fingerprinted was reported as a repeat:\n%s",
+			capture.prompt.User)
 	}
 }
