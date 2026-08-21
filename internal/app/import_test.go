@@ -59,7 +59,7 @@ func TestImportWithSeedsTheBoundAthlete(t *testing.T) {
 		{ID: 2, Name: "Morning Ride", StartDate: time.Now().Add(-48 * time.Hour)},
 	}}
 
-	if err := importWith(t.Context(), config.Config{}, realStore{memory}, list, quietLogger()); err != nil {
+	if err := importWith(t.Context(), config.Config{}, realStore{memory}, list, 4242, quietLogger()); err != nil {
 		t.Fatalf("importWith: %v", err)
 	}
 
@@ -81,20 +81,6 @@ func TestImportWithSeedsTheBoundAthlete(t *testing.T) {
 	}
 }
 
-// With no athlete bound, the import says to authorize rather than guessing one.
-func TestImportWithRefusesWithoutABoundAthlete(t *testing.T) {
-	t.Parallel()
-
-	err := importWith(t.Context(), config.Config{}, realStore{store.NewMemory()}, &listOnce{}, quietLogger())
-	if err == nil {
-		t.Fatal("the import ran with no athlete bound")
-	}
-
-	if !strings.Contains(err.Error(), "authorization flow") {
-		t.Errorf("error %q does not say what to do about it", err)
-	}
-}
-
 // A bad machine-title pattern stops the import before it reads anything.
 func TestImportWithRefusesABadMachineTitlePattern(t *testing.T) {
 	t.Parallel()
@@ -104,7 +90,7 @@ func TestImportWithRefusesABadMachineTitlePattern(t *testing.T) {
 
 	list := &listOnce{}
 
-	err := importWith(t.Context(), cfg, realStore{boundMemory(t)}, list, quietLogger())
+	err := importWith(t.Context(), cfg, realStore{boundMemory(t)}, list, 4242, quietLogger())
 	if err == nil {
 		t.Fatal("an uncompilable machine-title pattern was accepted")
 	}
@@ -119,7 +105,7 @@ func TestImportWithReportsAFailedListing(t *testing.T) {
 	t.Parallel()
 
 	err := importWith(t.Context(), config.Config{}, realStore{boundMemory(t)},
-		failingList{}, quietLogger())
+		failingList{}, 4242, quietLogger())
 	if err == nil {
 		t.Fatal("a failed listing was reported as success")
 	}

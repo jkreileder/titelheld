@@ -34,6 +34,10 @@ var englishMarkers = map[string]struct{}{
 	"is": {}, "was": {}, "are": {}, "were": {}, "has": {}, "have": {}, "had": {},
 	"my": {}, "of": {}, "this": {}, "that": {}, "some": {}, "every": {},
 	"ride": {}, "loop": {}, "climb": {}, "hills": {}, "lap": {}, "laps": {},
+	// Also in the German list, so they cancel: "Tour" and "See" are ordinary
+	// words in both languages and would otherwise label an English title
+	// German on their own.
+	"tour": {}, "see": {},
 	"rain": {}, "wind": {}, "sun": {}, "cold": {}, "warm": {}, "fast": {},
 	"home": {}, "work": {}, "morning": {}, "evening": {}, "night": {},
 }

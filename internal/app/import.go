@@ -26,7 +26,7 @@ import (
 // source with the service, so a refresh here rotates the stored refresh token
 // exactly as one there would.
 func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string) error {
-	cfg, err := config.Load(getenv)
+	cfg, err := config.LoadImport(getenv)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
@@ -55,7 +55,7 @@ func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string
 		return err
 	}
 
-	return importWith(ctx, cfg, dataStore, client, logger)
+	return importWith(ctx, cfg, dataStore, client, token.AthleteID, logger)
 }
 
 // importWith runs the import against an already-open store.
@@ -65,18 +65,14 @@ func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string
 // only what needs a real environment — reading it, refusing an in-memory one,
 // and opening Firestore.
 //
-// The listing arrives already built, so this has no branch a test cannot
-// reach: Import supplies the real read-only client, a test supplies its own.
+// The listing and the athlete both arrive resolved, so this has no branch a
+// test cannot reach and no second lookup that could disagree with the first:
+// the client authenticates as whoever Import resolved, and the history is
+// written under that same athlete.
 func importWith(
 	ctx context.Context, cfg config.Config, dataStore boundStore,
-	activities importer.Activities, logger *slog.Logger,
+	activities importer.Activities, athleteID int64, logger *slog.Logger,
 ) error {
-	token, err := dataStore.AnyToken(ctx)
-	if err != nil {
-		return fmt.Errorf(
-			"import: no single bound athlete; run the authorization flow first: %w", err)
-	}
-
 	rules, err := classifierConfig(cfg)
 	if err != nil {
 		return err
@@ -85,7 +81,7 @@ func importWith(
 	result, err := importer.Run(ctx, importer.Deps{
 		Activities:    activities,
 		Store:         dataStore,
-		AthleteID:     token.AthleteID,
+		AthleteID:     athleteID,
 		MachineTitles: rules.MachineTitles,
 		Logger:        logger,
 	})

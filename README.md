@@ -472,8 +472,15 @@ correctly, and a job that runs once under the operator's own credentials, with n
 over it, has no business being one.
 
 ```sh
-FIRESTORE_PROJECT=titelheld-… FIRESTORE_DATABASE=titelheld STRAVA_CLIENT_ID=… STRAVA_CLIENT_SECRET=… STRAVA_VERIFY_TOKEN=… WEBHOOK_PATH_SECRET=… BASE_URL=https://… go run ./cmd/titelheld-import
+FIRESTORE_PROJECT=titelheld-… FIRESTORE_DATABASE=titelheld \
+STRAVA_CLIENT_ID=… STRAVA_CLIENT_SECRET=… \
+go run ./cmd/titelheld-import
 ```
+
+Four variables, and no more. An import serves no HTTP and completes no authorization flow, so
+the webhook's verify token and unguessable path, and the public base URL the OAuth redirect is
+built from, are nothing to it — Strava's token endpoint takes no `redirect_uri` on a refresh.
+Requiring them would mean inventing values for a job that never reads them.
 
 It authenticates to Firestore with your own application-default credentials, and to Strava with
 the stored token — so **run the authorization flow first**. It resolves the athlete the way the

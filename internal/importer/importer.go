@@ -46,6 +46,11 @@ type Deps struct {
 
 	// MachineTitles recognizes titles another tool wrote. Imported alongside
 	// Strava's own defaults, they are the two kinds of title this skips.
+	//
+	// Empty means the shipped set, not "recognize nothing". The zero value
+	// matches no title at all, so a caller that left this out would seed
+	// Xert's titles into the history as the athlete's own style — the one
+	// outcome the skip exists to prevent, arrived at by omission.
 	MachineTitles classifier.MachineTitles
 
 	// PerPage defaults to [strava.MaxActivitiesPerPage]. Lower it only to
@@ -115,6 +120,10 @@ func Run(ctx context.Context, deps Deps) (Result, error) {
 		pause = sleepContext
 	}
 
+	if deps.MachineTitles.IsEmpty() {
+		deps.MachineTitles = classifier.DefaultMachineTitles()
+	}
+
 	var result Result
 
 	for page := 1; ; page++ {
@@ -149,6 +158,12 @@ func Run(ctx context.Context, deps Deps) (Result, error) {
 
 		logger.Info("imported a page",
 			"page", page, "seen", result.Seen, "imported", result.Imported)
+
+		// A short page is the last one. Asking for the next would spend a
+		// request and a pause to be told what this page already said.
+		if len(activities) < perPage {
+			break
+		}
 	}
 
 	logger.Info("import complete",

@@ -139,3 +139,12 @@ func (m MachineTitles) Matches(title string) bool {
 func (m MachineTitles) renamable(title string) bool {
 	return IsDefaultTitle(title) || m.Matches(title)
 }
+
+// IsEmpty reports whether no patterns are configured.
+//
+// A zero MachineTitles matches no title, which reads as "recognize nothing"
+// and is almost never what a caller meant — so callers that can default to
+// the shipped set need to be able to tell.
+func (m MachineTitles) IsEmpty() bool {
+	return len(m.patterns) == 0
+}

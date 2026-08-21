@@ -198,6 +198,27 @@ func (e *ErrMissing) Error() string {
 // getenv is injected rather than calling os.Getenv directly so tests need no
 // process-wide environment mutation. Pass os.Getenv in production.
 func Load(getenv func(string) string) (Config, error) {
+	return load(getenv, true)
+}
+
+// LoadImport reads only what a one-shot import needs.
+//
+// An import serves no HTTP and completes no authorization flow, so the
+// webhook's verify token and unguessable path, and the public base URL the
+// OAuth redirect is built from, are nothing to it — Strava's token endpoint
+// takes no redirect_uri on a refresh. Requiring them would make an operator
+// invent values for a job that never reads them, and the invented values
+// would sit in a shell history looking meaningful.
+//
+// Everything else is identical, including the Firestore settings and the
+// machine-title patterns the import needs to know which titles to skip.
+func LoadImport(getenv func(string) string) (Config, error) {
+	return load(getenv, false)
+}
+
+// load reads the environment. serving requires the settings only the running
+// service uses.
+func load(getenv func(string) string, serving bool) (Config, error) {
 	cfg := Config{
 		Port:               DefaultPort,
 		ProcessDelay:       DefaultProcessDelay,
@@ -211,12 +232,17 @@ func Load(getenv func(string) string) (Config, error) {
 
 	var errs []error
 
-	for name, value := range map[string]string{
+	required := map[string]string{
 		EnvStravaClientID:     cfg.StravaClientID,
 		EnvStravaClientSecret: cfg.StravaClientSecret,
-		EnvStravaVerifyToken:  cfg.StravaVerifyToken,
-		EnvBaseURL:            cfg.BaseURL,
-	} {
+	}
+
+	if serving {
+		required[EnvStravaVerifyToken] = cfg.StravaVerifyToken
+		required[EnvBaseURL] = cfg.BaseURL
+	}
+
+	for name, value := range required {
 		if value == "" {
 			errs = append(errs, &ErrMissing{Name: name})
 		}
@@ -225,6 +251,8 @@ func Load(getenv func(string) string) (Config, error) {
 	pathSecret := strings.Trim(strings.TrimSpace(getenv(EnvWebhookPathSecret)), "/")
 
 	switch {
+	case pathSecret == "" && !serving:
+		// Nothing to serve, so nothing to guard with an unguessable path.
 	case pathSecret == "":
 		errs = append(errs, &ErrMissing{Name: EnvWebhookPathSecret})
 	case !pathSecretPattern.MatchString(pathSecret):

@@ -336,9 +336,11 @@ func TestImportPagesUntilExhausted(t *testing.T) {
 		t.Errorf("imported %d, want 7", result.Imported)
 	}
 
-	// Four pages of two, then an empty fifth that ends it.
-	if result.Pages != 5 {
-		t.Errorf("Pages = %d, want 5", result.Pages)
+	// Three full pages of two and a fourth holding one. The short page ends
+	// the listing, so no empty fifth is fetched — that request and its pause
+	// would only confirm what the short page already said.
+	if result.Pages != 4 {
+		t.Errorf("Pages = %d, want 4", result.Pages)
 	}
 }
 
@@ -556,5 +558,78 @@ func TestRunStopsOnAnAlreadyCancelledContext(t *testing.T) {
 
 	if list.calls != 0 {
 		t.Errorf("Strava was called %d times with a cancelled context", list.calls)
+	}
+}
+
+// A history that fills its last page still needs the empty one to end.
+//
+// The short-page shortcut cannot apply when every page is full, so the
+// listing has to ask once more and be told there is nothing.
+func TestImportEndsOnAnEmptyPageWhenTheLastIsFull(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+
+	activities := make([]strava.Activity, 0, 4)
+	for index := range 4 {
+		activities = append(activities,
+			activity(int64(90+index), "Runde "+string(rune('a'+index)), index+1))
+	}
+
+	result, err := Run(t.Context(), deps(t, memory, &pages{activities: activities}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result.Imported != 4 {
+		t.Errorf("imported %d, want 4", result.Imported)
+	}
+
+	// Two full pages, then the empty third.
+	if result.Pages != 3 {
+		t.Errorf("Pages = %d, want 3", result.Pages)
+	}
+}
+
+// A caller that omits MachineTitles still skips them.
+//
+// The zero MachineTitles matches no title at all, so the omission would seed
+// Xert's titles into the history as the athlete's own style — the one outcome
+// the skip exists to prevent, reached by leaving a field out rather than by
+// deciding anything.
+func TestOmittedMachineTitlesStillSkipThem(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	list := &pages{activities: []strava.Activity{
+		activity(95, "Difficult Mixed Breakaway Specialist Ride", 1),
+		activity(96, "Gegenwind bis Musterdorf", 2),
+	}}
+
+	result, err := Run(t.Context(), Deps{
+		Activities: list,
+		Store:      memory,
+		AthleteID:  4242,
+		PerPage:    2,
+		Pause:      func(context.Context, time.Duration) error { return nil },
+		Logger:     quiet(),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want the machine title skipped", result.Skipped)
+	}
+
+	history, err := memory.RecentTitles(t.Context(), 4242, 10)
+	if err != nil {
+		t.Fatalf("RecentTitles: %v", err)
+	}
+
+	for _, entry := range history {
+		if entry.Title == "Difficult Mixed Breakaway Specialist Ride" {
+			t.Error("a machine title was seeded because the field was left out")
+		}
 	}
 }
