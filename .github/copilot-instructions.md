@@ -61,7 +61,12 @@ subscription has been created.
 
 ## Design Rules That Are Not Negotiable
 
-- **Rename only.** Sport type, gear and descriptions belong to other tools.
+- **The title, and one line of the description.** Sport type, gear and workout
+  summaries belong to other tools and are never touched. The description is
+  touched in exactly one way: the attribution line from pipeline step 7 is
+  prepended to activities this service titled, as a read-modify-write that
+  preserves every other byte. Nothing else about a description is ours to
+  change, and nothing at all is, on an activity we did not name.
 - **Fail closed.** An unrecognized title means someone else named the activity;
   skip it. Never widen the default-title table by guessing.
 - **Tier before gate.** `Classify` assigns a tier regardless of the current title,

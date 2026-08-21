@@ -23,6 +23,7 @@ everything that should stay boring untouched.
 - [Repository layout](#repository-layout)
 - [The classifier](#the-classifier)
 - [Writes and dry run](#writes-and-dry-run)
+- [What gets written](#what-gets-written)
 - [Configuration](#configuration)
 - [HTTP surface](#http-surface)
 - [Development](#development)
@@ -47,7 +48,10 @@ The service is the **last writer** in a chain of Strava automations. Other tools
 (ActivityFix, Xert) fix up sport type, gear and workout summaries first; this service waits a
 configurable delay, then names an activity only if nobody has already titled it by hand.
 
-An activity is only ever renamed. Sport type, gear and descriptions are never touched.
+An activity is renamed, and one line is added to the front of its description: the
+attribution line, on activities this service titled and no others. Sport type, gear and the
+workout summaries other tools write are never touched, and the rest of the description comes
+back byte for byte — see [What gets written](#what-gets-written).
 
 ## Repository layout
 
@@ -112,6 +116,36 @@ by doing nothing:
   what lets the service loose.
 - `UpdateActivityName` refuses with `ErrDryRun` before building a request, and the transport
   refuses every non-GET method again, so a future write path cannot slip past the first check.
+
+## What gets written
+
+Two things, and only on an activity this service titled.
+
+**The title.** Only where the classifier cleared it: a Strava default, or a machine title
+another tool wrote. A human's title is never overwritten.
+
+**One line at the front of the description**, from pipeline step 7:
+
+```text
+Title by titelheld — https://github.com/jkreileder/titelheld
+```
+
+Strava's `PUT` replaces the whole description, so adding a line is a read-modify-write: the
+current description is fetched immediately before the write and prepended to, and everything
+already there comes back byte for byte — it belongs to Xert, myWindsock and mybiketraffic, and
+this service is the last writer, not the only one.
+
+The line is its own idempotency sentinel, and the sentinel is the **URL**, not the sentence.
+Reword the prose one day and already-attributed activities stay untouched; there is no separate
+marker and no stored flag, so the check survives a replay, a lost database, and a description
+the athlete has edited around.
+
+Attribution never blocks a naming. If the description cannot be read, the title goes out on its
+own and the reason is logged. It is on by default and can be switched off; skipped activities
+and Zwift rides left alone never get it, because they never got a title either.
+
+Nothing else is ours to change. Sport type, gear and the workout summaries other tools write
+are never touched.
 
 ## Configuration
 

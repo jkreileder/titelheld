@@ -186,6 +186,32 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 	return summary, nil
 }
 
+// allowedOnly strips a place name that is not on the allow-list.
+//
+// Applied to every place this package hands back, whichever side it came
+// from. The allow-list is the privacy contract, and a contract enforced only
+// where a value is produced is enforced by convention everywhere it is used:
+// a cached entry was filtered by whatever rules were in force when it was
+// written, and a Reverser this package did not write was never filtered at
+// all. [placeFrom] never sets a name without the Kind that justifies it, so
+// the Kind is enough to re-check without the original payload.
+//
+// Only the name goes. Region and Country are coarse by construction, and are
+// what a title falls back to when there is no usable place name.
+func (d *Describer) allowedOnly(place store.Place, source string) store.Place {
+	if place.Name == "" || IsAllowedKind(place.Kind) {
+		return place
+	}
+
+	d.logger.Warn("dropped a place name that is not on the allow-list",
+		"source", source, "kind", logsafe.String(place.Kind))
+
+	place.Name = ""
+	place.Kind = ""
+
+	return place
+}
+
 // resolve returns a place from the cache, or fetches and caches it.
 func (d *Describer) resolve(ctx context.Context, key string, point Point) (store.Place, error) {
 	cached, ok, err := d.cache.Place(ctx, key)
@@ -194,13 +220,20 @@ func (d *Describer) resolve(ctx context.Context, key string, point Point) (store
 	}
 
 	if ok {
-		return cached, nil
+		return d.allowedOnly(cached, "cache"), nil
 	}
 
 	place, err := d.reverser.Reverse(ctx, point)
 	if err != nil {
 		return store.Place{}, err
 	}
+
+	// Filtered before it is stored, not only before it is returned. Reverser
+	// is an interface this package publishes and does not implement alone, so
+	// an implementation that answers with a point of interest must not get its
+	// answer persisted next to the athlete's coordinates — the cache would
+	// then hold exactly the thing the privacy rule exists to keep out of it.
+	place = d.allowedOnly(place, "geocoder")
 
 	// Empty answers are cached too. Nominatim has nothing to say about the
 	// middle of a lake, and asking again every time would spend the budget on a

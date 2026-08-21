@@ -106,6 +106,37 @@ var naturalFeatures = map[string]map[string]string{
 	},
 }
 
+// allowedKinds is every Kind placeFrom can set, and nothing else.
+//
+// placeFrom sets Name and Kind together and never one without the other, so a
+// place whose Kind is not in here did not come from the allow-list. That is
+// what makes the read-side check in [Describer.resolve] possible: it does not
+// need the original payload, only the claim the Kind makes about where the
+// name came from.
+var allowedKinds = func() map[string]struct{} {
+	kinds := make(map[string]struct{}, len(addressFields))
+
+	for _, field := range addressFields {
+		kinds[field.kind] = struct{}{}
+	}
+
+	for _, types := range naturalFeatures {
+		for _, kind := range types {
+			kinds[kind] = struct{}{}
+		}
+	}
+
+	return kinds
+}()
+
+// IsAllowedKind reports whether a place name of this kind may become part of a
+// title.
+func IsAllowedKind(kind string) bool {
+	_, ok := allowedKinds[kind]
+
+	return ok
+}
+
 // reverseResponse is the subset of Nominatim's jsonv2 reply that is read.
 //
 // Everything omitted is omitted on purpose: display_name concatenates the whole

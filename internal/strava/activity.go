@@ -113,8 +113,35 @@ func (c *Client) GetActivity(ctx context.Context, activityID int64) (*Activity, 
 // [WriteModeEnabled]; the transport repeats that check, so neither this guard
 // nor a future mutating method can be bypassed.
 //
-// Sport type, gear and description belong to other tools and are never sent.
+// Sport type and gear belong to other tools and are never sent. The
+// description is sent only by [UpdateActivityNameAndDescription], and only to
+// carry the attribution line.
 func (c *Client) UpdateActivityName(ctx context.Context, activityID int64, name string) (*Activity, error) {
+	return c.update(ctx, activityID, name, nil)
+}
+
+// UpdateActivityNameAndDescription renames an activity and replaces its
+// description in the same call.
+//
+// One call rather than two, because Strava emits a webhook event per update:
+// two PUTs would produce two events, and the second would arrive after this
+// service had already recorded the activity as named, which is exactly the
+// shape a self-caused event is supposed to have. One write, one event.
+//
+// The description is sent whole because Strava's PUT replaces it. Building the
+// new value — preserving what other tools wrote — belongs to the caller; see
+// the writer.
+func (c *Client) UpdateActivityNameAndDescription(
+	ctx context.Context, activityID int64, name, description string,
+) (*Activity, error) {
+	return c.update(ctx, activityID, name, &description)
+}
+
+// update is the single mutating path. Both exported methods land here so the
+// dry-run guard cannot be reached around.
+func (c *Client) update(
+	ctx context.Context, activityID int64, name string, description *string,
+) (*Activity, error) {
 	if c.writeMode != WriteModeEnabled {
 		return nil, fmt.Errorf("strava: refusing to rename activity %d: %w", activityID, ErrDryRun)
 	}
@@ -126,6 +153,9 @@ func (c *Client) UpdateActivityName(ctx context.Context, activityID int64, name 
 	path := "/activities/" + strconv.FormatInt(activityID, 10)
 
 	form := url.Values{"name": {name}}
+	if description != nil {
+		form.Set("description", *description)
+	}
 	body := func() (*strings.Reader, string) {
 		return strings.NewReader(form.Encode()), "application/x-www-form-urlencoded"
 	}
