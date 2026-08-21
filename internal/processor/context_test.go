@@ -583,3 +583,71 @@ func TestSituationOfAnActivityWithoutASportType(t *testing.T) {
 		t.Errorf("situation %q does not say what it was", got)
 	}
 }
+
+// A route is dated by the ride, not by when the sweep got round to it.
+//
+// The store keeps the earliest ride as the one a callback names. An activity
+// uploaded days late is processed after more recent ones, so recording it
+// under "now" would both date it wrongly and, once it is the earliest ride of
+// a route, put the wrong day in a title.
+func TestARouteIsDatedByTheRideNotTheSweep(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+
+	polyline := "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
+	h.strava.activity.Map.SummaryPolyline = polyline
+
+	// A ride from a fortnight ago, uploaded today.
+	ridden := time.Date(2026, 8, 1, 9, 30, 0, 0, time.UTC)
+	h.strava.activity.StartDateLocal = ridden
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	route, ok, err := h.store.Route(t.Context(), 4242, mustFingerprint(t, polyline))
+	if err != nil || !ok {
+		t.Fatalf("Route: %v, %v", ok, err)
+	}
+
+	if !route.FirstSeen.Equal(ridden.UTC()) {
+		t.Errorf("FirstSeen = %v, want the day it was ridden (%v)", route.FirstSeen, ridden.UTC())
+	}
+
+	if route.FirstSeen.Equal(h.now.UTC()) {
+		t.Error("the route was dated by the sweep rather than by the ride")
+	}
+}
+
+// An activity with no start date still counts, dated by the sweep.
+//
+// The fallback exists because a route with no date at all would break the
+// bounds the store keeps; "when we saw it" is a worse answer than the ride's
+// own date and a better one than the zero time.
+func TestARouteWithoutARideDateFallsBackToNow(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+
+	polyline := "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
+	h.strava.activity.Map.SummaryPolyline = polyline
+	h.strava.activity.StartDateLocal = time.Time{}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	route, ok, err := h.store.Route(t.Context(), 4242, mustFingerprint(t, polyline))
+	if err != nil || !ok {
+		t.Fatalf("Route: %v, %v", ok, err)
+	}
+
+	if !route.FirstSeen.Equal(h.now.UTC()) {
+		t.Errorf("FirstSeen = %v, want the sweep's clock (%v)", route.FirstSeen, h.now.UTC())
+	}
+}
