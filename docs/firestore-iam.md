@@ -14,7 +14,7 @@ it does not.
 
 ## What is stored
 
-Six collections, and nothing else. Adding a seventh means changing this document.
+Five collections, and nothing else. Adding a sixth means changing this document.
 
 | Collection  | Document ID               | Contents                                         | Re-derivable?           |
 | ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
@@ -23,18 +23,11 @@ Six collections, and nothing else. Adding a seventh means changing this document
 | `named`     | `{athleteID}-{activity}`  | Title written, its language and source, and when | Mostly, from Strava     |
 | `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
 | `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
-| `routes`    | `{athleteID}-{digest}`    | How often a route fingerprint has been ridden    | Yes, from Strava        |
 
 `franchise` stores an integer, never the titles: the series is configuration, so renaming or
 reordering one must not require migrating anything here. It is re-derivable only by matching past
 titles against a series, which is why it is remembered rather than recomputed — and losing it
 costs a repeated or skipped entry, not a wrong write.
-
-`routes` stores a count and two dates against a one-way digest of a deliberately coarse
-rounding of the polyline. **No track is stored.** The fingerprint answers "this route again"
-and cannot answer "which route" — it is not reversible into a line on a map, and it is
-direction-insensitive on purpose, so an out-and-back matches its return. Losing it costs a
-missed callback in a title.
 
 `named` also stores the language each title was written in and whether a model or a template
 produced it. Neither is re-derivable: re-reading an activity returns the title but never says
@@ -42,8 +35,8 @@ which language was chosen for it, or which tier named it.
 
 Only `tokens` genuinely has to survive. Strava rotates the refresh token on every refresh and
 invalidates the previous one immediately, so losing that document means re-running the
-authorization flow by hand. The other five are a work queue, two caches, franchise
-position state, and route counts.
+authorization flow by hand. The other four are a work queue, two caches, and franchise
+position state.
 
 Location data is minimized, not absent. No coordinate is stored as a *field*: `geocache`
 documents hold place names only. The coordinate that produced a place does survive as the
@@ -148,8 +141,8 @@ where process_after <= now  order by process_after asc
 The inequality and the ordering are on the same field, so Firestore serves it from the
 automatic single-field index.
 
-`franchise` and `routes` need nothing either. Both are addressed by document ID in both
-directions — read a value, or increment it in a transaction — so they run no query at all.
+`franchise` needs nothing either. It is addressed by document ID in both directions — read the
+position, or increment it in a transaction — so it runs no query at all.
 
 **The emulator will not tell you when this is wrong.** It serves any query without index
 definitions, so a mismatch between the Terraform declaration and the query in `RecentTitles`

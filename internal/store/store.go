@@ -108,39 +108,6 @@ type Store interface {
 	NamedLog
 	GeocodeCache
 	Franchises
-	Routes
-}
-
-// Routes remembers which routes an athlete has ridden before.
-//
-// A route is identified by a coarse fingerprint of its polyline, not by the
-// polyline itself: nothing here stores a track. The fingerprint is one-way and
-// deliberately blunt, so it answers "this again" and cannot answer "where".
-//
-// It exists so a title can make a callback — "same route as 3 May, ridden
-// four times" — which is the one thing a model cannot infer from a single
-// activity. Losing it costs a missed callback, never a wrong write.
-type Routes interface {
-	// Route returns how often this athlete has ridden the route and when they
-	// first did. A route never seen is the zero value and false, not an error.
-	Route(ctx context.Context, athleteID int64, fingerprint string) (Route, bool, error)
-
-	// RecordRoute counts one more ride of the route and returns the result.
-	//
-	// It increments rather than taking a count, for the same reason
-	// AdvanceFranchise does: the store decides the number.
-	RecordRoute(ctx context.Context, athleteID int64, fingerprint string, at time.Time) (Route, error)
-}
-
-// Route is how often one route has been ridden.
-type Route struct {
-	// Count is how many times it has been ridden, including the most recent.
-	Count int
-
-	// FirstSeen and LastSeen bound that. FirstSeen is what a callback names,
-	// because "same route as" means the first time, not the previous one.
-	FirstSeen time.Time
-	LastSeen  time.Time
 }
 
 // Franchises remembers how far along an ordered title series an athlete is.

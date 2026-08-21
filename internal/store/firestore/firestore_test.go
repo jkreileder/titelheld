@@ -223,14 +223,6 @@ func TestEveryMethodReportsAFailedClient(t *testing.T) {
 			_, err := firestoreStore.RecentTitles(ctx, 1, 5)
 			return err
 		},
-		"Route": func() error {
-			_, _, err := firestoreStore.Route(ctx, 1, "fp")
-			return err
-		},
-		"RecordRoute": func() error {
-			_, err := firestoreStore.RecordRoute(ctx, 1, "fp", storetest.Now)
-			return err
-		},
 		"Named":     func() error { _, _, err := firestoreStore.Named(ctx, 1, 2); return err },
 		"Place":     func() error { _, _, err := firestoreStore.Place(ctx, "k"); return err },
 		"SavePlace": func() error { return firestoreStore.SavePlace(ctx, "k", store.Place{Name: "n"}) },

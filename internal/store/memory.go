@@ -30,15 +30,6 @@ type Memory struct {
 	// franchises is keyed by athlete and franchise name, so two athletes walk
 	// the same series independently.
 	franchises map[franchiseKey]int
-
-	// routes counts how often each athlete has ridden each fingerprint.
-	routes map[routeKey]Route
-}
-
-// routeKey identifies one athlete's history of one route.
-type routeKey struct {
-	athleteID   int64
-	fingerprint string
 }
 
 // franchiseKey identifies one athlete's position in one franchise.
@@ -60,7 +51,6 @@ func NewMemory() *Memory {
 		named:      make(map[key]NamedTitle),
 		places:     make(map[string]Place),
 		franchises: make(map[franchiseKey]int),
-		routes:     make(map[routeKey]Route),
 	}
 }
 
@@ -282,49 +272,4 @@ func (m *Memory) AdvanceFranchise(_ context.Context, athleteID int64, franchise 
 	m.franchises[k]++
 
 	return m.franchises[k], nil
-}
-
-// Route returns how often the athlete has ridden this route.
-func (m *Memory) Route(_ context.Context, athleteID int64, fingerprint string) (Route, bool, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	route, ok := m.routes[routeKey{athleteID: athleteID, fingerprint: fingerprint}]
-
-	return route, ok, nil
-}
-
-// RecordRoute counts one more ride of this route.
-func (m *Memory) RecordRoute(
-	_ context.Context, athleteID int64, fingerprint string, at time.Time,
-) (Route, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	id := routeKey{athleteID: athleteID, fingerprint: fingerprint}
-
-	at = at.UTC()
-
-	route, ok := m.routes[id]
-	if !ok {
-		route = Route{FirstSeen: at, LastSeen: at}
-	}
-
-	// The earliest and latest ride, not the first and last recorded. Rides do
-	// not arrive in the order they happened: an activity uploaded days late is
-	// processed after more recent ones, and a history import would arrive in
-	// whatever order it reads. "Same route as" names the earliest, so taking
-	// the first one recorded would name the wrong day.
-	if at.Before(route.FirstSeen) {
-		route.FirstSeen = at
-	}
-
-	if at.After(route.LastSeen) {
-		route.LastSeen = at
-	}
-
-	route.Count++
-	m.routes[id] = route
-
-	return route, nil
 }
