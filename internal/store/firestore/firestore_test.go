@@ -219,6 +219,13 @@ func TestEveryMethodReportsAFailedClient(t *testing.T) {
 				AthleteID: 1, ActivityID: 2, Title: "t", At: storetest.Now,
 			})
 		},
+		"AthleteConfig": func() error {
+			_, _, err := firestoreStore.AthleteConfig(ctx, 1)
+			return err
+		},
+		"SaveAthleteConfig": func() error {
+			return firestoreStore.SaveAthleteConfig(ctx, 1, store.AthleteConfig{})
+		},
 		"RecentTitles": func() error {
 			_, err := firestoreStore.RecentTitles(ctx, 1, 5)
 			return err
@@ -283,6 +290,15 @@ func TestCorruptDocumentsAreReported(t *testing.T) {
 		t.Fatalf("seed corrupt franchise position: %v", err)
 	}
 
+	// franchises is an array in the schema. A configuration that cannot be
+	// read must be reported, not silently treated as an athlete with none —
+	// that would quietly fall back to the shipped defaults and look like it
+	// worked.
+	if _, err := raw.Collection(collectionPrefix+fsstore.CollectionConfig).
+		Doc("1").Set(t.Context(), map[string]any{"franchises": "not-an-array"}); err != nil {
+		t.Fatalf("seed corrupt athlete config: %v", err)
+	}
+
 	firestoreStore, err := fsstore.New(t.Context(), fsstore.Config{
 		ProjectID: testProject,
 		Prefix:    collectionPrefix,
@@ -311,6 +327,13 @@ func TestCorruptDocumentsAreReported(t *testing.T) {
 	// there is reported rather than starting the series again.
 	if _, err := firestoreStore.AdvanceFranchise(t.Context(), 1, "pink-panther"); err == nil {
 		t.Error("AdvanceFranchise on a corrupt document = nil error, want a decode failure")
+	}
+
+	// A configuration that cannot be read must be reported, not returned as
+	// "this athlete has none" — that falls back to the shipped defaults and
+	// looks like it worked.
+	if _, _, err := firestoreStore.AthleteConfig(t.Context(), 1); err == nil {
+		t.Error("AthleteConfig on a corrupt document = nil error, want a decode failure")
 	}
 }
 

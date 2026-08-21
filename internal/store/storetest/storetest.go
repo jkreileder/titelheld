@@ -31,28 +31,33 @@ func Suite(t *testing.T, newStore Factory) {
 	t.Helper()
 
 	tests := map[string]func(*testing.T, store.Store){
-		"TokenRoundTrip":             tokenRoundTrip,
-		"TokenRotationReplaces":      tokenRotationReplaces,
-		"TokenMissingIsTyped":        tokenMissingIsTyped,
-		"TokensKeyedByAthlete":       tokensKeyedByAthlete,
-		"EnqueueIsIdempotent":        enqueueIsIdempotent,
-		"DueRespectsTheDeadline":     dueRespectsTheDeadline,
-		"DueIsOrderedOldestFirst":    dueIsOrderedOldestFirst,
-		"DueBreaksTiesConsistently":  dueBreaksTiesConsistently,
-		"RemoveIsForgiving":          removeIsForgiving,
-		"QueueKeyedByAthlete":        queueKeyedByAthlete,
-		"NamedLogRoundTrip":          namedLogRoundTrip,
-		"NamedLogKeyedByAthlete":     namedLogKeyedByAthlete,
-		"GeocodeCacheRoundTrip":      geocodeCacheRoundTrip,
-		"GeocodeCacheMissIsNotAnErr": geocodeCacheMissIsNotAnErr,
-		"FranchiseStartsAtZero":      franchiseStartsAtZero,
-		"FranchiseAdvances":          franchiseAdvances,
-		"FranchisesAreIndependent":   franchisesAreIndependent,
-		"FranchiseKeyedByAthlete":    franchiseKeyedByAthlete,
-		"FranchiseNamesAreArbitrary": franchiseNamesAreArbitrary,
-		"RecentTitlesNewestFirst":    recentTitlesNewestFirst,
-		"RecentTitlesKeyedByAthlete": recentTitlesKeyedByAthlete,
-		"RecentTitlesBounded":        recentTitlesBounded,
+		"TokenRoundTrip":              tokenRoundTrip,
+		"TokenRotationReplaces":       tokenRotationReplaces,
+		"TokenMissingIsTyped":         tokenMissingIsTyped,
+		"TokensKeyedByAthlete":        tokensKeyedByAthlete,
+		"EnqueueIsIdempotent":         enqueueIsIdempotent,
+		"DueRespectsTheDeadline":      dueRespectsTheDeadline,
+		"DueIsOrderedOldestFirst":     dueIsOrderedOldestFirst,
+		"DueBreaksTiesConsistently":   dueBreaksTiesConsistently,
+		"RemoveIsForgiving":           removeIsForgiving,
+		"QueueKeyedByAthlete":         queueKeyedByAthlete,
+		"NamedLogRoundTrip":           namedLogRoundTrip,
+		"NamedLogKeyedByAthlete":      namedLogKeyedByAthlete,
+		"GeocodeCacheRoundTrip":       geocodeCacheRoundTrip,
+		"GeocodeCacheMissIsNotAnErr":  geocodeCacheMissIsNotAnErr,
+		"FranchiseStartsAtZero":       franchiseStartsAtZero,
+		"FranchiseAdvances":           franchiseAdvances,
+		"FranchisesAreIndependent":    franchisesAreIndependent,
+		"FranchiseKeyedByAthlete":     franchiseKeyedByAthlete,
+		"FranchiseNamesAreArbitrary":  franchiseNamesAreArbitrary,
+		"RecentTitlesNewestFirst":     recentTitlesNewestFirst,
+		"RecentTitlesKeyedByAthlete":  recentTitlesKeyedByAthlete,
+		"RecentTitlesBounded":         recentTitlesBounded,
+		"AthleteConfigRoundTrip":      athleteConfigRoundTrip,
+		"AthleteConfigAbsent":         athleteConfigAbsent,
+		"AthleteConfigKeyedByAthlete": athleteConfigKeyedByAthlete,
+		"AthleteConfigReplaces":       athleteConfigReplaces,
+		"AthleteConfigIsCopied":       athleteConfigIsCopied,
 	}
 
 	for name, run := range tests {
@@ -597,5 +602,179 @@ func recentTitlesBounded(t *testing.T, s store.Store) {
 		if len(titles) != 0 {
 			t.Errorf("RecentTitles(limit %d) returned %d entries, want none", limit, len(titles))
 		}
+	}
+}
+
+// Values the configuration cases assert on in more than one place, named so
+// the expectation and the fixture cannot drift apart.
+const (
+	testGravelRide   = "GravelRide"
+	testFirstEntry   = "The Pink Panther"
+	testFranchiseKey = "pink-panther"
+)
+
+// testFranchises is a configuration document with one ordered series.
+func testFranchises() store.AthleteConfig {
+	return store.AthleteConfig{
+		Franchises: []store.Franchise{
+			{
+				Name:       testFranchiseKey,
+				SportTypes: []string{testGravelRide, "Ride"},
+				GearName:   "Pink Panther",
+				Titles:     []string{testFirstEntry, "A Shot in the Dark"},
+			},
+		},
+	}
+}
+
+// A configuration document survives the round trip with every field intact.
+func athleteConfigRoundTrip(t *testing.T, s store.Store) {
+	t.Helper()
+
+	want := testFranchises()
+
+	if err := s.SaveAthleteConfig(t.Context(), 20, want); err != nil {
+		t.Fatalf("SaveAthleteConfig: %v", err)
+	}
+
+	got, ok, err := s.AthleteConfig(t.Context(), 20)
+	if err != nil || !ok {
+		t.Fatalf("AthleteConfig = %v, %v", ok, err)
+	}
+
+	if len(got.Franchises) != 1 {
+		t.Fatalf("%d franchises, want 1", len(got.Franchises))
+	}
+
+	franchise := got.Franchises[0]
+	wanted := want.Franchises[0]
+
+	if franchise.Name != wanted.Name || franchise.GearName != wanted.GearName {
+		t.Errorf("franchise = %+v, want %+v", franchise, wanted)
+	}
+
+	if !slices.Equal(franchise.SportTypes, wanted.SportTypes) {
+		t.Errorf("sport types = %v, want %v", franchise.SportTypes, wanted.SportTypes)
+	}
+
+	// Order is the whole point of a series.
+	if !slices.Equal(franchise.Titles, wanted.Titles) {
+		t.Errorf("titles = %v, want %v", franchise.Titles, wanted.Titles)
+	}
+}
+
+// An athlete with no document is not an error: it is every deployment on its
+// first run, and the caller falls back to its own defaults.
+func athleteConfigAbsent(t *testing.T, s store.Store) {
+	t.Helper()
+
+	config, ok, err := s.AthleteConfig(t.Context(), 21)
+	if err != nil {
+		t.Fatalf("AthleteConfig for an athlete with none = %v", err)
+	}
+
+	if ok {
+		t.Errorf("reported a configuration that was never written: %+v", config)
+	}
+
+	if len(config.Franchises) != 0 {
+		t.Errorf("returned %d franchises with no document", len(config.Franchises))
+	}
+}
+
+// One athlete's configuration is not another's.
+func athleteConfigKeyedByAthlete(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if err := s.SaveAthleteConfig(t.Context(), 22, testFranchises()); err != nil {
+		t.Fatalf("SaveAthleteConfig: %v", err)
+	}
+
+	if _, ok, _ := s.AthleteConfig(t.Context(), 23); ok {
+		t.Error("configuration leaked across athletes")
+	}
+}
+
+// Saving replaces rather than merges, so removing a franchise removes it.
+func athleteConfigReplaces(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if err := s.SaveAthleteConfig(t.Context(), 24, testFranchises()); err != nil {
+		t.Fatalf("SaveAthleteConfig: %v", err)
+	}
+
+	if err := s.SaveAthleteConfig(t.Context(), 24, store.AthleteConfig{}); err != nil {
+		t.Fatalf("SaveAthleteConfig: %v", err)
+	}
+
+	got, ok, err := s.AthleteConfig(t.Context(), 24)
+	if err != nil || !ok {
+		t.Fatalf("AthleteConfig = %v, %v", ok, err)
+	}
+
+	if len(got.Franchises) != 0 {
+		t.Errorf("%d franchises after replacing with an empty document", len(got.Franchises))
+	}
+}
+
+// What a caller keeps is not what the store keeps.
+//
+// The Firestore implementation decodes afresh every read, so the in-memory one
+// has to copy too — otherwise a caller mutating the slice it saved would
+// silently reorder a stored series, and only one of the two stores would do it.
+func athleteConfigIsCopied(t *testing.T, s store.Store) {
+	t.Helper()
+
+	config := testFranchises()
+
+	if err := s.SaveAthleteConfig(t.Context(), 25, config); err != nil {
+		t.Fatalf("SaveAthleteConfig: %v", err)
+	}
+
+	// Reach into the value that was handed to the store. Every slice, not
+	// just the one: a store that copies Titles and aliases SportTypes passes
+	// a test that only checks Titles.
+	config.Franchises[0].Titles[0] = "Mutated After Saving"
+	config.Franchises[0].SportTypes[0] = "MutatedSport"
+	config.Franchises[0].Name = "mutated"
+
+	got, ok, err := s.AthleteConfig(t.Context(), 25)
+	if err != nil || !ok {
+		t.Fatalf("AthleteConfig = %v, %v", ok, err)
+	}
+
+	if got.Franchises[0].Titles[0] != testFirstEntry {
+		t.Errorf("a caller's later edit reached the stored series: %q",
+			got.Franchises[0].Titles[0])
+	}
+
+	if got.Franchises[0].SportTypes[0] != testGravelRide {
+		t.Errorf("a caller's later edit reached the stored sport types: %q",
+			got.Franchises[0].SportTypes[0])
+	}
+
+	if got.Franchises[0].Name != testFranchiseKey {
+		t.Errorf("a caller's later edit reached the stored name: %q", got.Franchises[0].Name)
+	}
+
+	// And the other boundary: what a reader is given is theirs to change.
+	// Firestore hands back a fresh decode every time, so aliasing on the way
+	// out would make one implementation mutable through its readers and the
+	// other not.
+	got.Franchises[0].Titles[0] = "Mutated After Reading"
+	got.Franchises[0].SportTypes[0] = "MutatedSport"
+
+	again, ok, err := s.AthleteConfig(t.Context(), 25)
+	if err != nil || !ok {
+		t.Fatalf("AthleteConfig = %v, %v", ok, err)
+	}
+
+	if again.Franchises[0].Titles[0] != testFirstEntry {
+		t.Errorf("a reader's edit reached the stored series: %q", again.Franchises[0].Titles[0])
+	}
+
+	if again.Franchises[0].SportTypes[0] != testGravelRide {
+		t.Errorf("a reader's edit reached the stored sport types: %q",
+			again.Franchises[0].SportTypes[0])
 	}
 }
