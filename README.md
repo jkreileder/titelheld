@@ -37,6 +37,7 @@ everything that should stay boring untouched.
 - [Development](#development)
 - [Security and privacy](#security-and-privacy)
 - [Geography](#geography)
+- [Seeding the title history](#seeding-the-title-history)
 - [Franchises](#franchises)
 - [Local development](#local-development)
 - [Infrastructure](#infrastructure)
@@ -194,9 +195,9 @@ rather than hashing a sequence, which is tolerant by construction and direction-
 sets are unordered. Nothing in the service does this today, and no title can carry a route
 callback until it does.
 
-**The history starts empty.** Nothing has been named yet, so the recent-titles list and the
-derived examples only become useful once real namings accumulate. Seeding them from the
-athlete's existing Strava activities is the history import, which is not built.
+**The history has to be seeded once.** Nothing has been named yet, so the recent-titles list and
+the derived examples are empty until the athlete's existing Strava activities are imported —
+see [Seeding the title history](#seeding-the-title-history).
 
 ## Configuration
 
@@ -458,6 +459,55 @@ out-and-back does not spend the budget geocoding its start twice.
 
 The naming layer receives a `geo.Summary`, whose fields are all names. There is nowhere in it to
 put a coordinate.
+
+## Seeding the title history
+
+The prompt asks a model not to repeat a recent title and shows it examples in the athlete's own
+style. Both read the named log, which starts empty — so a fresh deployment names from a synthetic
+example set and an empty `RECENT` list until the history is seeded from Strava.
+
+`cmd/titelheld-import` does that. It is a one-shot run by hand, not a route on the service: every
+endpoint added to a service `allUsers` can invoke is another thing that has to authenticate
+correctly, and a job that runs once under the operator's own credentials, with no request timeout
+over it, has no business being one.
+
+```sh
+FIRESTORE_PROJECT=titelheld-… FIRESTORE_DATABASE=titelheld \
+STRAVA_CLIENT_ID=… STRAVA_CLIENT_SECRET=… \
+go run ./cmd/titelheld-import
+```
+
+Four variables, and no more. An import serves no HTTP and completes no authorization flow, so
+the webhook's verify token and unguessable path, and the public base URL the OAuth redirect is
+built from, are nothing to it — Strava's token endpoint takes no `redirect_uri` on a refresh.
+Requiring them would mean inventing values for a job that never reads them.
+
+It authenticates to Firestore with your own application-default credentials, and to Strava with
+the stored token — so **run the authorization flow first**. It resolves the athlete the way the
+OAuth callback binds one, from the single stored token, refusing if there is none or more than
+one; there is no athlete flag to mistype.
+
+It never changes an activity. The client is built in its dry-run zero value, so its transport
+refuses anything that is not a `GET`. The one request that does not go through it is the OAuth
+token refresh — a `POST` to `/oauth/token`, which issues tokens and cannot touch an activity, and
+which an import needs because a stored access token is only valid for a few hours.
+
+**What it seeds, and what it leaves out.** Only the athlete's own titles — which is every title
+on their activities that neither Strava nor a recognized tool wrote.
+Strava's own defaults are skipped, because a default is not a title — they repeat by design, so
+listing them under "never repeat" forbids the right answer — and recognized machine titles are
+skipped because they are the style this service exists to replace, which is the last thing a
+few-shot example should teach.
+
+**Idempotent and resumable, with no state of its own.** An activity already in the named log is
+left exactly as it is, so a second run writes nothing and an interrupted one continues where the
+log ends. Re-listing costs a handful of requests, which is cheaper than keeping a cursor honest.
+A title this service wrote is never relabelled as imported.
+
+Entries are dated by the ride rather than the import, so the history keeps meaning "the most
+recent rides"; each carries a language guessed from the title and a source marker distinguishing
+imported from service-written. The language is a heuristic and applies to imported titles only —
+a title this service writes carries the language the model reported.
 
 ## Franchises
 
