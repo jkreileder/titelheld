@@ -111,8 +111,9 @@ words and language preferences still ship as defaults in code and belong in
 that same document. What ships in code for franchises is the default profile:
 what applies until a document exists.
 
-Not built yet: route repeats, and the Strava push subscription. The Cloud
-Scheduler job is deliberately paused, and the title history is seeded by
+Not built yet: route repeats. The Strava push subscription exists and is
+feeding the queue; the Cloud Scheduler job is deliberately paused, so nothing
+drains it until a sweep is run by hand. The title history is seeded by
 `cmd/titelheld-import` rather than accumulating on its own.
 
 ## Design Rules That Are Not Negotiable

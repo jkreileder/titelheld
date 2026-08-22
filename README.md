@@ -18,8 +18,10 @@ everything that should stay boring untouched.
 > **The scheduler is paused.** Nothing fires the sweep until it is unpaused by hand, which is
 > deliberate: the naming pipeline is reviewed end to end before it runs unattended.
 >
-> **No Strava push subscription exists yet.** With `FIRESTORE_PROJECT` unset the service runs
-> on the in-memory store and forgets the OAuth token on restart; see
+> **The push subscription is live**, so real events accumulate in the queue — see
+> [The push subscription](#the-push-subscription). Nothing drains them while the scheduler is
+> paused; that queue is the material the dry-run review reads. With `FIRESTORE_PROJECT` unset the
+> service runs on the in-memory store and forgets the OAuth token on restart; see
 > [docs/firestore-iam.md](docs/firestore-iam.md).
 >
 > **Nothing can write to Strava yet.** Dry run is the default and the zero value throughout;
@@ -44,6 +46,7 @@ everything that should stay boring untouched.
   - [Why the service is publicly invocable](#why-the-service-is-publicly-invocable)
   - [One-time bootstrap](#one-time-bootstrap)
   - [Apply order](#apply-order)
+  - [The push subscription](#the-push-subscription)
 - [Cutting a release](#cutting-a-release)
   - [The steps](#the-steps)
   - [What the tag push does](#what-the-tag-push-does)
@@ -821,6 +824,60 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
    (`us-docker.pkg.dev/cloudrun/container/hello`) purely so the service can exist. Pushing a
    signed `v*` tag replaces it — see [Cutting a release](#cutting-a-release) — and Terraform
    ignores the image from then on.
+
+### The push subscription
+
+Strava pushes an event per activity to one callback URL per API application. The subscription is
+created by hand, once, and is not managed by Terraform: it lives in Strava's account, not in GCP,
+and it depends on the deployed service answering before it can exist at all.
+
+The current subscription is **id 367703**, pointing at `/webhook/<webhook-path-secret>` on the
+Cloud Run service.
+
+Creating one is a single request. Strava validates the callback *synchronously*: it issues a
+`GET` with `hub.challenge` and expects the echo within two seconds, so warm the service first —
+a cold start alone can spend most of that budget.
+
+```sh
+sec() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT"; }
+BASE_URL=$(cd infra && terraform output -raw service_url)
+
+curl -s "$BASE_URL/health" >/dev/null          # warm the instance first
+
+curl -s -X POST https://www.strava.com/api/v3/push_subscriptions \
+  -F "client_id=$(sec strava-client-id)" \
+  -F "client_secret=$(sec strava-client-secret)" \
+  -F "callback_url=${BASE_URL}/webhook/$(sec webhook-path-secret)" \
+  -F "verify_token=$(sec strava-verify-token)"
+```
+
+A successful response is `{"id": <subscription id>}`. The handshake shows up in the service log as
+`webhook subscription validated`; a rejection names its reason (`unexpected hub.mode`,
+`verify token mismatch`) rather than failing silently.
+
+Listing and deleting take the client credentials, not a token:
+
+```sh
+curl -s -G https://www.strava.com/api/v3/push_subscriptions \
+  --data-urlencode "client_id=$(sec strava-client-id)" \
+  --data-urlencode "client_secret=$(sec strava-client-secret)"
+
+curl -s -X DELETE "https://www.strava.com/api/v3/push_subscriptions/367703" \
+  -d "client_id=$(sec strava-client-id)" \
+  -d "client_secret=$(sec strava-client-secret)"
+```
+
+Delete returns `204` and no body. There is **one subscription per application**: creating a second
+fails while the first exists, so changing the callback URL means deleting and recreating. That is
+also what to do after a `webhook-path-secret` rotation — the old URL stops existing the moment the
+new secret is deployed, and Strava will keep posting to it until told otherwise.
+
+Events accumulate in the `pending` queue from the moment the subscription exists. Nothing drains
+them until the Cloud Scheduler job is unpaused or a sweep is triggered by hand:
+
+```sh
+gcloud scheduler jobs run titelheld-sweep --location="$REGION" --project="$PROJECT"
+```
 
 ## Cutting a release
 
