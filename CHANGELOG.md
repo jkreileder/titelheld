@@ -12,63 +12,75 @@ step rather than a habit.
 
 ## [v0.5.0] – 2026-08-22
 
-An offer is not a use. The franchise walked forward whenever an entry was *offered*, on the
-reasoning that a title which adapted an entry and one that ignored it could not be told apart —
-and the first real ride to test that spent a film on a title that never carried it. They can be
-told apart, closely enough, and the position now moves on evidence.
+An offer is not a use.
+The franchise walked forward whenever an entry was *offered*, on the reasoning that a title
+which adapted an entry and one that ignored it could not be told apart.
+The first real ride to test that spent a film on a title that never carried it.
+They can be told apart, closely enough, and the position now moves on evidence.
 
-- **A franchise entry is spent only when the title demonstrably uses it.** The prompt asks for
-  the entry's wording; a request to a model is not a guarantee, so `naming.UsesEntry` checks
-  afterwards — normalized containment of the entry's core, both sides lowercased, punctuation
-  flattened, whitespace collapsed, a leading article dropped when a word follows, matched on
-  token boundaries. `Son of the Pink Panther: Gegenwind` counts; `Der Panther im Morgengrauen`
-  does not, and neither does a translation. Unused means one more offer and no more, then a
-  third call carrying no FRANCHISE block, so what gets written is an ordinary title rather than
-  one reaching for a film it never named. It fails closed: an adaptation the check cannot
-  recognize costs a repeated offer, which the next prompt shows, where a film spent on a title
-  that never carried it is gone with nothing to say where.
-- **Reserved entries leave the rotation.** A `reserved` list on a franchise names entries that
-  are never offered. They keep their place in the series and are the athlete's to spend by hand.
+- **A franchise entry is spent only when the title demonstrably uses it.**
+  The prompt asks for the entry's wording, and a request to a model is not a guarantee, so
+  `naming.UsesEntry` checks afterwards: normalized containment of the entry's core, both sides
+  lowercased, punctuation flattened, whitespace collapsed, a leading article dropped when a word
+  follows, matched on token boundaries.
+  `Son of the Pink Panther: Gegenwind` counts; `Der Panther im Morgengrauen` does not, and
+  neither does a translation.
+  An unused entry is offered once more and no more, and then the ride is named from a third call
+  carrying no FRANCHISE block, so what gets written is an ordinary title rather than one reaching
+  for a film it never named.
+  It fails closed: an adaptation the check cannot recognize costs a repeated offer, which the
+  next prompt shows, where a film spent on a title that never carried it is gone with nothing to
+  say where.
+- **Reserved entries leave the rotation.**
+  A `reserved` list on a franchise names entries that are never offered.
+  They keep their place in the series and are the athlete's to spend by hand.
   The field is additive, so a document without it reads back as nothing reserved.
-- **The position is an index, not a count.** Because the rotation steps over reserved entries,
-  the store advances *past* the index that was offered rather than by one:
-  `AdvanceFranchise` becomes `AdvanceFranchisePast`, monotonic, so a replay cannot rewind the
-  series onto an entry it has already handed out. Still one integer on disk.
-- **An entry that could never be spent is refused.** One longer than a title reaches the model
-  truncated, and one with no matchable core is invisible to the check. Either would be declined,
-  re-offered, declined and handed unchanged to the next ride — three model calls a ride, for as
-  long as the document said so. `naming.Offerable` refuses both, loudly, and the position stays
-  where it is.
-- **The shipped Pink Panther profile follows the athlete's own rotation.** "Curse of the Pink
-  Panther" was used by hand and is dropped like the three before it; "Trail of the Pink Panther"
-  is reserved, as are the four films the rotation has already passed. That leaves "Son of the
-  Pink Panther" as the one entry this service may offer.
-- **The manual sweep is documented as it actually works.** `gcloud scheduler jobs run` refuses a
-  paused job — `FAILED_PRECONDITION: Job.state must be ENABLED for RunJob` — so the sequence is
-  resume, run, pause, with the pause running whatever the run did and the dispatch status
-  reported rather than masked. A delivered request is not a completed sweep, so the section says
-  where the answer is: `sweep complete` with `failed` zero and `cancelled` false, `sweep
-  rejected` for the 401, `sweep failed` for the 500 that means nothing ran at all.
+- **The position is an index, not a count.**
+  Because the rotation steps over reserved entries, the store advances *past* the index that was
+  offered rather than by one: `AdvanceFranchise` becomes `AdvanceFranchisePast`, monotonic, so a
+  replay cannot rewind the series onto an entry it has already handed out.
+  Still one integer on disk.
+- **An entry that could never be spent is refused.**
+  One longer than a title reaches the model truncated, and one with no matchable core is
+  invisible to the check.
+  Either would be declined, re-offered, declined and handed unchanged to the next ride — three
+  model calls a ride, for as long as the document said so.
+  `naming.Offerable` refuses both, loudly, and the position stays where it is.
+- **The shipped Pink Panther profile follows the athlete's own rotation.**
+  "Curse of the Pink Panther" was used by hand and is dropped like the three before it.
+  "Trail of the Pink Panther" is reserved, as are the four films the rotation has already passed.
+  That leaves "Son of the Pink Panther" as the one entry this service may offer.
+- **The manual sweep is documented as it actually works.**
+  `gcloud scheduler jobs run` refuses a paused job — `FAILED_PRECONDITION: Job.state must be
+  ENABLED for RunJob` — so the sequence is three commands: `resume` enables the job, `run`
+  dispatches one sweep, `pause` disables it again.
+  The `pause` runs even when the dispatch failed, because a failed dispatch must not leave the
+  job firing every five minutes, and the dispatch status is kept and reported afterwards rather
+  than masked by the `pause` that follows it.
+  A delivered request is not a completed sweep, so the section says where the answer is:
+  `sweep complete` with `failed` zero and `cancelled` false, `sweep rejected` for the 401, and
+  `sweep failed` for the 500 that means nothing ran at all.
 
 ### Not in this release
 
 - **Route repeats.** Still specified and unbuilt.
-- **The rest of the configuration.** Tiers, geofences, banned words and language preferences are
-  still the defaults shipped in code.
-- **Human titles in the no-repeat list.** A ride titled by hand is dropped by the skip-gate
-  without being recorded, so its title never reaches `RECENT`. Re-running `cmd/titelheld-import`
-  closes the gap by hand; recording the skip is a later change.
+- **The rest of the configuration.**
+  Tiers, geofences, banned words and language preferences are still the defaults shipped in code.
+- **Human titles in the no-repeat list.**
+  A ride titled by hand is dropped by the skip-gate without being recorded, so its title never
+  reaches `RECENT`.
+  Re-running `cmd/titelheld-import` closes the gap by hand; recording the skip is a later change.
 
 ### Upgrading
 
-Nothing to apply: this release changes no infrastructure. The Cloud Scheduler job stays paused
-and `DRY_RUN` stays on.
+Nothing to apply: this release changes no infrastructure.
+The Cloud Scheduler job stays paused and `DRY_RUN` stays on.
 
-No franchise state needs seeding. The stored position is an index and nothing has advanced it,
-so a deployment with no `config` document walks the shipped profile from zero and offers the
-first entry that is not reserved. A deployment that *has* a document keeps using it: add
-`reserved` there to get the same behavior, and note that from the first curation change onward
-the document is authoritative.
+No franchise state needs seeding.
+The stored position is an index and nothing has advanced it, so a deployment with no `config`
+document walks the shipped profile from zero and offers the first entry that is not reserved.
+A deployment that *has* a document keeps using it: add `reserved` there to get the same
+behavior, and note that from the first curation change onward the document is authoritative.
 
 ## [v0.4.0] – 2026-08-22
 
