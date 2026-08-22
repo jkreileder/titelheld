@@ -186,6 +186,13 @@ something, the synthetic set is what the prompt carries — that is its purpose,
 Deriving an example costs a Strava read, so each is cached against the activity it describes: the
 history only changes when something is named, so a sweep repeating every five minutes pays once.
 
+**The names of notable segment efforts**, under `ACHIEVEMENTS` — a personal top-three on the
+segment, or an achievement Strava awarded, deduplicated and capped at six. Names only: the times
+and ranks that selected them never reach the prompt, the same way the geo layer passes verified
+place names and no coordinates. A segment name often contains a place, and the system prompt says
+about this block by name that it is not geography the model may use — `PLACES` stays the only
+geography.
+
 **The next entry of a franchise**, when the ride qualifies — see [Franchises](#franchises). The
 model may extend the entry; it may not translate it, paraphrase it or skip the position, and the
 entry is only spent if the title that comes back actually carries it.

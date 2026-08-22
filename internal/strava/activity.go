@@ -66,6 +66,47 @@ type Activity struct {
 		Polyline        string `json:"polyline"`
 		SummaryPolyline string `json:"summary_polyline"`
 	} `json:"map"`
+
+	// SegmentEfforts are the athlete's efforts on named segments. Strava
+	// returns the notable ones with a detailed activity; which ones it counts
+	// as notable is Strava's decision and not one to build on, so a caller
+	// selects again from the fields below.
+	//
+	// Only the name is ever meant to leave this package for a prompt. The
+	// times and identifiers are here because they arrive in the same object,
+	// not because a title may use them.
+	SegmentEfforts []SegmentEffort `json:"segment_efforts"`
+}
+
+// SegmentEffort is one ride over a named segment.
+//
+// Deliberately narrow. Strava sends a great deal more — coordinates,
+// identifiers, split times — and none of it is a title's business, so it is
+// not decoded and cannot be handed to a model by accident.
+type SegmentEffort struct {
+	// Name is the segment's name as Strava reports it on the effort. It is
+	// free text somebody typed, like a gear name, and is treated as such.
+	Name string `json:"name"`
+
+	// PRRank is 1, 2 or 3 when this effort is one of the athlete's three
+	// fastest on the segment, and 0 otherwise.
+	PRRank int `json:"pr_rank"`
+
+	// Achievements are the ranks Strava awarded this effort. Only whether
+	// there are any is used.
+	Achievements []SegmentAchievement `json:"achievements"`
+
+	// Segment carries the name again for responses that leave the effort's own
+	// name empty.
+	Segment struct {
+		Name string `json:"name"`
+	} `json:"segment"`
+}
+
+// SegmentAchievement is one rank Strava awarded an effort.
+type SegmentAchievement struct {
+	Type string `json:"type"`
+	Rank int    `json:"rank"`
 }
 
 // Owner returns the athlete this activity belongs to.
