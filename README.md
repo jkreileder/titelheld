@@ -648,8 +648,22 @@ To add one:
    athlete back to the first title.
 2. Add the entry to the document, in the Firestore console or through the REST API — `gcloud`
    has no command for editing documents, only for import, export and bulk delete. The service
-   reads the document once per process, so a running instance picks the change up on its next
-   cold start — which, scaling to zero, is the next sweep.
+   reads the document once per process, so the change takes effect at the next **cold start**.
+   `min_instance_count = 0` allows scaling to zero but does not promise it between sweeps five
+   minutes apart — Cloud Run keeps an idle instance for as long as it likes — so the next sweep
+   may well still be the old process with the old configuration. Do not force it with an
+   out-of-band `gcloud run services update`: that creates a revision Terraform did not describe.
+   Check instead — the process says which answer it got when it first needed one:
+
+   ```sh
+   gcloud logging read 'resource.type="cloud_run_revision" AND
+     (jsonPayload.msg="loaded the athlete configuration"
+      OR jsonPayload.msg="no athlete configuration; using the default franchise profile")' \
+     --project="$PROJECT" --limit=5 --freshness=1h
+   ```
+
+   A line newer than your edit is a process that has read it, and `franchises` on that line is
+   how many series it found — the quickest way to see that a new one arrived.
 3. **If some entries have already been used by hand**, leave those titles out of `titles` — what
    the shipped Pink Panther profile does, where the four films already used are simply absent.
    For entries you have walked past but want to keep, list them under `reserved` instead: they
