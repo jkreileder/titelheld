@@ -18,8 +18,10 @@ everything that should stay boring untouched.
 > **The scheduler is paused.** Nothing fires the sweep until it is unpaused by hand, which is
 > deliberate: the naming pipeline is reviewed end to end before it runs unattended.
 >
-> **No Strava push subscription exists yet.** With `FIRESTORE_PROJECT` unset the service runs
-> on the in-memory store and forgets the OAuth token on restart; see
+> **The push subscription is live**, so real events accumulate in the queue — see
+> [The push subscription](#the-push-subscription). Nothing drains them while the scheduler is
+> paused; that queue is the material the dry-run review reads. With `FIRESTORE_PROJECT` unset the
+> service runs on the in-memory store and forgets the OAuth token on restart; see
 > [docs/firestore-iam.md](docs/firestore-iam.md).
 >
 > **Nothing can write to Strava yet.** Dry run is the default and the zero value throughout;
@@ -44,6 +46,7 @@ everything that should stay boring untouched.
   - [Why the service is publicly invocable](#why-the-service-is-publicly-invocable)
   - [One-time bootstrap](#one-time-bootstrap)
   - [Apply order](#apply-order)
+  - [The push subscription](#the-push-subscription)
 - [Cutting a release](#cutting-a-release)
   - [The steps](#the-steps)
   - [What the tag push does](#what-the-tag-push-does)
@@ -821,6 +824,94 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
    (`us-docker.pkg.dev/cloudrun/container/hello`) purely so the service can exist. Pushing a
    signed `v*` tag replaces it — see [Cutting a release](#cutting-a-release) — and Terraform
    ignores the image from then on.
+
+### The push subscription
+
+Strava pushes an event per activity to one callback URL per API application. The subscription is
+created by hand, once, and is not managed by Terraform: it lives in Strava's account, not in GCP,
+and it depends on the deployed service answering before it can exist at all.
+
+The current subscription is **id 367703**, pointing at `/webhook/<webhook-path-secret>` on the
+Cloud Run service.
+
+Creating one is a single request. Strava validates the callback *synchronously*: it issues a
+`GET` with `hub.challenge` and expects the echo within two seconds, so warm the service first —
+a cold start alone can spend most of that budget.
+
+```sh
+sec() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT"; }
+BASE_URL=$(cd infra && terraform output -raw service_url)
+
+curl -s "$BASE_URL/health" >/dev/null          # warm the instance first
+
+curl -s -X POST https://www.strava.com/api/v3/push_subscriptions \
+  -F "client_id=$(sec strava-client-id)" \
+  -F "client_secret=$(sec strava-client-secret)" \
+  -F "callback_url=${BASE_URL}/webhook/$(sec webhook-path-secret)" \
+  -F "verify_token=$(sec strava-verify-token)"
+```
+
+A successful response is `{"id": <subscription id>}`. The handshake shows up in the service log as
+`webhook subscription validated`; a rejection names its reason (`unexpected hub.mode`,
+`verify token mismatch`) rather than failing silently.
+
+Listing and deleting take the client credentials, not a token:
+
+```sh
+curl -s -G https://www.strava.com/api/v3/push_subscriptions \
+  --data-urlencode "client_id=$(sec strava-client-id)" \
+  --data-urlencode "client_secret=$(sec strava-client-secret)"
+```
+
+Deleting takes the id from that listing rather than from this page — recreating after a rotation
+mints a new one, and a runbook that hard-codes the old id deletes nothing. As a function, so a
+failed step returns instead of closing the shell you pasted it into:
+
+```sh
+delete_subscription() {
+  subs=$(curl -sf -G https://www.strava.com/api/v3/push_subscriptions \
+    --data-urlencode "client_id=$(sec strava-client-id)" \
+    --data-urlencode "client_secret=$(sec strava-client-secret)") ||
+    { echo "listing failed" >&2; return 1; }
+
+  sub=$(printf '%s' "$subs" | jq -r '.[0].id // empty')
+  case $sub in
+    '' | *[!0-9]*) echo "no subscription to delete" >&2; return 1 ;;
+  esac
+
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -G \
+    "https://www.strava.com/api/v3/push_subscriptions/${sub}" \
+    --data-urlencode "client_id=$(sec strava-client-id)" \
+    --data-urlencode "client_secret=$(sec strava-client-secret)") ||
+    { echo "delete request failed" >&2; return 1; }
+
+  [ "$code" = 204 ] || { echo "delete returned $code, not 204" >&2; return 1; }
+}
+
+delete_subscription
+```
+
+Every step is checked because none of them is loud on failure. `curl -s` says nothing about an
+HTTP error, so the read needs `-f` *and* its exit status inspected before the output is parsed —
+a pipeline reports `jq`'s status, not `curl`'s, so a failed listing can otherwise be parsed into a
+plausible-looking id. An empty listing yields no id at all rather than a wrong one, which the
+`case` catches. And a successful delete is `204` with an empty body, so the status code is the
+only thing that distinguishes it from a `404` or an authentication failure.
+
+The credentials go in the query string: Strava reads them as parameters, and `curl -d` would send
+them as a request body it ignores.
+
+There is **one subscription per application**: creating a second
+fails while the first exists, so changing the callback URL means deleting and recreating. That is
+also what to do after a `webhook-path-secret` rotation — the old URL stops existing the moment the
+new secret is deployed, and Strava will keep posting to it until told otherwise.
+
+Events accumulate in the `pending` queue from the moment the subscription exists. Nothing drains
+them until the Cloud Scheduler job is unpaused or a sweep is triggered by hand:
+
+```sh
+gcloud scheduler jobs run titelheld-sweep --location="$REGION" --project="$PROJECT"
+```
 
 ## Cutting a release
 
