@@ -206,14 +206,18 @@ const (
 // it catches a service scaled past one, and a container running against
 // infrastructure that never set the ceiling. It is not a mutex.
 //
-// The exposure that leaves is bounded and known. A deploy overlap is seconds
-// long and the scheduler is paused, so a sweep is a manual act that does not
-// coincide with one; the authorization flow is a one-time bootstrap whose
-// failure mode is a rejected callback and a retry. Token refresh is the one
-// that could bite unattended — two processes refreshing invalidate each
-// other, and the athlete reauthorizes. Making that safe across instances is a
-// store-level change (a compare-and-set on the token document), and it is not
-// this constant's job to pretend otherwise.
+// The exposure that leaves is real and unmeasured: an overlap is short, but
+// nothing here times it, and a traffic split lasts as long as it is left in
+// place. Under overlap each of the four states fails the way its bullet says —
+// callbacks bound to different athletes, two sweeps over one queue, refresh
+// tokens invalidating each other.
+//
+// What makes it tolerable is the deployment pattern rather than this code:
+// single-revision releases, no traffic split, an authorization flow that has
+// already run, and a paused scheduler. None of that is enforced here. The
+// fixes are a compare-and-set on the token document and a lease for the
+// sweep; neither is built, and it is not this constant's job to imply
+// otherwise.
 const RequiredMaxInstances = "1"
 
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.

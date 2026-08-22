@@ -257,12 +257,17 @@ running briefly above a configured maximum. So this is a deployment check, not a
 catches a service scaled past one, and a container running against infrastructure that never set
 the ceiling.
 
-The exposure that leaves is bounded and known. A deploy overlap lasts seconds, and with the
-scheduler paused a sweep is a manual act that does not coincide with one; the authorization flow
-is a one-time bootstrap whose failure mode is a rejected callback and a retry. Token refresh is
-the one that could bite unattended — two processes refreshing invalidate each other and the
-athlete reauthorizes. Making that safe across instances is a compare-and-set on the token
-document, and it is not built.
+The exposure that leaves is real, and unquantified: a deploy overlap is short but nothing here
+measures it, and a traffic split lasts as long as it is left in place. What each of the four
+states does under overlap is the table above, not a milder version of it — two revisions can
+bind callbacks to different athletes and can sweep the same queue at once, as well as
+invalidating each other's refresh token.
+
+What makes it tolerable today is the deployment pattern rather than the code: releases are
+single-revision, no traffic split is configured, the authorization flow is a one-time bootstrap
+that has already run, and the scheduler is paused so a sweep is a manual act. None of that is
+enforced. Making the states safe across instances is a compare-and-set on the token document and
+a lease for the sweep, and neither is built.
 
 **Apply the Terraform before releasing a build that carries this contract.** A revision started
 against infrastructure that predates it fails readiness, `gcloud run deploy` fails with it, and
