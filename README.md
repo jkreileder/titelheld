@@ -580,11 +580,19 @@ it.
 ### What is stored
 
 Firestore stores a single integer per athlete per franchise: where the rotation resumes, which is
-the index of the first entry not yet used or stepped over. It never stores the titles. That is
-what lets a franchise be renamed, reordered or extended without a migration, and it is why
-removing a franchise from configuration is safe — a position for a franchise that no longer
-exists is simply never read. `FranchisePosition` returns `0` for a franchise never used and for
-one that does not exist, and those two cases are deliberately indistinguishable.
+the index of the first entry not yet used or stepped over. It never stores the titles, so editing
+a series never migrates anything — but the integer is an index into the list you edited, and two
+edits move what it means:
+
+| Edit | What happens to the position |
+| --- | --- |
+| append an entry | nothing; the series simply has more to go |
+| reorder, insert or delete | the index now names a different entry — review it |
+| rename the franchise | it keys the stored position, so the series starts again at zero |
+| remove the franchise | the position is never read again; nothing to clean up |
+
+`FranchisePosition` returns `0` for a franchise never used and for one that does not exist, and
+those two cases are deliberately indistinguishable — which is what makes removing one safe.
 
 `AdvanceFranchisePast` takes the index of the entry that was used and moves the position to
 `index + 1`, in one transaction, so the store decides the number rather than a caller reading,

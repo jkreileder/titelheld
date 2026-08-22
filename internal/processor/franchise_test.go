@@ -345,3 +345,46 @@ func TestAReservedEntryIsNeverOffered(t *testing.T) {
 		t.Errorf("position = %d, want 3: the rotation did not land past the offered entry", position)
 	}
 }
+
+// An entry that cannot be a title is not offered, and does not advance.
+//
+// The failure it prevents is silent and permanent: a truncated entry can never
+// be contained in a title, so the ride would spend three model calls declining
+// it and the next ride would be offered exactly the same thing.
+func TestAnUnusableEntryIsNotOffered(t *testing.T) {
+	t.Parallel()
+
+	h := franchiseRide(t, true)
+	h.proc.deps.Franchises = []naming.Franchise{{
+		Name:     "pink-panther",
+		GearName: "Pink Panther",
+		Titles:   []string{strings.Repeat("a", naming.MaxTitleRunes+1)},
+	}}
+
+	capture := withCapture(h)
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if offersFranchise(capture.first()) {
+		t.Errorf("an entry too long to be a title was offered:\n%s", capture.first().User)
+	}
+
+	// One call, not three: nothing was offered, so there was nothing to
+	// re-offer or to fall back from.
+	if capture.calls != 1 {
+		t.Errorf("the model was called %d times, want 1", capture.calls)
+	}
+
+	position, err := h.store.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 0 {
+		t.Errorf("position = %d, want 0: an entry that was never offered was spent", position)
+	}
+}

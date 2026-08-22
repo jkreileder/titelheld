@@ -7,9 +7,12 @@ import (
 
 // Franchise is an ordered list of titles walked one entry at a time.
 //
-// Data, not code. The store remembers only how far along an athlete is, so a
-// series can be renamed, reordered or extended here without migrating
-// anything — and a franchise removed from this list simply stops applying.
+// Data, not code. The store remembers only how far along an athlete is, so
+// editing a series here migrates nothing — and a franchise removed from this
+// list simply stops applying. What is remembered is an index into this list
+// though, so appending is free while reordering, inserting or deleting moves
+// what the stored position points at, and renaming the franchise starts the
+// series again. The README says which is which.
 type Franchise struct {
 	// Name is the key the position is stored under. It is not shown to the
 	// model and never changes once a series has been started: renaming it
@@ -155,6 +158,24 @@ func FranchiseFor(franchises []Franchise, sportType, gearName string) (Franchise
 	}
 
 	return Franchise{}, false
+}
+
+// Offerable reports whether an entry can be used as a title at all.
+//
+// An entry longer than a title may not be offered. The prompt bounds every
+// untrusted value it prints, so an over-long entry would reach the model as a
+// prefix of itself — which no title can contain, so the containment check
+// would decline it, the re-offer would decline it again, and every later ride
+// would be offered the same unusable entry. Better to notice it: a franchise
+// is typed into a document, and an entry that does not fit is a configuration
+// error rather than something to work around.
+//
+// Nothing else is checked. An entry that fits but is awkward is the athlete's
+// business.
+func Offerable(entry string) bool {
+	trimmed := strings.TrimSpace(entry)
+
+	return trimmed != "" && len([]rune(trimmed)) <= MaxTitleRunes
 }
 
 // UsesEntry reports whether a title demonstrably uses a franchise entry.

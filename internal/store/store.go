@@ -172,8 +172,10 @@ type Franchise struct {
 // A franchise is a list of titles walked in order — the Pink Panther films on
 // the gravel bike — and the only thing that has to persist is the position in
 // it. The list itself is configuration, so this stores an integer and not the
-// titles: renaming or reordering a franchise in config must not require a
-// migration of anything stored here.
+// titles: editing a franchise in config must not require a migration of
+// anything stored here. It is an index into that list, so an edit that moves
+// entries around moves what it points at — a configuration question, not a
+// storage one.
 //
 // Like the queue and the named log, it is re-derivable in principle — the
 // titles this service wrote are the record — but re-deriving it means matching

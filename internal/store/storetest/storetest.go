@@ -675,9 +675,10 @@ func recentTitlesBounded(t *testing.T, s store.Store) {
 // Values the configuration cases assert on in more than one place, named so
 // the expectation and the fixture cannot drift apart.
 const (
-	testGravelRide   = "GravelRide"
-	testFirstEntry   = "The Pink Panther"
-	testFranchiseKey = "pink-panther"
+	testGravelRide    = "GravelRide"
+	testFirstEntry    = "The Pink Panther"
+	testReservedEntry = "A Shot in the Dark"
+	testFranchiseKey  = "pink-panther"
 )
 
 // testFranchises is a configuration document with one ordered series.
@@ -688,8 +689,8 @@ func testFranchises() store.AthleteConfig {
 				Name:       testFranchiseKey,
 				SportTypes: []string{testGravelRide, "Ride"},
 				GearName:   "Pink Panther",
-				Titles:     []string{testFirstEntry, "A Shot in the Dark"},
-				Reserved:   []string{"A Shot in the Dark"},
+				Titles:     []string{testFirstEntry, testReservedEntry},
+				Reserved:   []string{testReservedEntry},
 			},
 		},
 	}
@@ -810,6 +811,7 @@ func athleteConfigIsCopied(t *testing.T, s store.Store) {
 	// a test that only checks Titles.
 	config.Franchises[0].Titles[0] = "Mutated After Saving"
 	config.Franchises[0].SportTypes[0] = "MutatedSport"
+	config.Franchises[0].Reserved[0] = "Mutated After Saving"
 	config.Franchises[0].Name = "mutated"
 
 	got, ok, err := s.AthleteConfig(t.Context(), 25)
@@ -831,12 +833,21 @@ func athleteConfigIsCopied(t *testing.T, s store.Store) {
 		t.Errorf("a caller's later edit reached the stored name: %q", got.Franchises[0].Name)
 	}
 
+	// An aliased Reserved is the one that costs something real: it decides
+	// which entries are never offered, so a caller's stray edit could put an
+	// entry the athlete is keeping back into the rotation.
+	if got.Franchises[0].Reserved[0] != testReservedEntry {
+		t.Errorf("a caller's later edit reached the stored reservations: %q",
+			got.Franchises[0].Reserved[0])
+	}
+
 	// And the other boundary: what a reader is given is theirs to change.
 	// Firestore hands back a fresh decode every time, so aliasing on the way
 	// out would make one implementation mutable through its readers and the
 	// other not.
 	got.Franchises[0].Titles[0] = "Mutated After Reading"
 	got.Franchises[0].SportTypes[0] = "MutatedSport"
+	got.Franchises[0].Reserved[0] = "Mutated After Reading"
 
 	again, ok, err := s.AthleteConfig(t.Context(), 25)
 	if err != nil || !ok {
@@ -850,5 +861,10 @@ func athleteConfigIsCopied(t *testing.T, s store.Store) {
 	if again.Franchises[0].SportTypes[0] != testGravelRide {
 		t.Errorf("a reader's edit reached the stored sport types: %q",
 			again.Franchises[0].SportTypes[0])
+	}
+
+	if again.Franchises[0].Reserved[0] != testReservedEntry {
+		t.Errorf("a reader's edit reached the stored reservations: %q",
+			again.Franchises[0].Reserved[0])
 	}
 }

@@ -141,6 +141,21 @@ func (p *Processor) franchiseNext(
 		return "", 0, ""
 	}
 
+	// An entry that cannot be a title is not offered, and the position stays
+	// where it is. Offering it would print a truncated version of it, which no
+	// title can contain: the entry would go unused on this ride and on every
+	// ride after it, three model calls at a time, with nothing in the log
+	// saying why. This says why, on every ride, until the document is fixed.
+	if !naming.Offerable(next) {
+		logger.Error("the next franchise entry cannot be a title; naming without it",
+			"franchise", logsafe.String(franchise.Name),
+			"position", index,
+			"entry", logsafe.String(next),
+			"limit_runes", naming.MaxTitleRunes)
+
+		return "", 0, ""
+	}
+
 	return next, index, franchise.Name
 }
 

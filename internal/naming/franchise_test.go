@@ -283,3 +283,38 @@ func TestUsesEntry(t *testing.T) {
 		})
 	}
 }
+
+// An entry that cannot be a title is not offerable.
+//
+// The prompt bounds every value it prints, so an over-long entry would be
+// shown as a prefix of itself — and no title can contain what was never shown.
+// Offering it would cost three model calls on every ride, forever.
+func TestOfferable(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		entry string
+		want  bool
+	}{
+		{name: "an ordinary entry", entry: "Son of the Pink Panther", want: true},
+		{name: "exactly the limit", entry: strings.Repeat("a", MaxTitleRunes), want: true},
+		{name: "one rune over", entry: strings.Repeat("a", MaxTitleRunes+1), want: false},
+		{name: "long in runes, not bytes", entry: strings.Repeat("ü", MaxTitleRunes+1), want: false},
+
+		// Counted in runes: sixty umlauts are a hundred and twenty bytes and
+		// still a title this service would accept.
+		{name: "umlauts at the limit", entry: strings.Repeat("ü", MaxTitleRunes), want: true},
+		{name: "empty", entry: "", want: false},
+		{name: "whitespace only", entry: "   ", want: false},
+		{name: "surrounding space does not count", entry: "  " + strings.Repeat("a", MaxTitleRunes) + "  ", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := Offerable(tc.entry); got != tc.want {
+				t.Errorf("Offerable(%d runes) = %v, want %v", len([]rune(tc.entry)), got, tc.want)
+			}
+		})
+	}
+}
