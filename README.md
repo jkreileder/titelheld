@@ -591,10 +591,16 @@ means:
 
 | Edit | What happens to the position |
 | --- | --- |
-| append an entry | nothing; the series simply has more to go |
-| reorder, insert or delete | the index now names a different entry — review it |
-| rename the franchise | it keys the stored position, so the series starts again at zero |
-| remove the franchise | the position is never read again; nothing to clean up |
+| append entries | nothing; the series simply has more to go |
+| insert, delete or reorder **after** the position | nothing; the rotation has not reached them |
+| insert, delete or reorder **at or before** it | the index names a different entry — review it |
+| delete enough to pass the end | the index runs off the list, which reads as a finished series: rides are named normally |
+| rename the franchise | the name keys the position, so the series starts again at zero |
+| remove the franchise | it stops being read, not deleted — re-adding the same name resumes where it left off |
+
+The last row is worth knowing in both directions. Re-adding a franchise under its old name picks
+the rotation up where it stopped, which is usually what you want; to start it over instead, set
+that `position` document to `0`.
 
 `FranchisePosition` returns `0` for a franchise never used and for one that does not exist, and
 those two cases are deliberately indistinguishable — which is what makes removing one safe.
