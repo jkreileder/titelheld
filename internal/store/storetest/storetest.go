@@ -31,33 +31,35 @@ func Suite(t *testing.T, newStore Factory) {
 	t.Helper()
 
 	tests := map[string]func(*testing.T, store.Store){
-		"TokenRoundTrip":              tokenRoundTrip,
-		"TokenRotationReplaces":       tokenRotationReplaces,
-		"TokenMissingIsTyped":         tokenMissingIsTyped,
-		"TokensKeyedByAthlete":        tokensKeyedByAthlete,
-		"EnqueueIsIdempotent":         enqueueIsIdempotent,
-		"DueRespectsTheDeadline":      dueRespectsTheDeadline,
-		"DueIsOrderedOldestFirst":     dueIsOrderedOldestFirst,
-		"DueBreaksTiesConsistently":   dueBreaksTiesConsistently,
-		"RemoveIsForgiving":           removeIsForgiving,
-		"QueueKeyedByAthlete":         queueKeyedByAthlete,
-		"NamedLogRoundTrip":           namedLogRoundTrip,
-		"NamedLogKeyedByAthlete":      namedLogKeyedByAthlete,
-		"GeocodeCacheRoundTrip":       geocodeCacheRoundTrip,
-		"GeocodeCacheMissIsNotAnErr":  geocodeCacheMissIsNotAnErr,
-		"FranchiseStartsAtZero":       franchiseStartsAtZero,
-		"FranchiseAdvances":           franchiseAdvances,
-		"FranchisesAreIndependent":    franchisesAreIndependent,
-		"FranchiseKeyedByAthlete":     franchiseKeyedByAthlete,
-		"FranchiseNamesAreArbitrary":  franchiseNamesAreArbitrary,
-		"RecentTitlesNewestFirst":     recentTitlesNewestFirst,
-		"RecentTitlesKeyedByAthlete":  recentTitlesKeyedByAthlete,
-		"RecentTitlesBounded":         recentTitlesBounded,
-		"AthleteConfigRoundTrip":      athleteConfigRoundTrip,
-		"AthleteConfigAbsent":         athleteConfigAbsent,
-		"AthleteConfigKeyedByAthlete": athleteConfigKeyedByAthlete,
-		"AthleteConfigReplaces":       athleteConfigReplaces,
-		"AthleteConfigIsCopied":       athleteConfigIsCopied,
+		"TokenRoundTrip":                 tokenRoundTrip,
+		"TokenRotationReplaces":          tokenRotationReplaces,
+		"TokenMissingIsTyped":            tokenMissingIsTyped,
+		"TokensKeyedByAthlete":           tokensKeyedByAthlete,
+		"EnqueueIsIdempotent":            enqueueIsIdempotent,
+		"DueRespectsTheDeadline":         dueRespectsTheDeadline,
+		"DueIsOrderedOldestFirst":        dueIsOrderedOldestFirst,
+		"DueBreaksTiesConsistently":      dueBreaksTiesConsistently,
+		"RemoveIsForgiving":              removeIsForgiving,
+		"QueueKeyedByAthlete":            queueKeyedByAthlete,
+		"NamedLogRoundTrip":              namedLogRoundTrip,
+		"NamedLogKeyedByAthlete":         namedLogKeyedByAthlete,
+		"GeocodeCacheRoundTrip":          geocodeCacheRoundTrip,
+		"GeocodeCacheMissIsNotAnErr":     geocodeCacheMissIsNotAnErr,
+		"FranchiseStartsAtZero":          franchiseStartsAtZero,
+		"FranchiseAdvances":              franchiseAdvances,
+		"FranchiseAdvanceIsMonotonic":    franchiseAdvanceIsMonotonic,
+		"FranchiseRejectsANegativeIndex": franchiseRejectsANegativeIndex,
+		"FranchisesAreIndependent":       franchisesAreIndependent,
+		"FranchiseKeyedByAthlete":        franchiseKeyedByAthlete,
+		"FranchiseNamesAreArbitrary":     franchiseNamesAreArbitrary,
+		"RecentTitlesNewestFirst":        recentTitlesNewestFirst,
+		"RecentTitlesKeyedByAthlete":     recentTitlesKeyedByAthlete,
+		"RecentTitlesBounded":            recentTitlesBounded,
+		"AthleteConfigRoundTrip":         athleteConfigRoundTrip,
+		"AthleteConfigAbsent":            athleteConfigAbsent,
+		"AthleteConfigKeyedByAthlete":    athleteConfigKeyedByAthlete,
+		"AthleteConfigReplaces":          athleteConfigReplaces,
+		"AthleteConfigIsCopied":          athleteConfigIsCopied,
 	}
 
 	for name, run := range tests {
@@ -391,18 +393,33 @@ func franchiseStartsAtZero(t *testing.T, s store.Store) {
 
 // The store decides the next number, so two callers cannot land on the same
 // position and reuse a title.
+//
+// The position lands past the entry that was used, not one step on from where
+// it was: the rotation steps over reserved entries, so an index of five must
+// leave the series resuming at six however far along it was before.
 func franchiseAdvances(t *testing.T, s store.Store) {
 	t.Helper()
 
-	for want := 1; want <= 3; want++ {
-		got, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther")
+	for index := range 3 {
+		got, err := s.AdvanceFranchisePast(t.Context(), 4242, "pink-panther", index)
 		if err != nil {
-			t.Fatalf("AdvanceFranchise: %v", err)
+			t.Fatalf("AdvanceFranchisePast: %v", err)
 		}
 
-		if got != want {
-			t.Fatalf("AdvanceFranchise returned %d, want %d", got, want)
+		if want := index + 1; got != want {
+			t.Fatalf("AdvanceFranchisePast(%d) returned %d, want %d", index, got, want)
 		}
+	}
+
+	// A jump over reserved entries: the position follows the index, not the
+	// number of times it has been advanced.
+	got, err := s.AdvanceFranchisePast(t.Context(), 4242, "pink-panther", 7)
+	if err != nil {
+		t.Fatalf("AdvanceFranchisePast: %v", err)
+	}
+
+	if got != 8 {
+		t.Fatalf("AdvanceFranchisePast(7) returned %d, want 8", got)
 	}
 
 	position, err := s.FranchisePosition(t.Context(), 4242, "pink-panther")
@@ -410,8 +427,58 @@ func franchiseAdvances(t *testing.T, s store.Store) {
 		t.Fatalf("FranchisePosition: %v", err)
 	}
 
-	if position != 3 {
-		t.Errorf("position after three advances = %d, want 3", position)
+	if position != 8 {
+		t.Errorf("position = %d, want 8", position)
+	}
+}
+
+// A lower index never rewinds the series.
+//
+// Two rides named at once, or an old naming replayed, would otherwise put the
+// position back on an entry that has already been used and hand the same
+// title out twice — which is the one thing the stored position exists to
+// prevent.
+func franchiseAdvanceIsMonotonic(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if _, err := s.AdvanceFranchisePast(t.Context(), 4242, "pink-panther", 4); err != nil {
+		t.Fatalf("AdvanceFranchisePast: %v", err)
+	}
+
+	got, err := s.AdvanceFranchisePast(t.Context(), 4242, "pink-panther", 1)
+	if err != nil {
+		t.Fatalf("AdvanceFranchisePast: %v", err)
+	}
+
+	if got != 5 {
+		t.Errorf("AdvanceFranchisePast(1) after (4) returned %d, want 5", got)
+	}
+
+	position, err := s.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 5 {
+		t.Errorf("position = %d, want 5: a lower index rewound the series", position)
+	}
+}
+
+// A negative index is a caller with no entry to record, and is refused.
+func franchiseRejectsANegativeIndex(t *testing.T, s store.Store) {
+	t.Helper()
+
+	if _, err := s.AdvanceFranchisePast(t.Context(), 4242, "pink-panther", -1); err == nil {
+		t.Error("AdvanceFranchisePast(-1) = no error, want one")
+	}
+
+	position, err := s.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 0 {
+		t.Errorf("position = %d, want 0: a refused advance still wrote", position)
 	}
 }
 
@@ -419,8 +486,8 @@ func franchiseAdvances(t *testing.T, s store.Store) {
 func franchisesAreIndependent(t *testing.T, s store.Store) {
 	t.Helper()
 
-	if _, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
-		t.Fatalf("AdvanceFranchise: %v", err)
+	if _, err := s.AdvanceFranchisePast(t.Context(), 4242, "pink-panther", 0); err != nil {
+		t.Fatalf("AdvanceFranchisePast: %v", err)
 	}
 
 	other, err := s.FranchisePosition(t.Context(), 4242, "bond")
@@ -438,8 +505,8 @@ func franchisesAreIndependent(t *testing.T, s store.Store) {
 func franchiseKeyedByAthlete(t *testing.T, s store.Store) {
 	t.Helper()
 
-	if _, err := s.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
-		t.Fatalf("AdvanceFranchise: %v", err)
+	if _, err := s.AdvanceFranchisePast(t.Context(), 4242, "pink-panther", 0); err != nil {
+		t.Fatalf("AdvanceFranchisePast: %v", err)
 	}
 
 	other, err := s.FranchisePosition(t.Context(), 9999, "pink-panther")
@@ -471,19 +538,19 @@ func franchiseNamesAreArbitrary(t *testing.T, s store.Store) {
 	}
 
 	for _, name := range names {
-		position, err := s.AdvanceFranchise(t.Context(), 4242, name)
+		position, err := s.AdvanceFranchisePast(t.Context(), 4242, name, 0)
 		if err != nil {
-			t.Fatalf("AdvanceFranchise(%q): %v", name, err)
+			t.Fatalf("AdvanceFranchisePast(%q): %v", name, err)
 		}
 
 		if position != 1 {
-			t.Errorf("AdvanceFranchise(%q) = %d, want 1", name, position)
+			t.Errorf("AdvanceFranchisePast(%q) = %d, want 1", name, position)
 		}
 	}
 
 	// Advancing one must not move any of the others.
-	if _, err := s.AdvanceFranchise(t.Context(), 4242, names[0]); err != nil {
-		t.Fatalf("second AdvanceFranchise: %v", err)
+	if _, err := s.AdvanceFranchisePast(t.Context(), 4242, names[0], 1); err != nil {
+		t.Fatalf("second AdvanceFranchisePast: %v", err)
 	}
 
 	for index, name := range names {
@@ -608,9 +675,10 @@ func recentTitlesBounded(t *testing.T, s store.Store) {
 // Values the configuration cases assert on in more than one place, named so
 // the expectation and the fixture cannot drift apart.
 const (
-	testGravelRide   = "GravelRide"
-	testFirstEntry   = "The Pink Panther"
-	testFranchiseKey = "pink-panther"
+	testGravelRide    = "GravelRide"
+	testFirstEntry    = "The Pink Panther"
+	testReservedEntry = "A Shot in the Dark"
+	testFranchiseKey  = "pink-panther"
 )
 
 // testFranchises is a configuration document with one ordered series.
@@ -621,7 +689,8 @@ func testFranchises() store.AthleteConfig {
 				Name:       testFranchiseKey,
 				SportTypes: []string{testGravelRide, "Ride"},
 				GearName:   "Pink Panther",
-				Titles:     []string{testFirstEntry, "A Shot in the Dark"},
+				Titles:     []string{testFirstEntry, testReservedEntry},
+				Reserved:   []string{testReservedEntry},
 			},
 		},
 	}
@@ -660,6 +729,12 @@ func athleteConfigRoundTrip(t *testing.T, s store.Store) {
 	// Order is the whole point of a series.
 	if !slices.Equal(franchise.Titles, wanted.Titles) {
 		t.Errorf("titles = %v, want %v", franchise.Titles, wanted.Titles)
+	}
+
+	// A reservation that did not survive the round trip would put an entry
+	// the athlete is keeping back into the rotation.
+	if !slices.Equal(franchise.Reserved, wanted.Reserved) {
+		t.Errorf("reserved = %v, want %v", franchise.Reserved, wanted.Reserved)
 	}
 }
 
@@ -736,6 +811,7 @@ func athleteConfigIsCopied(t *testing.T, s store.Store) {
 	// a test that only checks Titles.
 	config.Franchises[0].Titles[0] = "Mutated After Saving"
 	config.Franchises[0].SportTypes[0] = "MutatedSport"
+	config.Franchises[0].Reserved[0] = "Mutated After Saving"
 	config.Franchises[0].Name = "mutated"
 
 	got, ok, err := s.AthleteConfig(t.Context(), 25)
@@ -757,12 +833,21 @@ func athleteConfigIsCopied(t *testing.T, s store.Store) {
 		t.Errorf("a caller's later edit reached the stored name: %q", got.Franchises[0].Name)
 	}
 
+	// An aliased Reserved is the one that costs something real: it decides
+	// which entries are never offered, so a caller's stray edit could put an
+	// entry the athlete is keeping back into the rotation.
+	if got.Franchises[0].Reserved[0] != testReservedEntry {
+		t.Errorf("a caller's later edit reached the stored reservations: %q",
+			got.Franchises[0].Reserved[0])
+	}
+
 	// And the other boundary: what a reader is given is theirs to change.
 	// Firestore hands back a fresh decode every time, so aliasing on the way
 	// out would make one implementation mutable through its readers and the
 	// other not.
 	got.Franchises[0].Titles[0] = "Mutated After Reading"
 	got.Franchises[0].SportTypes[0] = "MutatedSport"
+	got.Franchises[0].Reserved[0] = "Mutated After Reading"
 
 	again, ok, err := s.AthleteConfig(t.Context(), 25)
 	if err != nil || !ok {
@@ -776,5 +861,10 @@ func athleteConfigIsCopied(t *testing.T, s store.Store) {
 	if again.Franchises[0].SportTypes[0] != testGravelRide {
 		t.Errorf("a reader's edit reached the stored sport types: %q",
 			again.Franchises[0].SportTypes[0])
+	}
+
+	if again.Franchises[0].Reserved[0] != testReservedEntry {
+		t.Errorf("a reader's edit reached the stored reservations: %q",
+			again.Franchises[0].Reserved[0])
 	}
 }

@@ -12,17 +12,50 @@ import (
 	"github.com/jkreileder/titelheld/internal/strava"
 )
 
-// capturingProvider records the prompt it was given.
+// capturingProvider records the prompts it was given.
+//
+// All of them, not only the last: naming an activity can take up to three
+// calls when a franchise entry goes unused, and a test that asserts on the
+// last one would be asserting on the attempt that gave up on the series.
 type capturingProvider struct {
 	fakeProvider
 
-	prompt naming.Prompt
+	prompt  naming.Prompt
+	prompts []naming.Prompt
 }
 
 func (c *capturingProvider) Complete(ctx context.Context, prompt naming.Prompt) (string, error) {
 	c.prompt = prompt
+	c.prompts = append(c.prompts, prompt)
 
 	return c.fakeProvider.Complete(ctx, prompt)
+}
+
+// first is the prompt of the first attempt, which is the one that carries a
+// franchise offer if there was one.
+func (c *capturingProvider) first() naming.Prompt {
+	if len(c.prompts) == 0 {
+		return naming.Prompt{}
+	}
+
+	return c.prompts[0]
+}
+
+// shippedEntry is the entry the shipped profile offers a franchise ride at
+// position zero, and where in the series it sits.
+//
+// Read from the profile rather than written out, because the entries before it
+// are reserved for the athlete to spend by hand: a test that named one would
+// pass while the service offered another.
+func shippedEntry(t *testing.T) (string, int) {
+	t.Helper()
+
+	entry, index, ok := naming.DefaultProfile()[0].Next(0)
+	if !ok {
+		t.Fatal("the shipped franchise offers nothing at position zero")
+	}
+
+	return entry, index
 }
 
 // withCapture swaps in a provider that keeps the prompt.
@@ -98,24 +131,30 @@ func TestAFranchiseRideIsOfferedTheNextEntry(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 
-	first := naming.DefaultProfile()[0].Titles[0]
+	entry, index := shippedEntry(t)
 
 	if !strings.Contains(capture.prompt.User, "FRANCHISE") {
 		t.Fatalf("the prompt has no FRANCHISE block:\n%s", capture.prompt.User)
 	}
 
-	if !strings.Contains(capture.prompt.User, first) {
-		t.Errorf("the prompt does not offer %q", first)
+	if !strings.Contains(capture.prompt.User, entry) {
+		t.Errorf("the prompt does not offer %q", entry)
 	}
 
-	// And the position advanced, so the next ride gets the next film.
+	// One call: the model used the entry, so there was nothing to re-offer.
+	if capture.calls != 1 {
+		t.Errorf("the model was called %d times, want 1", capture.calls)
+	}
+
+	// And the position advanced past the entry that was used, so the next
+	// ride gets the next film rather than a reserved one.
 	position, err := h.store.FranchisePosition(t.Context(), 4242, "pink-panther")
 	if err != nil {
 		t.Fatalf("FranchisePosition: %v", err)
 	}
 
-	if position != 1 {
-		t.Errorf("position = %d, want 1 after one franchise naming", position)
+	if want := index + 1; position != want {
+		t.Errorf("position = %d, want %d after one franchise naming", position, want)
 	}
 }
 
@@ -167,7 +206,9 @@ func TestDryRunOffersAFranchiseWithoutConsumingIt(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(capture.prompt.User, naming.DefaultProfile()[0].Titles[0]) {
+	entry, _ := shippedEntry(t)
+
+	if !strings.Contains(capture.prompt.User, entry) {
 		t.Error("dry run did not offer the franchise entry")
 	}
 
@@ -763,7 +804,9 @@ func TestNoConfigurationFallsBackToTheDefaultProfile(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 
-	if !strings.Contains(capture.prompt.User, naming.DefaultProfile()[0].Titles[0]) {
+	entry, _ := shippedEntry(t)
+
+	if !strings.Contains(capture.prompt.User, entry) {
 		t.Errorf("the default profile did not apply with no document:\n%s", capture.prompt.User)
 	}
 }
@@ -805,7 +848,9 @@ func TestAnUnreadableConfigurationDegradesToTheDefaults(t *testing.T) {
 	// Degraded to the default profile, not to no franchise at all — which is
 	// what "falls back" has to mean, and what a test asserting only that the
 	// ride was named cannot tell apart.
-	if !strings.Contains(capture.prompt.User, naming.DefaultProfile()[0].Titles[0]) {
+	entry, _ := shippedEntry(t)
+
+	if !strings.Contains(capture.prompt.User, entry) {
 		t.Errorf("an unreadable configuration dropped the franchise entirely:\n%s",
 			capture.prompt.User)
 	}
@@ -1021,8 +1066,8 @@ func TestAConfigurationDocumentReplacesTheDefaultProfile(t *testing.T) {
 //
 // Answering from the default profile is right for the ride in hand and wrong
 // to keep doing: if the athlete removed or renamed a series, every later ride
-// in the process would still be offered it, and AdvanceFranchise would
-// durably count a position the configuration no longer names. A repeated read
+// in the process would still be offered it, and AdvanceFranchisePast would
+// durably record a position the configuration no longer names. A repeated read
 // is cheap; a wrong write is not.
 func TestAFailedConfigurationReadIsNotCached(t *testing.T) {
 	t.Parallel()

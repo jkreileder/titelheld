@@ -535,7 +535,7 @@ func franchiseKey(athleteID int64, franchise string) string {
 	return cacheDocID(strconv.FormatInt(athleteID, 10) + "-" + franchise)
 }
 
-// FranchisePosition returns how many entries of the franchise are used.
+// FranchisePosition returns the index the franchise's rotation resumes at.
 //
 // A franchise never used, and one that no longer exists in configuration, both
 // answer zero: removing a franchise from config should stop it being consulted,
@@ -558,12 +558,22 @@ func (s *Store) FranchisePosition(ctx context.Context, athleteID int64, franchis
 	return doc.Position, nil
 }
 
-// AdvanceFranchise moves one entry along and returns the new position.
+// AdvanceFranchisePast moves the position past a used entry and returns it.
 //
-// The increment happens inside a transaction so the store decides the next
-// number rather than the caller: two callers reading and writing separately
-// would both land on the same position and reuse a title.
-func (s *Store) AdvanceFranchise(ctx context.Context, athleteID int64, franchise string) (int, error) {
+// The move happens inside a transaction so the store decides the next number
+// rather than the caller: two callers reading and writing separately would
+// both land on the same position and reuse a title.
+//
+// Monotonic. An index below the stored position leaves it alone — a replayed
+// or out-of-order naming must not hand a spent entry out again — which is
+// also why this takes an index rather than setting whatever it is told.
+func (s *Store) AdvanceFranchisePast(
+	ctx context.Context, athleteID int64, franchise string, index int,
+) (int, error) {
+	if index < 0 {
+		return 0, fmt.Errorf("firestore: advance franchise %q: index %d is negative", franchise, index)
+	}
+
 	ref := s.collection(CollectionFranchise).Doc(franchiseKey(athleteID, franchise))
 
 	var position int
@@ -584,7 +594,7 @@ func (s *Store) AdvanceFranchise(ctx context.Context, athleteID int64, franchise
 			position = doc.Position
 		}
 
-		position++
+		position = max(position, index+1)
 
 		return tx.Set(ref, franchiseDoc{
 			AthleteID: athleteID,
@@ -616,6 +626,12 @@ type franchiseEntry struct {
 	SportTypes []string `firestore:"sport_types"`
 	GearName   string   `firestore:"gear_name"`
 	Titles     []string `firestore:"titles"`
+
+	// Reserved names entries of Titles the rotation never offers. A separate
+	// field rather than a shape change to Titles: the collection already holds
+	// a document, and an athlete who has not written this field reads back as
+	// nil, which is "nothing reserved" — the behavior before it existed.
+	Reserved []string `firestore:"reserved"`
 }
 
 // AthleteConfig returns the athlete's configuration document.
@@ -644,6 +660,7 @@ func (s *Store) AthleteConfig(
 			SportTypes: entry.SportTypes,
 			GearName:   entry.GearName,
 			Titles:     entry.Titles,
+			Reserved:   entry.Reserved,
 		})
 	}
 
@@ -661,6 +678,7 @@ func (s *Store) SaveAthleteConfig(
 			SportTypes: franchise.SportTypes,
 			GearName:   franchise.GearName,
 			Titles:     franchise.Titles,
+			Reserved:   franchise.Reserved,
 		})
 	}
 

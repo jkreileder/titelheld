@@ -94,7 +94,19 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 	}
 
 	memory := store.NewMemory()
-	provider := &fakeProvider{}
+
+	// The fixture rides the franchise bike, so the model is offered an entry
+	// and this one uses it — extended with something from the ride, which is
+	// what the prompt invites and what the position moves on.
+	entry, index, ok := naming.DefaultProfile()[0].Next(0)
+	if !ok {
+		t.Fatal("the shipped franchise offers nothing at position zero")
+	}
+
+	wantTitle := entry + " am Musterbach"
+	provider := &fakeProvider{
+		response: `{"title":"` + wantTitle + `","language":"de"}`,
+	}
 
 	proc, err := New(Deps{
 		Store:      memory,
@@ -131,6 +143,19 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 		t.Fatalf("result %+v, want one activity named", result)
 	}
 
+	// The title used the entry, so the series moved past it. Asserted here and
+	// not only in the unit tests: the PUT and the call count are both
+	// satisfied by a pipeline that drops the franchise on the way to the
+	// writer, and the entry would then be offered again on the next ride.
+	position, err := memory.FranchisePosition(t.Context(), 42424242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if want := index + 1; position != want {
+		t.Errorf("franchise position = %d, want %d", position, want)
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -139,8 +164,8 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 	}
 
 	// The title the mocked model returned, validated and sent on.
-	if got := puts[0]["name"]; got != "Musterrunde am Musterbach" {
-		t.Errorf("name is %q, want the validated title", got)
+	if got := puts[0]["name"]; got != wantTitle {
+		t.Errorf("name is %q, want %q", got, wantTitle)
 	}
 
 	// The attribution went in front of the third-party content, which came

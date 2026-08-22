@@ -36,6 +36,9 @@ func (p *Processor) write(
 		// and a second GET per activity per sweep would spend the 100-per-15-
 		// minutes budget on a line in a log. The copy the classifier fetched
 		// answers the only question the log asks.
+		//
+		// would_advance_franchise is empty unless the title actually used the
+		// entry it was offered, which is the same test a real write applies.
 		logger.Info("dry run: not writing",
 			"would_title", logsafe.String(title.Text),
 			"would_attribute", p.wouldAttribute(activity),
@@ -97,7 +100,11 @@ func (p *Processor) wouldAttribute(activity *strava.Activity) bool {
 	return !p.deps.DisableAttribution && !naming.HasAttribution(activity.Description)
 }
 
-// recordFranchise advances the series this title came from.
+// recordFranchise advances the series past the entry this title used.
+//
+// Only a title that used the entry gets here: the naming layer leaves
+// [titled.Franchise] empty when the offer was declined, so an entry that was
+// merely offered is still there for the next ride.
 //
 // Never fatal. A position that could not be advanced means the next ride is
 // offered the same entry again — a repeat, which is worse than a gap but not
@@ -109,7 +116,8 @@ func (p *Processor) recordFranchise(
 		return
 	}
 
-	position, err := p.deps.Store.AdvanceFranchise(ctx, athleteID, title.Franchise)
+	position, err := p.deps.Store.AdvanceFranchisePast(
+		ctx, athleteID, title.Franchise, title.FranchiseIndex)
 	if err != nil {
 		logger.Error("could not advance the franchise; the next ride may repeat this entry",
 			"franchise", logsafe.String(title.Franchise), "error", err)

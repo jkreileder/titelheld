@@ -1,6 +1,7 @@
 package naming
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -75,16 +76,73 @@ func TestFranchiseNext(t *testing.T) {
 	franchise := Franchise{Titles: []string{"first", "second"}}
 
 	for position, want := range map[int]string{0: "first", 1: "second"} {
-		got, ok := franchise.Next(position)
-		if !ok || got != want {
-			t.Errorf("Next(%d) = %q, %v; want %q, true", position, got, ok, want)
+		got, index, ok := franchise.Next(position)
+		if !ok || got != want || index != position {
+			t.Errorf("Next(%d) = %q, %d, %v; want %q, %d, true",
+				position, got, index, ok, want, position)
 		}
 	}
 
 	for _, position := range []int{2, 3, 100, -1} {
-		if got, ok := franchise.Next(position); ok {
+		if got, _, ok := franchise.Next(position); ok {
 			t.Errorf("Next(%d) = %q, true; want no entry", position, got)
 		}
+	}
+}
+
+// A reserved entry is never offered, and the index says where the rotation
+// resumed from.
+//
+// The index is the whole point: a caller that advanced by one from a position
+// that stepped over a reserved entry would offer that reserved entry next.
+func TestFranchiseNextStepsOverReservedEntries(t *testing.T) {
+	t.Parallel()
+
+	franchise := Franchise{
+		Titles:   []string{"first", "second", "third", "fourth"},
+		Reserved: []string{"  FIRST ", "second"},
+	}
+
+	title, index, ok := franchise.Next(0)
+	if !ok || title != "third" || index != 2 {
+		t.Errorf("Next(0) = %q, %d, %v; want \"third\", 2, true", title, index, ok)
+	}
+
+	// And from a position already past them, nothing changes.
+	title, index, ok = franchise.Next(3)
+	if !ok || title != "fourth" || index != 3 {
+		t.Errorf("Next(3) = %q, %d, %v; want \"fourth\", 3, true", title, index, ok)
+	}
+}
+
+// A series whose remaining entries are all reserved offers nothing.
+//
+// Not an error and not a fallback to an entry the athlete is keeping: the ride
+// is named normally, which is what an exhausted series does too.
+func TestAFullyReservedFranchiseOffersNothing(t *testing.T) {
+	t.Parallel()
+
+	franchise := Franchise{
+		Titles:   []string{"first", "second"},
+		Reserved: []string{"first", "second"},
+	}
+
+	if title, _, ok := franchise.Next(0); ok {
+		t.Errorf("Next(0) = %q, true; want no entry", title)
+	}
+}
+
+// A reserved entry that is not in the list changes nothing.
+func TestAnUnknownReservationIsInert(t *testing.T) {
+	t.Parallel()
+
+	franchise := Franchise{
+		Titles:   []string{"first"},
+		Reserved: []string{"a title that is not in this series"},
+	}
+
+	if title, _, ok := franchise.Next(0); !ok || title != "first" {
+		t.Errorf("Next(0) = %q, %v; want \"first\", true", title, ok)
 	}
 }
 
@@ -110,6 +168,7 @@ func TestDefaultFranchisesOmitTheUsedEntries(t *testing.T) {
 		"The Pink Panther Checks Inn",
 		"The Pink Panther Strikes Again",
 		"Revenge of the Pink Panther",
+		"Curse of the Pink Panther",
 	} {
 		for _, title := range pink.Titles {
 			if strings.EqualFold(title, used) {
@@ -120,6 +179,33 @@ func TestDefaultFranchisesOmitTheUsedEntries(t *testing.T) {
 
 	if len(pink.Titles) == 0 {
 		t.Error("the shipped franchise has no titles left")
+	}
+}
+
+// The shipped rotation resumes after the entry the athlete used last.
+//
+// The athlete walks the canon in release order and is at "Curse of the Pink
+// Panther"; "Trail of the Pink Panther" was stepped over deliberately and is
+// theirs to spend. So the first entry this service may offer is the film after
+// Curse, and it must be offered at position zero — nothing seeds a stored
+// position, and a first offer of an earlier film would walk the series
+// backwards.
+func TestTheShippedFranchiseResumesAfterCurse(t *testing.T) {
+	t.Parallel()
+
+	pink := DefaultProfile()[0]
+
+	title, _, ok := pink.Next(0)
+	if !ok {
+		t.Fatal("the shipped franchise offers nothing at position zero")
+	}
+
+	if title != "Son of the Pink Panther" {
+		t.Errorf("the first entry offered is %q, want \"Son of the Pink Panther\"", title)
+	}
+
+	if !slices.Contains(pink.Reserved, "Trail of the Pink Panther") {
+		t.Error("\"Trail of the Pink Panther\" is not reserved")
 	}
 }
 
@@ -148,5 +234,123 @@ func TestFranchiseForTakesTheFirstMatch(t *testing.T) {
 
 	if _, ok := FranchiseFor([]Franchise{franchises[0]}, "Run", "Musterrad"); ok {
 		t.Error("a franchise matched a ride it does not apply to")
+	}
+}
+
+// A title counts as using an entry only when the entry's wording is in it.
+//
+// This is the check that decides whether a film is spent, so the two errors
+// are not symmetrical: a use that is not recognized costs a repeated offer,
+// and a non-use that is recognized loses a film with nothing to say where it
+// went. The table leans that way on purpose.
+func TestUsesEntry(t *testing.T) {
+	t.Parallel()
+
+	const entry = "Curse of the Pink Panther"
+
+	for _, tc := range []struct {
+		name  string
+		title string
+		entry string
+		want  bool
+	}{
+		{name: "verbatim", title: entry, entry: entry, want: true},
+		{name: "extended", title: "Curse of the Pink Panther im Nebel", entry: entry, want: true},
+		{name: "punctuated", title: "Curse of the Pink Panther: Gegenwind", entry: entry, want: true},
+		{name: "different case", title: "CURSE OF THE PINK PANTHER", entry: entry, want: true},
+		{name: "collapsed whitespace", title: "Curse  of the\tPink Panther", entry: entry, want: true},
+		{name: "leading article dropped", title: "Pink Panther im Nebel", entry: "The Pink Panther", want: true},
+		{name: "the article is still allowed", title: "The Pink Panther", entry: "The Pink Panther", want: true},
+
+		// The negative the whole rule exists for: a title in the right key
+		// that never names the entry.
+		{name: "themed but not the entry", title: "Der Panther im Morgengrauen", entry: entry, want: false},
+		{name: "another film in the series", title: "Revenge of the Pink Panther", entry: entry, want: false},
+		{name: "the franchise but not the entry", title: "Pink Panther am Musterbach", entry: entry, want: false},
+		{name: "translated", title: "Fluch des rosaroten Panthers", entry: entry, want: false},
+		{name: "half of it", title: "Curse of the Panther", entry: entry, want: false},
+		{name: "a longer word", title: "A Shot in the Darkness", entry: "A Shot in the Dark", want: false},
+		{name: "no entry offered", title: "Musterrunde", entry: "", want: false},
+		{name: "an entry of punctuation only", title: "Musterrunde", entry: "---", want: false},
+		{name: "an empty title", title: "", entry: entry, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := UsesEntry(tc.title, tc.entry); got != tc.want {
+				t.Errorf("UsesEntry(%q, %q) = %v, want %v", tc.title, tc.entry, got, tc.want)
+			}
+		})
+	}
+}
+
+// An entry that cannot be a title is not offerable.
+//
+// The prompt bounds every value it prints, so an over-long entry would be
+// shown as a prefix of itself — and no title can contain what was never shown.
+// Offering it would cost three model calls on every ride, forever.
+func TestOfferable(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		entry string
+		want  bool
+	}{
+		{name: "an ordinary entry", entry: "Son of the Pink Panther", want: true},
+		{name: "exactly the limit", entry: strings.Repeat("a", MaxTitleRunes), want: true},
+		{name: "one rune over", entry: strings.Repeat("a", MaxTitleRunes+1), want: false},
+		{name: "long in runes, not bytes", entry: strings.Repeat("ü", MaxTitleRunes+1), want: false},
+
+		// Counted in runes: sixty umlauts are a hundred and twenty bytes and
+		// still a title this service would accept.
+		{name: "umlauts at the limit", entry: strings.Repeat("ü", MaxTitleRunes), want: true},
+		{name: "empty", entry: "", want: false},
+		{name: "whitespace only", entry: "   ", want: false},
+
+		// Nothing UsesEntry could ever find in a title. Offerable has to
+		// refuse exactly what the spending check cannot recognize, or the
+		// entry is declined on every ride forever.
+		{name: "punctuation only", entry: "---", want: false},
+		{name: "punctuation and spaces", entry: " — : ", want: false},
+
+		// An article alone survives: the leading article is only dropped when
+		// something follows it, so "The" is still a token a title can carry.
+		// Absurd as an entry, and consistent, which is what matters here.
+		{name: "an article alone", entry: "The", want: true},
+		{name: "surrounding space does not count", entry: "  " + strings.Repeat("a", MaxTitleRunes) + "  ", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := Offerable(tc.entry); got != tc.want {
+				t.Errorf("Offerable(%d runes) = %v, want %v", len([]rune(tc.entry)), got, tc.want)
+			}
+		})
+	}
+}
+
+// Offerable and UsesEntry agree: nothing offerable is unrecognizable.
+//
+// The pair is the contract — an entry that gets offered has to be one a title
+// can demonstrably use, or the rotation stalls on it. Asserted over the two
+// together rather than trusting that the same rule was written twice.
+func TestNothingOfferableIsImpossibleToUse(t *testing.T) {
+	t.Parallel()
+
+	for _, entry := range []string{
+		"Son of the Pink Panther", "A Shot in the Dark", "The Pink Panther",
+		"---", "The", "   ", "", "Ocean's Eleven", "8½",
+		strings.Repeat("a", MaxTitleRunes), strings.Repeat("a", MaxTitleRunes+1),
+	} {
+		if !Offerable(entry) {
+			continue
+		}
+
+		// The title a compliant model would return: the entry itself.
+		if !UsesEntry(entry, entry) {
+			t.Errorf("Offerable(%q) is true, but the entry used verbatim does not count as used",
+				entry)
+		}
 	}
 }

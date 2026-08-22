@@ -160,6 +160,11 @@ type Franchise struct {
 
 	// Titles are the entries, in order.
 	Titles []string
+
+	// Reserved are entries the rotation never offers, matched against Titles
+	// case-insensitively and trimmed. They keep their place in the series;
+	// the athlete spends them by hand.
+	Reserved []string
 }
 
 // Franchises remembers how far along an ordered title series an athlete is.
@@ -167,28 +172,44 @@ type Franchise struct {
 // A franchise is a list of titles walked in order — the Pink Panther films on
 // the gravel bike — and the only thing that has to persist is the position in
 // it. The list itself is configuration, so this stores an integer and not the
-// titles: renaming or reordering a franchise in config must not require a
-// migration of anything stored here.
+// titles: editing a franchise in config must not require a migration of
+// anything stored here. It is an index into that list, so an edit that moves
+// entries around moves what it points at — a configuration question, not a
+// storage one.
 //
 // Like the queue and the named log, it is re-derivable in principle — the
 // titles this service wrote are the record — but re-deriving it means matching
 // past titles against a series, so it is cheaper to remember. Losing it costs
 // a repeated or skipped entry, not a wrong write.
 type Franchises interface {
-	// FranchisePosition returns how many entries of the named franchise this
-	// athlete has already used. Zero for a franchise never used, which is
-	// also the answer for one that does not exist — a franchise removed from
-	// configuration should not error, it should simply stop being consulted.
+	// FranchisePosition returns the index the named franchise's rotation
+	// resumes at. Not a count of what has been used: an entry the athlete
+	// reserved and spent by hand never moves it, which is what reserving one
+	// means.
+	//
+	// Zero for a franchise never used, which is also the answer for one that
+	// does not exist — a franchise removed from configuration should not
+	// error, it should simply stop being consulted.
 	FranchisePosition(ctx context.Context, athleteID int64, franchise string) (int, error)
 
-	// AdvanceFranchise records that one more entry has been used and returns
-	// the new position.
+	// AdvanceFranchisePast records that the entry at an index has been used
+	// and returns the new position.
 	//
-	// It advances by one rather than setting a value, so two callers cannot
-	// race to the same position: the store decides the next number, not the
-	// caller. That matters less at max-instances=1 than it will later, and
-	// costs nothing now.
-	AdvanceFranchise(ctx context.Context, athleteID int64, franchise string) (int, error)
+	// The index rather than a step, because the rotation steps over reserved
+	// entries: the caller knows which entry it offered, and advancing by one
+	// from a position that skipped two would offer a reserved title next.
+	//
+	// The move is monotonic — the stored position becomes the greater of what
+	// it was and index+1 — and it happens inside the store rather than in a
+	// caller that read, decided and wrote back. Two callers naming two rides
+	// at once therefore cannot rewind each other, and a replay of an older
+	// naming cannot hand out a title the series has already spent.
+	//
+	// A negative index is an error rather than a silent no-op: it can only
+	// come from a caller that did not have an entry to record.
+	AdvanceFranchisePast(
+		ctx context.Context, athleteID int64, franchise string, index int,
+	) (int, error)
 }
 
 // NamedLog records what this service has written.

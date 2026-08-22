@@ -59,8 +59,15 @@ type titled struct {
 	Text     string
 	Language naming.Language
 
-	// Franchise is the series this title came from, if any.
+	// Franchise is the series this title demonstrably used, if any. Empty when
+	// no series applied and equally when one was offered and the title did not
+	// use it — an offer that was declined costs nothing, so there is nothing
+	// for the writer to record.
 	Franchise string
+
+	// FranchiseIndex is where in that series the used entry sat. Only
+	// meaningful when Franchise is set.
+	FranchiseIndex int
 
 	// Source is how the title was produced, for the history. A template and a
 	// model's title are not interchangeable to a later prompt.
@@ -107,17 +114,9 @@ func (p *Processor) llmTitle(
 		return titled{}, err
 	}
 
-	prompt := naming.BuildPrompt(ride, gathered.Context)
-
-	raw, err := p.deps.Provider.Complete(ctx, prompt)
+	title, used, err := p.complete(ctx, ride, gathered, logger)
 	if err != nil {
-		return titled{}, fmt.Errorf("llm %s: %w", p.deps.Provider.Name(), err)
-	}
-
-	title, err := p.deps.Validator.ParseAndValidate(raw)
-	if err != nil {
-		return titled{}, fmt.Errorf(
-			"llm %s returned an unusable title: %w", p.deps.Provider.Name(), err)
+		return titled{}, err
 	}
 
 	logger.Info("named",
@@ -127,26 +126,122 @@ func (p *Processor) llmTitle(
 		"facts", len(ride.Facts),
 		"recent_titles", len(gathered.Context.RecentTitles),
 		"examples", len(gathered.Context.Examples),
-		"franchise_offered", gathered.Franchise != "")
+		"franchise_offered", gathered.Franchise != "",
+		"franchise_used", used)
+
+	named := titled{
+		Text:     title.Text,
+		Language: title.Language,
+		Source:   store.SourceService,
+	}
 
 	// The series that gets advanced is the one the prompt was shown, carried
 	// out of the single lookup that resolved it rather than resolved again
-	// here.
-	//
-	// Recorded as used whenever an entry was offered, without checking that
-	// the title resembles it. The model is invited to adapt the wording, so a
-	// title that used the entry and one that ignored it are not reliably
-	// distinguishable — and the spec's rule is that the order may not be
-	// skipped, which makes advancing the safer error: a franchise that
-	// advances on a title that ignored it loses one entry, where one that
-	// does not advance offers the same entry until a model happens to use it
-	// verbatim.
-	return titled{
-		Text:      title.Text,
-		Language:  title.Language,
-		Source:    store.SourceService,
-		Franchise: gathered.Franchise,
-	}, nil
+	// here — and only when the title that came back actually used the entry.
+	if used {
+		named.Franchise = gathered.Franchise
+		named.FranchiseIndex = gathered.FranchiseIndex
+	}
+
+	return named, nil
+}
+
+// maxFranchiseOffers is how many times one activity may be shown the same
+// franchise entry.
+//
+// Two: the offer, and one more attempt. A model that has declined an entry
+// twice is not going to be argued into it, and every further attempt is a
+// paid call and a longer sweep for a title that would be no better.
+const maxFranchiseOffers = 2
+
+// complete asks the model for a title, and insists on the franchise entry only
+// as far as the spec allows.
+//
+// The order is: offer the entry, and if the title uses it, that is the title
+// and the entry is spent. If it does not, offer it once more — the model is
+// sampled at temperature, so a second draw is a real second chance and not a
+// repeat of the first. If that title does not use it either, the ride is named
+// without the series: a third call carrying no FRANCHISE block, so what gets
+// written is an ordinary title rather than one that was reaching for a film it
+// never named.
+//
+// It reports whether the entry was used, which is the only thing that may
+// advance the position.
+func (p *Processor) complete(
+	ctx context.Context, ride naming.Ride, gathered gathered, logger *slog.Logger,
+) (naming.Title, bool, error) {
+	title, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context))
+	if err != nil {
+		return naming.Title{}, false, err
+	}
+
+	entry := gathered.Context.FranchiseNext
+	if entry == "" {
+		return title, false, nil
+	}
+
+	for offer := 1; offer <= maxFranchiseOffers; offer++ {
+		if naming.UsesEntry(title.Text, entry) {
+			return title, true, nil
+		}
+
+		if offer == maxFranchiseOffers {
+			break
+		}
+
+		logger.Info("the title did not use the franchise entry; offering it once more",
+			"franchise", logsafe.String(gathered.Franchise),
+			"entry", logsafe.String(entry),
+			"title", logsafe.String(title.Text))
+
+		retry, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context))
+		if err != nil {
+			// The title in hand is a good one that simply ignored the series.
+			// Losing it because a second call failed would leave the ride at
+			// its Strava default over a franchise, which is garnish.
+			logger.Warn("the second franchise offer failed; naming without the series",
+				"franchise", logsafe.String(gathered.Franchise), "error", err)
+
+			return title, false, nil
+		}
+
+		title = retry
+	}
+
+	logger.Info("the franchise entry went unused twice; naming without the series",
+		"franchise", logsafe.String(gathered.Franchise),
+		"entry", logsafe.String(entry))
+
+	// Named again with no FRANCHISE block, so the title that gets written is
+	// not one that was steering towards an entry it never used.
+	plain := gathered.Context
+	plain.FranchiseNext = ""
+
+	plainTitle, err := p.ask(ctx, naming.BuildPrompt(ride, plain))
+	if err != nil {
+		logger.Warn("naming without the series failed; keeping the title that ignored it",
+			"error", err)
+
+		return title, false, nil
+	}
+
+	return plainTitle, false, nil
+}
+
+// ask makes one provider call and validates what comes back.
+func (p *Processor) ask(ctx context.Context, prompt naming.Prompt) (naming.Title, error) {
+	raw, err := p.deps.Provider.Complete(ctx, prompt)
+	if err != nil {
+		return naming.Title{}, fmt.Errorf("llm %s: %w", p.deps.Provider.Name(), err)
+	}
+
+	title, err := p.deps.Validator.ParseAndValidate(raw)
+	if err != nil {
+		return naming.Title{}, fmt.Errorf(
+			"llm %s returned an unusable title: %w", p.deps.Provider.Name(), err)
+	}
+
+	return title, nil
 }
 
 // gearName resolves a gear ID to the name a franchise matches on.

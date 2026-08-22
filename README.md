@@ -40,6 +40,9 @@ everything that should stay boring untouched.
 - [Geography](#geography)
 - [Seeding the title history](#seeding-the-title-history)
 - [Franchises](#franchises)
+  - [An entry is spent when it is used, not when it is offered](#an-entry-is-spent-when-it-is-used-not-when-it-is-offered)
+  - [Reserved entries](#reserved-entries)
+  - [What is stored](#what-is-stored)
 - [Local development](#local-development)
 - [Infrastructure](#infrastructure)
   - [What Terraform manages](#what-terraform-manages)
@@ -183,7 +186,8 @@ Deriving an example costs a Strava read, so each is cached against the activity 
 history only changes when something is named, so a sweep repeating every five minutes pays once.
 
 **The next entry of a franchise**, when the ride qualifies — see [Franchises](#franchises). The
-model may adapt the wording; it may not skip the position.
+model may extend the entry; it may not translate it, paraphrase it or skip the position, and the
+entry is only spent if the title that comes back actually carries it.
 
 Only the title history is worth failing for. If it cannot be read the activity stays queued,
 because the realistic cause is the composite index missing — a deployment error that fixes
@@ -538,19 +542,74 @@ a title this service writes carries the language the model reported.
 
 A franchise is an ordered list of titles walked one entry at a time. The shipped example is the
 Pink Panther films, for gravel rides on the gear of the same name: each such ride takes the next
-film in the sequence. The model may adapt an entry to the ride — it may not skip the order.
+film in the sequence. The model may extend an entry — it may not translate it, paraphrase it or
+skip the order.
 
 Franchises are **data, not code**. Adding one is a configuration change and needs no release.
 
-Firestore stores a single integer per athlete per franchise: how many entries have been used.
-It never stores the titles. That is what lets a franchise be renamed, reordered or extended
-without a migration, and it is why removing a franchise from configuration is safe — a position
-for a franchise that no longer exists is simply never read. `FranchisePosition` returns `0` for
-a franchise never used and for one that does not exist, and those two cases are deliberately
-indistinguishable.
+### An entry is spent when it is used, not when it is offered
 
-`AdvanceFranchise` increments and returns the new position in one transaction, so the store
-decides the next number rather than a caller reading, adding one and writing back.
+The prompt asks for the entry's wording; a request to a model is not a guarantee. So the position
+moves only when the title that comes back **demonstrably uses** the entry: containment of the
+entry's core after normalizing both sides — lowercased, punctuation flattened to spaces,
+whitespace collapsed, a leading `the`, `a` or `an` dropped when something follows it — matched on
+token boundaries. `Son of the Pink Panther: Gegenwind` counts. `Der Panther im Morgengrauen` does
+not, and neither does a translation.
+
+Dropping the article is what lets `Pink Panther im Nebel` count as `The Pink Panther`. It only
+applies when a word follows, so a one-word entry keeps that word and stays matchable rather than
+becoming an empty core that matches everything.
+
+If the entry goes unused the model is offered it **once more**, and no more than that: a model
+that has declined an entry twice will not be argued into it, and each attempt is a paid call.
+If the second title does not use it either, the ride is named from a third call carrying no
+FRANCHISE block — an ordinary title, rather than one that was reaching for a film it never
+named — and the position does not move.
+
+The check fails closed. An adaptation it cannot recognize leaves the entry unspent and the next
+ride is offered it again, which costs a repeat. The opposite error spends a film on a title that
+never carried it, and that one cannot be noticed afterwards.
+
+A call that fails after a usable title is already in hand never costs the title: the ride is
+named with what there is, without the franchise.
+
+### Reserved entries
+
+An entry listed under `reserved` is never offered. It keeps its place in the series and it is
+yours to spend by hand — which is what the shipped profile does with the films the athlete has
+already walked past. Reserving is not deleting: the rotation steps over a reserved entry, and
+un-reserving it later puts it back, behind the position if the rotation has already moved past
+it.
+
+### What is stored
+
+Firestore stores a single integer per athlete per franchise: the index the rotation resumes at.
+Not "how many entries are used" — spending a reserved entry by hand does not move it, which is
+the point of reserving one. It never stores the titles, so editing a series never migrates
+anything — but the integer is an index into the list you edited, and two edits move what it
+means:
+
+| Edit | What happens to the position |
+| --- | --- |
+| append entries | nothing; the series simply has more to go |
+| insert, delete or reorder **after** the position | nothing; the rotation has not reached them |
+| insert, delete or reorder **at or before** it | the index names a different entry — review it |
+| delete enough to pass the end | the index runs off the list, which reads as a finished series: rides are named normally, and appending fewer entries than the position does not revive it |
+| rename the franchise | the name keys the position, so the series starts again at zero |
+| remove the franchise | it stops being read, not deleted — re-adding the same name resumes where it left off |
+
+The last row is worth knowing in both directions. Re-adding a franchise under its old name picks
+the rotation up where it stopped, which is usually what you want; to start it over instead, set
+that `position` document to `0`.
+
+`FranchisePosition` returns `0` for a franchise never used and for one that does not exist, and
+those two cases are deliberately indistinguishable — which is what makes removing one safe.
+
+`AdvanceFranchisePast` takes the index of the entry that was used and moves the position to
+`index + 1`, in one transaction, so the store decides the number rather than a caller reading,
+adding one and writing back. The index rather than a step, because the rotation steps over
+reserved entries. The move is monotonic — a lower index leaves the position alone — so a replay
+cannot hand out a title the series has already spent.
 
 Franchises live in the athlete's Firestore configuration document, one document per athlete in
 the `config` collection keyed by athlete ID. Adding one is an edit to that document — no release,
@@ -566,16 +625,19 @@ The document's shape:
       "name": "silver-surfer",
       "sport_types": ["GravelRide", "Ride"],
       "gear_name": "Silver Surfer",
-      "titles": ["Herald of Galactus", "The Power Cosmic"]
+      "titles": ["Herald of Galactus", "The Power Cosmic", "Rise of the Silver Surfer"],
+      "reserved": ["Rise of the Silver Surfer"]
     }
   ],
   "updated_at": "2026-08-21T12:00:00Z"
 }
 ```
 
-`sport_types` empty means any sport; `gear_name` empty means any bike. The first matching
-franchise wins, so order is precedence. A franchise with no `name` is discarded: the name keys
-the stored position, and an empty one would store it under an empty document ID.
+`sport_types` empty means any sport; `gear_name` empty means any bike. `reserved` names entries of
+`titles` the rotation never offers, matched case-insensitively and trimmed; absent means nothing
+is reserved, and a reserved title that is not in `titles` is inert. The first matching franchise
+wins, so order is precedence. A franchise with no `name` is discarded: the name keys the stored
+position, and an empty one would store it under an empty document ID.
 
 Four states, and they are not the same:
 
@@ -597,12 +659,32 @@ To add one:
    athlete back to the first title.
 2. Add the entry to the document, in the Firestore console or through the REST API — `gcloud`
    has no command for editing documents, only for import, export and bulk delete. The service
-   reads the document once per process, so a running instance picks the change up on its next
-   cold start — which, scaling to zero, is the next sweep.
-3. **If some entries have already been used by hand**, either leave those titles out of `titles`
-   (what the shipped Pink Panther profile does — the three films already used are simply absent),
-   or seed the position. The position lives in `franchise/{athleteID}-{name}` as a single
-   `position` integer, and setting it to the number already used is the whole of it.
+   reads the document once per process, so the change takes effect at the next **cold start**.
+   `min_instance_count = 0` allows scaling to zero but does not promise it between sweeps five
+   minutes apart — Cloud Run keeps an idle instance for as long as it likes — so the next sweep
+   may well still be the old process with the old configuration. Do not force it with an
+   out-of-band `gcloud run services update`: that creates a revision Terraform did not describe.
+   Check instead — the process says which answer it got when it first needed one:
+
+   ```sh
+   gcloud logging read 'resource.type="cloud_run_revision" AND
+     resource.labels.service_name="titelheld" AND
+     (jsonPayload.msg="loaded the athlete configuration"
+      OR jsonPayload.msg="no athlete configuration; using the default franchise profile")' \
+     --project="$PROJECT" --limit=5 --freshness=1h
+   ```
+
+   A line newer than your edit is a process that has read it, and `franchises` on that line is
+   how many series it found — the quickest way to see that a new one arrived.
+3. **If some entries have already been used by hand**, leave those titles out of `titles` — what
+   the shipped Pink Panther profile does, where the four films already used are simply absent.
+   For entries you have walked past but want to keep, list them under `reserved` instead: they
+   stay in the series, in order, and are never offered.
+   Seeding the position also works and is sometimes clearer: it lives in
+   `franchise/{athleteID}-{name}` as a single `position` integer, and setting it to the index the
+   rotation should resume at is the whole of it. That index is **zero-based** — `0` is the first
+   entry of `titles`, so a series to be resumed at the fourth entry gets `3`. Counting from one
+   silently skips a title.
 
 **Still shipped in code:** the *default profile* — what applies when the document is absent or
 cannot be read. Tiers,

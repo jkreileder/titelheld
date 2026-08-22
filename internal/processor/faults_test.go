@@ -338,14 +338,14 @@ func (f *faultyStore) FranchisePosition(
 	return f.Store.FranchisePosition(ctx, athleteID, franchise)
 }
 
-func (f *faultyStore) AdvanceFranchise(
-	ctx context.Context, athleteID int64, franchise string,
+func (f *faultyStore) AdvanceFranchisePast(
+	ctx context.Context, athleteID int64, franchise string, index int,
 ) (int, error) {
 	if f.advanceFranchiseErr != nil {
 		return 0, f.advanceFranchiseErr
 	}
 
-	return f.Store.AdvanceFranchise(ctx, athleteID, franchise)
+	return f.Store.AdvanceFranchisePast(ctx, athleteID, franchise, index)
 }
 
 // None of the extras may cost a title.
@@ -413,10 +413,9 @@ func TestAnExhaustedFranchiseStopsApplying(t *testing.T) {
 	h.strava.activity.GearID = "b1234567"
 
 	// Walk the whole series.
-	for range len(naming.DefaultProfile()[0].Titles) {
-		if _, err := h.store.AdvanceFranchise(t.Context(), 4242, "pink-panther"); err != nil {
-			t.Fatalf("AdvanceFranchise: %v", err)
-		}
+	last := len(naming.DefaultProfile()[0].Titles) - 1
+	if _, err := h.store.AdvanceFranchisePast(t.Context(), 4242, "pink-panther", last); err != nil {
+		t.Fatalf("AdvanceFranchisePast: %v", err)
 	}
 
 	h.enqueue(t, "create")
