@@ -13,12 +13,17 @@ locals {
   # owns it from then on, which is what the ignore_changes below is for.
   placeholder_image = "us-docker.pkg.dev/cloudrun/container/hello"
 
-  # One instance, said once. The service keeps state that is correct only
-  # because there is a single container — the in-process OAuth state map, the
-  # first-bind lock, token-refresh serialization and the sweep lock — and the
-  # binary refuses to start unless it is told the ceiling it is running under.
-  # Both sides read this local, so the platform limit and what the container
-  # believes cannot drift apart; see config.RequiredMaxInstances.
+  # One instance, said once. The service keeps state that is correct only while
+  # one instance serves — the in-process OAuth state map, the first-bind lock,
+  # token-refresh serialization and the sweep lock — and the binary refuses to
+  # start unless it is told the ceiling it is running under. Both sides read
+  # this local, so the platform limit and what the container believes cannot
+  # drift apart.
+  #
+  # The ceiling is per revision, so it does not make the process a singleton:
+  # a rolling deploy or a traffic split has two revisions serving at once, and
+  # each of their instances reads the same 1. See config.RequiredMaxInstances
+  # for what that leaves exposed and why it is accepted here.
   max_instances = 1
 
   sweep_path = "/sweep/${random_password.sweep_path.result}"
@@ -82,7 +87,8 @@ resource "google_cloud_run_v2_service" "this" {
       # The scaling ceiling above, told to the container that depends on it.
       # The binary refuses to start without it, so a revision deployed against
       # infrastructure that predates this contract fails readiness and the
-      # previous revision keeps serving.
+      # previous revision keeps serving. It reports the configured ceiling, not
+      # a guarantee that no other instance is running.
       env {
         name  = "MAX_INSTANCES"
         value = tostring(local.max_instances)

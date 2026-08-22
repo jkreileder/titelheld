@@ -22,10 +22,13 @@
   defaults to on. `MAX_INSTANCES` is parsed here too and is *required* to
   serve: it must be `1`, because four pieces of in-process state - the OAuth
   state map, the first-bind lock, token-refresh serialization and the sweep
-  lock - are correct only with one container. Terraform feeds the same local
-  to `max_instance_count` and to the variable, so the ceiling and what the
-  binary believes cannot drift. An import does not require it: it is a
-  deliberate second process that touches none of the four.
+  lock - are correct only while one instance serves. Terraform feeds the same
+  local to `max_instance_count` and to the variable, so the ceiling and what
+  the binary believes cannot drift. It is a deployment check and not a mutex:
+  the ceiling is per revision, so a rolling deploy or a traffic split has two
+  instances that each read `1` - `config.RequiredMaxInstances` says what that
+  leaves exposed. An import does not require it: it is a deliberate second
+  process that touches none of the four.
 - `internal/strava/` is the only package that talks to Strava: OAuth
   (`oauth.go`), the auto-refreshing token source (`tokensource.go`), the HTTP
   client with rate-limit accounting and 429 backoff (`client.go`), and the

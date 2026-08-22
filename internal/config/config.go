@@ -178,7 +178,7 @@ const (
 // RequiredMaxInstances is the only value this service will start with.
 //
 // Not a tuning knob: four pieces of state live in the process and are correct
-// only because there is exactly one of it.
+// only when one instance is serving.
 //
 //   - [server.Server.states] holds the OAuth state parameters this process
 //     issued. A second instance would reject a callback it did not issue,
@@ -197,6 +197,23 @@ const (
 // Cloud Run is told `max_instance_count = 1` in Terraform; this variable is
 // how the binary learns what it was told, and refusing to start without it is
 // how the two stay in step.
+//
+// What this does NOT establish is that exactly one process exists. The ceiling
+// is per revision, so two revisions serving at once — the overlap during a
+// rolling deploy, or a deliberate traffic split — are two instances that each
+// read MAX_INSTANCES=1 and each start happily. Cloud Run also documents
+// running briefly above a configured maximum. So this is a deployment check:
+// it catches a service scaled past one, and a container running against
+// infrastructure that never set the ceiling. It is not a mutex.
+//
+// The exposure that leaves is bounded and known. A deploy overlap is seconds
+// long and the scheduler is paused, so a sweep is a manual act that does not
+// coincide with one; the authorization flow is a one-time bootstrap whose
+// failure mode is a rejected callback and a retry. Token refresh is the one
+// that could bite unattended — two processes refreshing invalidate each
+// other, and the athlete reauthorizes. Making that safe across instances is a
+// store-level change (a compare-and-set on the token document), and it is not
+// this constant's job to pretend otherwise.
 const RequiredMaxInstances = "1"
 
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.
@@ -313,6 +330,10 @@ func load(getenv func(string) string, serving bool) (Config, error) {
 	// no HTTP, completes no authorization flow and runs no sweep. Requiring
 	// the variable there would mean inventing a value to satisfy a check that
 	// is not about it.
+	//
+	// A passing check means the ceiling is configured, not that this process
+	// is alone; see [RequiredMaxInstances] for what a revision overlap still
+	// permits.
 	if serving {
 		if err := checkMaxInstances(getenv(EnvMaxInstances)); err != nil {
 			errs = append(errs, err)

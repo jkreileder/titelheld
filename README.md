@@ -250,6 +250,20 @@ Each is a mutex or a map, and none of them survives a second container. Terrafor
 platform limit and what the container believes cannot drift apart. The refusal reports what it
 saw — unset and wrong need different fixes.
 
+**What the check proves, and what it does not.** The ceiling is per *revision*. Two revisions
+serving at once — the overlap during a rolling deploy, or a deliberate traffic split — are two
+instances that each read `MAX_INSTANCES=1` and each start happily; Cloud Run also documents
+running briefly above a configured maximum. So this is a deployment check, not a mutex: it
+catches a service scaled past one, and a container running against infrastructure that never set
+the ceiling.
+
+The exposure that leaves is bounded and known. A deploy overlap lasts seconds, and with the
+scheduler paused a sweep is a manual act that does not coincide with one; the authorization flow
+is a one-time bootstrap whose failure mode is a rejected callback and a retry. Token refresh is
+the one that could bite unattended — two processes refreshing invalidate each other and the
+athlete reauthorizes. Making that safe across instances is a compare-and-set on the token
+document, and it is not built.
+
 **Apply the Terraform before releasing a build that carries this contract.** A revision started
 against infrastructure that predates it fails readiness, `gcloud run deploy` fails with it, and
 the previous revision keeps serving — visible and safe, but a failed release rather than a
