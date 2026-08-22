@@ -861,13 +861,25 @@ Listing and deleting take the client credentials, not a token:
 curl -s -G https://www.strava.com/api/v3/push_subscriptions \
   --data-urlencode "client_id=$(sec strava-client-id)" \
   --data-urlencode "client_secret=$(sec strava-client-secret)"
-
-curl -s -X DELETE "https://www.strava.com/api/v3/push_subscriptions/367703" \
-  -d "client_id=$(sec strava-client-id)" \
-  -d "client_secret=$(sec strava-client-secret)"
 ```
 
-Delete returns `204` and no body. There is **one subscription per application**: creating a second
+Deleting takes the id from that listing rather than from this page — recreating after a rotation
+mints a new one, and a runbook that hard-codes the old id deletes nothing:
+
+```sh
+SUB=$(curl -s -G https://www.strava.com/api/v3/push_subscriptions \
+  --data-urlencode "client_id=$(sec strava-client-id)" \
+  --data-urlencode "client_secret=$(sec strava-client-secret)" | jq -r '.[0].id')
+
+curl -s -X DELETE -G "https://www.strava.com/api/v3/push_subscriptions/${SUB}" \
+  --data-urlencode "client_id=$(sec strava-client-id)" \
+  --data-urlencode "client_secret=$(sec strava-client-secret)"
+```
+
+The credentials go in the query string: Strava reads them as parameters, and `curl -d` would send
+them as a request body it ignores. Delete returns `204` and no body.
+
+There is **one subscription per application**: creating a second
 fails while the first exists, so changing the callback URL means deleting and recreating. That is
 also what to do after a `webhook-path-secret` rotation — the old URL stops existing the moment the
 new secret is deployed, and Strava will keep posting to it until told otherwise.
