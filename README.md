@@ -313,6 +313,11 @@ and is required only when that is selected.
 | `BANNED_WORDS`           | no           | shipped list         | Comma-separated; rejected in a title          |
 | `MACHINE_TITLE_PATTERNS` | no           | Xert's pattern       | Newline-separated regexes; see below          |
 
+`BANNED_WORDS` **replaces** the shipped list rather than adding to it, so removing a word means
+naming the ones you keep. Unset means the shipped list — `Epic`, `Crushing`, `Beast` — which is
+what a deployment gets, since Terraform does not set the variable. There is no environment
+spelling for "ban nothing": set-but-empty and unset are the same string.
+
 `MACHINE_TITLE_PATTERNS` is newline-separated rather than comma-separated because the entries
 are regular expressions, and a comma inside `{1,3}` is not a separator.
 

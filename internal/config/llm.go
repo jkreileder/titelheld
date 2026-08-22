@@ -76,8 +76,11 @@ type LLM struct {
 	VertexProject  string
 	VertexLocation string
 
-	// BannedWords are rejected in a generated title. Empty means the shipped
-	// list.
+	// BannedWords are rejected in a generated title. Empty here means the
+	// environment named none; the shipped list is substituted where the
+	// validator is built, the same way an empty MachineTitlePatterns falls
+	// back to the shipped set. This package reports what the environment
+	// said and resolves no defaults from the naming layer.
 	BannedWords []string
 
 	// MachineTitlePatterns are the titles another tool wrote that may be
