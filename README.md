@@ -1247,6 +1247,11 @@ loudly in the log. Without it, that release fails before deploying anything. A r
 variable rather than something on the tag: it is visible, dated and revocable, and a tag is
 none of those.
 
+Acknowledgement covers writes being **on**, not any reading at all. `DRY_RUN` must come back as
+`1` or `0`; anything else — empty, a shape gcloud changed, a field that moved — fails the release
+whether or not the variable is set. Otherwise setting it once would turn the gate off
+permanently, including for the failure the gate exists to catch.
+
 ## Attribution
 
 Titelheld is an independent integration, **"Titelheld for Strava"**. It is not endorsed by,

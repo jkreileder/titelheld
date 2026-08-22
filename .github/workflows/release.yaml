@@ -292,12 +292,30 @@ jobs:
             exit 0
           fi
 
+          # Acknowledgement covers writes being ON, not any value at all. An
+          # empty or unrecognized reading means this job cannot tell what the
+          # service is set to — the gcloud output shape changed, the field
+          # moved — and "cannot tell" must fail whether or not somebody has
+          # acknowledged writes. Otherwise setting the variable once turns the
+          # gate off permanently, including for the failure it exists to
+          # catch.
+          case "$dry_run" in
+            "['0']" | 0) writes_on=yes ;;
+            *) writes_on=no ;;
+          esac
+
+          if [ "$writes_on" = "no" ]; then
+            echo "::error::cannot read DRY_RUN off the service: expected 1 or 0, got '${dry_run}'."
+            echo "::error::No revision has been deployed. This job cannot show whether the deploy would be able to write."
+            exit 1
+          fi
+
           if [ "$WRITES_ACKNOWLEDGED" = "1" ]; then
             echo "::warning::the running service has DRY_RUN='${dry_run}' and WRITES_ACKNOWLEDGED=1 is set: this release deploys a revision that CAN write to Strava."
             exit 0
           fi
 
-          echo "::error::the service this would deploy to does not have DRY_RUN=1 (got '${dry_run}'), and no revision has been deployed."
+          echo "::error::the service this would deploy to has writes enabled (DRY_RUN='${dry_run}'), and no revision has been deployed."
           echo "::error::Enabling writes is a Terraform change plus the repository variable WRITES_ACKNOWLEDGED=1. Releasing is not how writes get turned on."
           exit 1
 
@@ -348,7 +366,15 @@ jobs:
             exit 0
           fi
 
-          if [ "$WRITES_ACKNOWLEDGED" = "1" ]; then
+          # Same rule as the gate: acknowledgement covers writes being on, and
+          # nothing else. An unreadable value here is a red build even with
+          # the variable set.
+          case "$dry_run" in
+            "['0']" | 0) writes_on=yes ;;
+            *) writes_on=no ;;
+          esac
+
+          if [ "$writes_on" = "yes" ] && [ "$WRITES_ACKNOWLEDGED" = "1" ]; then
             echo "::warning::the deployed service has DRY_RUN='${dry_run}': it CAN write to Strava, as WRITES_ACKNOWLEDGED=1 acknowledged."
             exit 0
           fi
