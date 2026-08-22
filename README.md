@@ -594,7 +594,7 @@ means:
 | append entries | nothing; the series simply has more to go |
 | insert, delete or reorder **after** the position | nothing; the rotation has not reached them |
 | insert, delete or reorder **at or before** it | the index names a different entry — review it |
-| delete enough to pass the end | the index runs off the list, which reads as a finished series: rides are named normally |
+| delete enough to pass the end | the index runs off the list, which reads as a finished series: rides are named normally, and appending fewer entries than the position does not revive it |
 | rename the franchise | the name keys the position, so the series starts again at zero |
 | remove the franchise | it stops being read, not deleted — re-adding the same name resumes where it left off |
 
