@@ -161,17 +161,23 @@ are never touched.
 Beyond the ride itself, three things — all of them derived, none of them committed to this
 repository.
 
-**The last 25 titles a model wrote.** The prompt forbids repeating any of them and invites
-referring back. They come from the named log, filtered to the ones a model produced: a commute
-or errand template is meant to repeat, so listing it both forbids the right answer for the next
-commute and crowds the real titles out of a list of twenty-five.
+**The last 25 titles worth not repeating.** The prompt forbids repeating any of them and
+invites referring back. They come from the named log with one kind dropped: a commute or errand
+template is meant to repeat, so listing it both forbids the right answer for the next commute and
+crowds the real titles out of a list of twenty-five. Everything else stays, imported titles
+included — a title the athlete gave a ride years ago is one to avoid repeating, whoever wrote it.
 
-**Few-shot examples in the athlete's own style.** Six of them, rebuilt at prompt time: the
-named log keeps each title and the language it was written in, and the ride that produced it is
-re-read from Strava to describe the situation. Deriving them costs a read per example, so the
-result is cached against the history it came from — the history only changes when something is
-named, so a sweep repeating every five minutes pays once. Before anything has been named, a
-small synthetic set ships as the cold start.
+**Few-shot examples, from titles this service wrote and no others.** Six of them, rebuilt at
+prompt time: the named log keeps each title and the language it was written in, and the ride that
+produced it is re-read from Strava to describe the situation. Only rows marked `service` qualify
+— not a filter over titles that look unsuitable, but a source an imported row cannot carry, so a
+decade of the athlete's own shorthand is *structurally* unable to teach style, rather than
+pattern-matched out of it. That shorthand is bare place names, private jokes and whatever a tool
+left behind; six of them would teach a model to answer with a bare town name. Until this service
+has named
+something, the synthetic set is what the prompt carries — that is its purpose, not a stopgap.
+Deriving an example costs a Strava read, so each is cached against the activity it describes: the
+history only changes when something is named, so a sweep repeating every five minutes pays once.
 
 **The next entry of a franchise**, when the ride qualifies — see [Franchises](#franchises). The
 model may adapt the wording; it may not skip the position.
@@ -194,9 +200,11 @@ rather than hashing a sequence, which is tolerant by construction and direction-
 sets are unordered. Nothing in the service does this today, and no title can carry a route
 callback until it does.
 
-**The history has to be seeded once.** Nothing has been named yet, so the recent-titles list and
-the derived examples are empty until the athlete's existing Strava activities are imported —
-see [Seeding the title history](#seeding-the-title-history).
+**The history has to be seeded once.** Nothing has been named yet, so the recent-titles list is
+empty until the athlete's existing Strava activities are imported — see
+[Seeding the title history](#seeding-the-title-history). The examples are unaffected either way:
+they come only from titles this service wrote, so the synthetic set stands in until it has
+written one.
 
 ## Configuration
 
@@ -461,9 +469,11 @@ put a coordinate.
 
 ## Seeding the title history
 
-The prompt asks a model not to repeat a recent title and shows it examples in the athlete's own
-style. Both read the named log, which starts empty — so a fresh deployment names from a synthetic
-example set and an empty `RECENT` list until the history is seeded from Strava.
+The prompt asks a model not to repeat a recent title, and the `RECENT` list it reads that from
+is the named log — which starts empty, so a fresh deployment has nothing to avoid repeating until
+the history is seeded from Strava. (The examples are a separate matter: they come only from titles
+this service wrote, so seeding does not affect them — see
+[What the prompt carries](#what-the-prompt-carries).)
 
 `cmd/titelheld-import` does that. It is a one-shot run by hand, not a route on the service: every
 endpoint added to a service `allUsers` can invoke is another thing that has to authenticate
@@ -500,9 +510,9 @@ Among rides, four kinds are skipped:
 - **Strava's own defaults**, because a default is not a title. They repeat by design, so listing
   them under "never repeat" forbids the right answer.
 - **Recognized machine titles**, which are the style this service exists to replace.
-- **Anything Zwift or Xert titled** — a `Zwift - …` prefix or a suffix of `" - Xert"`. That is the tool
-  talking, whatever the sport type says: a Zwift session recorded by a head unit arrives as a
-  plain `Ride`.
+- **Anything Zwift or Xert titled** — a `Zwift - …` prefix or a suffix of `" - Xert"`. That is
+  the tool talking, whatever the sport type says: a Zwift session recorded by a head unit arrives
+  as a plain `Ride`.
 - **This service's own templates**, the commute pair and the errand pool. They are the correct
   title for those rides and are meant to repeat, which is the opposite of a style.
 

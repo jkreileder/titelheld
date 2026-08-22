@@ -237,9 +237,10 @@ type Naming struct {
 	// and a test can say what "newest" means.
 	At time.Time
 
-	// Source says how the title was produced: [SourceLLM] for one a model
-	// wrote, [SourceTemplate] for a commute or errand name that came from
-	// configuration.
+	// Source says how the title was produced: [SourceService] for one this
+	// service's naming pipeline wrote, [SourceTemplate] for a commute or errand
+	// name that came from configuration, [SourceImported] for one seeded from
+	// the athlete's Strava past.
 	//
 	// Recorded because the two are not interchangeable to a reader of the
 	// history. This athlete commutes, so a working week fills the newest
@@ -251,12 +252,22 @@ type Naming struct {
 
 // How a recorded title was produced.
 const (
-	SourceLLM      = "llm"
+	// SourceService is a title this service's naming pipeline produced — the
+	// only source a few-shot example may come from. A template is written by
+	// this service too and is deliberately not this: it is a fixed string
+	// chosen from a list, and teaching a model to reproduce it would teach it
+	// to call a Saturday gravel ride "Zur Arbeit".
+	SourceService  = "service"
 	SourceTemplate = "template"
 
 	// SourceImported is a title the athlete already had, seeded from their
-	// Strava history rather than written here. It counts as their style — it
-	// is their style — so it feeds the prompt like a model-written one.
+	// Strava history rather than written here.
+	//
+	// It feeds the no-repeat list and nothing else. Imported rows never teach
+	// style: a decade of a person's own shorthand is bare town names, private
+	// jokes and whatever a tool left behind, and an example set built from it
+	// teaches a model to answer with the name of a town. That the athlete wrote
+	// it makes it theirs; it does not make it what this service should imitate.
 	SourceImported = "imported"
 )
 

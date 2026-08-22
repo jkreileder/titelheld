@@ -53,11 +53,13 @@ func (p *Processor) promptContext(
 	}
 
 	promptContext := naming.Context{
-		// "Never repeat a title listed under RECENT" is aimed at the ones a
-		// model invented. A commute template is meant to repeat, and listing
-		// it both forbids the right answer and crowds the real titles out of
-		// a list of twenty-five.
-		RecentTitles: titlesOf(llmTitlesOnly(history)),
+		// "Never repeat a title listed under RECENT" is aimed at every title
+		// that was a choice — this service's own and the athlete's imported
+		// past alike, because repeating either is the thing to avoid. Only a
+		// commute template is dropped: it is meant to repeat, so listing it
+		// forbids the right answer and crowds the real titles out of a list of
+		// twenty-five.
+		RecentTitles: titlesOf(worthNotRepeating(history)),
 		Examples:     p.examplesFrom(ctx, history, logger),
 	}
 
@@ -237,13 +239,15 @@ func fromStored(stored []store.Franchise) []naming.Franchise {
 func (p *Processor) examplesFrom(
 	ctx context.Context, history []store.NamedTitle, logger *slog.Logger,
 ) []naming.Example {
-	// Only titles a model wrote. A commute template is the same two strings
-	// every working day, and six of them would teach the model to name a
-	// gravel ride "Zur Arbeit".
-	history = llmTitlesOnly(history)
+	// Only what this service wrote itself. Not a filter over titles that might
+	// be unsuitable — a source no imported row can carry, so a decade of the
+	// athlete's own shorthand is structurally unable to become an example
+	// rather than pattern-matched out of one.
+	history = serviceWritten(history)
 
 	if len(history) == 0 {
-		// Nothing written yet. The synthetic set is what it is for.
+		// Nothing written yet. The synthetic set is what it is for, and it is
+		// what the prompt carries until this service has named something.
 		return naming.SyntheticExamples()
 	}
 
@@ -332,16 +336,39 @@ func exampleLanguage(language string) naming.Language {
 	}
 }
 
-// llmTitlesOnly keeps the titles a model wrote.
+// worthNotRepeating keeps the titles the RECENT list is about.
+//
+// Everything except a template: a title this service invented and a title the
+// athlete gave a ride years ago are both worth not repeating, and a commute
+// name is not.
 //
 // Entries recorded before the source field existed have none, and are kept:
 // there are none in production, and treating an unknown source as a template
-// would silently empty the history.
-func llmTitlesOnly(history []store.NamedTitle) []store.NamedTitle {
+// would silently empty the list.
+func worthNotRepeating(history []store.NamedTitle) []store.NamedTitle {
 	kept := make([]store.NamedTitle, 0, len(history))
 
 	for _, entry := range history {
 		if entry.Source != store.SourceTemplate {
+			kept = append(kept, entry)
+		}
+	}
+
+	return kept
+}
+
+// serviceWritten keeps the titles this service's naming pipeline produced.
+//
+// The opposite default to [worthNotRepeating], and deliberately so: this one
+// admits a source rather than excluding one, so a row whose source is unknown,
+// misspelled, or added later is not an example. An example teaches the model
+// what a title should sound like, and the cost of a wrong one is every title
+// afterwards.
+func serviceWritten(history []store.NamedTitle) []store.NamedTitle {
+	kept := make([]store.NamedTitle, 0, len(history))
+
+	for _, entry := range history {
+		if entry.Source == store.SourceService {
 			kept = append(kept, entry)
 		}
 	}
