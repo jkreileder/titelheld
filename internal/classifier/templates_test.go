@@ -48,7 +48,10 @@ func TestTemplateTitlesFollowTheConfiguration(t *testing.T) {
 func TestTheErrandPoolCannotBeReorderedFromOutside(t *testing.T) {
 	t.Parallel()
 
-	before := classifier.DefaultErrandTitles()
+	// Cloned, or this test cannot see the defect it exists for: if
+	// DefaultErrandTitles hands back its own slice, reversing the second copy
+	// reverses this one too and the comparison is a slice against itself.
+	before := slices.Clone(classifier.DefaultErrandTitles())
 
 	scrambled := classifier.DefaultErrandTitles()
 	slices.Reverse(scrambled)
