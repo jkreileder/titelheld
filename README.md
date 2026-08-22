@@ -1018,11 +1018,78 @@ also what to do after a `webhook-path-secret` rotation — the old URL stops exi
 new secret is deployed, and Strava will keep posting to it until told otherwise.
 
 Events accumulate in the `pending` queue from the moment the subscription exists. Nothing drains
-them until the Cloud Scheduler job is unpaused or a sweep is triggered by hand:
+them until the Cloud Scheduler job is unpaused or a sweep is triggered by hand.
+
+Triggering one by hand is three commands, not one. `gcloud scheduler jobs run` refuses a paused
+job:
+
+```text
+FAILED_PRECONDITION: Job.state must be ENABLED for RunJob
+```
+
+So the job is resumed, run, and paused again — and the pause happens whatever the run did, or a
+failed dispatch leaves the job firing every five minutes:
 
 ```sh
-gcloud scheduler jobs run titelheld-sweep --location="$REGION" --project="$PROJECT"
+J="titelheld-sweep --location=$REGION --project=$PROJECT"
+
+if gcloud scheduler jobs resume $J; then
+  gcloud scheduler jobs run $J && dispatched=yes || dispatched=no
+  gcloud scheduler jobs pause $J || echo "STILL RUNNING: pause it by hand" >&2
+  [ "$dispatched" = yes ] || echo "the sweep was never dispatched" >&2
+else
+  echo "resume failed; the job is still paused and nothing ran" >&2
+fi
+
+gcloud scheduler jobs describe $J --format='value(state)'    # want PAUSED
 ```
+
+No `exit` and no `set -e`: this is meant to be pasted into the shell you are sitting in, where
+`exit` closes the terminal and an errexit would skip the `pause` on a failed `run` — leaving the
+job firing every five minutes, which is the one outcome worth writing the block around. Everything
+after the `resume` runs, and each step says what went wrong.
+
+`$J` is deliberately unquoted — it is three arguments, and neither a region nor a project ID can
+contain a space. Run the lines one at a time if you prefer; only the order matters, and that the
+`pause` runs whatever the `run` did.
+
+A dispatch that succeeded says nothing about what the sweep did — Cloud Scheduler reports that it
+sent the request, not what came back. The service's own log lines are the answer:
+
+```sh
+gcloud logging read 'resource.type="cloud_run_revision" AND
+  resource.labels.service_name="titelheld" AND
+  (jsonPayload.msg="sweep complete" OR jsonPayload.msg="sweep rejected"
+   OR jsonPayload.msg="sweep failed"
+   OR jsonPayload.msg="sweep already running; skipping this fire")' \
+  --project="$PROJECT" --limit=10 --freshness=10m
+```
+
+Scoped to this service and to the last ten minutes, so what comes back is this dispatch rather
+than the last time anything swept. `sweep already running; skipping this fire` is in there
+because it is a real answer for a manual run: the scheduled tick got there first, your request
+was answered `200` without starting a second sweep, and the `sweep complete` line next to it
+belongs to that tick rather than to you.
+
+`sweep complete` carries the counts, and the sweep drained the queue only if `failed` is zero
+**and** `cancelled` is false. A cancelled sweep is a `200` with a clean `failed` count: Cloud Run
+took the instance away and the sweep stopped at an activity boundary, leaving the rest queued for
+a run that is not coming while the job is paused. `sweep rejected` is the `401` — it names the
+claim that did not check out, and an audience mismatch is silent in every other place you could
+look: Cloud Scheduler reports a delivered request, and the response body is the bare word
+`unauthorized`. `sweep failed` is the `500`, and it means no sweep happened at all: the queue
+itself could not be read, so nothing was fetched, named or dequeued. Find out why before running
+it again — everything is still queued, so nothing is lost by waiting.
+
+**There is a race, and it is deliberate.** While the job is resumed its own schedule can fire —
+five minutes is the interval, the three commands take seconds, so it usually does not, but it
+can. A fire that lands while a sweep is running is answered `already running` without starting a
+second one; one that lands after it is a second full sweep — the queue read again, activities
+fetched and classified again, the model called again for each one still due. Under `DRY_RUN=1`
+none of that reaches Strava and every named activity stays queued, so what it costs is duplicated
+work and a duplicated log line. It stops being free the day writes are enabled: a tick between
+`resume` and `pause` would then rename activities, and the sequence needs reconsidering rather
+than repeating.
 
 ## Cutting a release
 
