@@ -231,22 +231,40 @@ jobs:
       # Only the image is set here. Everything else about the service — the
       # service account, the scaling bounds, the environment, the secret
       # references — belongs to Terraform, which ignores the image in return.
-      - name: Deploy the revision
+      # The writes gate, before the deploy rather than after it.
+      #
+      # Releasing a version must never be the thing that turns writes on:
+      # there is no version number that means "now write to Strava". This used
+      # to be checked after `gcloud run deploy`, which made it a report of
+      # something that had already happened — the revision was live and naming
+      # by the time the job went red.
+      #
+      # The existing service predicts the new revision. `gcloud run deploy`
+      # here sets the image and nothing else; every environment variable
+      # belongs to Terraform, which ignores the image in return. So a revision
+      # deployed by this job inherits the environment of the one running now,
+      # and reading it beforehand answers the question this gate is asking.
+      #
+      # The escape hatch is a repository variable, not a flag on the tag: the
+      # day writes are switched on, DRY_RUN=0 will be a Terraform change that
+      # was reviewed and applied, and WRITES_ACKNOWLEDGED=1 is the second,
+      # separate act that says the release is meant to carry it. Setting a
+      # repository variable is visible, dated and revocable; a tag is not.
+      - name: Check the service the deploy will land on
         env:
           PROJECT: ${{ vars.GCP_PROJECT }}
           REGION: ${{ vars.GCP_REGION }}
-          IMAGE: ${{ needs.image.outputs.image }}
-          DIGEST: ${{ needs.image.outputs.digest }}
-          TAG: ${{ github.ref_name }}
+          WRITES_ACKNOWLEDGED: ${{ vars.WRITES_ACKNOWLEDGED }}
         run: |
           set -euo pipefail
-
-          echo "Deploying ${IMAGE}@${DIGEST} (tag ${TAG})."
 
           # `gcloud run deploy` creates the service when it cannot find one,
           # so a renamed service or a wrong region would quietly produce a
           # second, Terraform-less service with the default compute identity
-          # and no DRY_RUN. Require the managed service to exist first.
+          # and no DRY_RUN. Require the managed service to exist first — and
+          # do it here rather than in the deploy step, because the read below
+          # would otherwise fail first and report gcloud's raw error instead
+          # of what to do about it.
           #
           # Report what gcloud said rather than naming a cause: "missing" and
           # "not allowed to look" fail this check identically, and the first
@@ -259,6 +277,45 @@ jobs:
             exit 1
           fi
 
+          # Empty when the variable is absent, which fails the comparison
+          # below and is the right way round: unreadable and unset both mean
+          # "this job cannot show that writes are off".
+          dry_run=$(gcloud run services describe titelheld \
+            --project="$PROJECT" --region="$REGION" \
+            --format='value(spec.template.spec.containers[0].env.filter("name:DRY_RUN").extract("value"))')
+
+          # gcloud renders a repeated field as ['1'] and a scalar as 1
+          # depending on the version, so both spellings are accepted; anything
+          # else, including the empty string, is not.
+          if [ "$dry_run" = "['1']" ] || [ "$dry_run" = "1" ]; then
+            echo "DRY_RUN is on; the revision this deploys cannot write to Strava."
+            exit 0
+          fi
+
+          if [ "$WRITES_ACKNOWLEDGED" = "1" ]; then
+            echo "::warning::the running service has DRY_RUN='${dry_run}' and WRITES_ACKNOWLEDGED=1 is set: this release deploys a revision that CAN write to Strava."
+            exit 0
+          fi
+
+          echo "::error::the service this would deploy to does not have DRY_RUN=1 (got '${dry_run}'), and no revision has been deployed."
+          echo "::error::Enabling writes is a Terraform change plus the repository variable WRITES_ACKNOWLEDGED=1. Releasing is not how writes get turned on."
+          exit 1
+
+      - name: Deploy the revision
+        env:
+          PROJECT: ${{ vars.GCP_PROJECT }}
+          REGION: ${{ vars.GCP_REGION }}
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          echo "Deploying ${IMAGE}@${DIGEST} (tag ${TAG})."
+
+          # The step above read this service and refused to continue if it
+          # could not, so `gcloud run deploy` cannot reach the case where it
+          # creates a service instead of updating one.
           gcloud run deploy titelheld \
             --project="$PROJECT" \
             --region="$REGION" \
@@ -269,6 +326,7 @@ jobs:
         env:
           PROJECT: ${{ vars.GCP_PROJECT }}
           REGION: ${{ vars.GCP_REGION }}
+          WRITES_ACKNOWLEDGED: ${{ vars.WRITES_ACKNOWLEDGED }}
         run: |
           set -euo pipefail
 
@@ -276,20 +334,27 @@ jobs:
             --project="$PROJECT" --region="$REGION" \
             --format='value(status.url, status.latestReadyRevisionName)'
 
-          # DRY_RUN is Terraform's to set, and it is set to 1. Releasing a
-          # version must never be the thing that turns writes on — there is no
-          # version number that means "now write to Strava" — so this fails the
-          # deploy if it ever is.
+          # The same read again, now against the revision that was deployed.
+          # The gate before the deploy is what prevents a writing revision;
+          # this one checks that the prediction it made was right — that the
+          # environment really did carry over, and that nothing changed the
+          # service out of band while the image was being pushed.
           dry_run=$(gcloud run services describe titelheld \
             --project="$PROJECT" --region="$REGION" \
             --format='value(spec.template.spec.containers[0].env.filter("name:DRY_RUN").extract("value"))')
 
-          if [ "$dry_run" != "['1']" ] && [ "$dry_run" != "1" ]; then
-            echo "::error::the deployed service does not have DRY_RUN=1 (got '${dry_run}')"
-            exit 1
+          if [ "$dry_run" = "['1']" ] || [ "$dry_run" = "1" ]; then
+            echo "DRY_RUN is on; the deployed service cannot write to Strava."
+            exit 0
           fi
 
-          echo "DRY_RUN is on; the deployed service cannot write to Strava."
+          if [ "$WRITES_ACKNOWLEDGED" = "1" ]; then
+            echo "::warning::the deployed service has DRY_RUN='${dry_run}': it CAN write to Strava, as WRITES_ACKNOWLEDGED=1 acknowledged."
+            exit 0
+          fi
+
+          echo "::error::the deployed service does not have DRY_RUN=1 (got '${dry_run}') - the pre-deploy check disagreed, so the service changed underneath this job"
+          exit 1
 
   draft-release:
     name: Create draft release

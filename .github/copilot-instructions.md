@@ -227,7 +227,13 @@ drains it until a sweep is run by hand. The title history is seeded by
   `release.yaml` verifies the tag and the changelog, calls `release-image.yaml`
   to build and attest the image once, deploys that **digest** to Cloud Run
   through Workload Identity Federation - no exported service-account key
-  exists - and fails if the deployed service does not have `DRY_RUN=1`. Build
+  exists. Before deploying it reads `DRY_RUN` off the service the deploy will
+  land on and refuses outright if writes are on: the job sets the image and
+  nothing else, so a new revision inherits the running service's environment
+  and the existing service predicts it. The escape hatch is the repository
+  variable `WRITES_ACKNOWLEDGED=1`, the second deliberate act after the
+  Terraform change that sets `DRY_RUN=0`. A second read after the deploy
+  remains, as a check that the prediction held. Build
   and attest share one reusable file because signed provenance names the
   workflow file, which is what makes the SLSA Build L3 claim.
 - No bot may release. release-please was rejected: its commits go through the

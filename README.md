@@ -1223,10 +1223,29 @@ gh attestation verify \
 
 ### Versions do not turn on writes
 
-`DRY_RUN` is Terraform's to set, and it is set to `1`. The deploy step reads it back from the
-running service afterward and fails the release if it is anything else. There is no version
-number that means *now write to Strava*: turning writes on is a deliberate infrastructure
-change, never a side effect of shipping.
+`DRY_RUN` is Terraform's to set, and it is set to `1`. There is no version number that means
+*now write to Strava*: turning writes on is a deliberate infrastructure change, never a side
+effect of shipping.
+
+The release checks that **before** deploying, not after. It reads `DRY_RUN` off the service the
+deploy will land on and refuses to deploy at all if writes are enabled — which works because
+this job sets the image and nothing else: every environment variable belongs to Terraform, so a
+new revision inherits the environment of the one running now. The check used to run after
+`gcloud run deploy`, which meant the revision was live and naming by the time the job went red.
+A second read after the deploy stays, no longer as the gate but as a check that the prediction
+held.
+
+Turning writes on is therefore two deliberate acts, and the second one is this:
+
+| | |
+| --- | --- |
+| **1. Terraform** | set `DRY_RUN=0` on the service, review it, apply it |
+| **2. Repository variable** | set `WRITES_ACKNOWLEDGED=1` |
+
+With the variable set, a release whose target service has writes enabled proceeds and says so
+loudly in the log. Without it, that release fails before deploying anything. A repository
+variable rather than something on the tag: it is visible, dated and revocable, and a tag is
+none of those.
 
 ## Attribution
 
