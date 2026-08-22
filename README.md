@@ -867,17 +867,25 @@ Deleting takes the id from that listing rather than from this page — recreatin
 mints a new one, and a runbook that hard-codes the old id deletes nothing:
 
 ```sh
-SUB=$(curl -s -G https://www.strava.com/api/v3/push_subscriptions \
+SUB=$(curl -sf -G https://www.strava.com/api/v3/push_subscriptions \
   --data-urlencode "client_id=$(sec strava-client-id)" \
-  --data-urlencode "client_secret=$(sec strava-client-secret)" | jq -r '.[0].id')
+  --data-urlencode "client_secret=$(sec strava-client-secret)" | jq -r '.[0].id // empty')
 
-curl -s -X DELETE -G "https://www.strava.com/api/v3/push_subscriptions/${SUB}" \
+[[ $SUB =~ ^[0-9]+$ ]] || { echo "no subscription to delete"; return 2>/dev/null || exit 1; }
+
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -G \
+  "https://www.strava.com/api/v3/push_subscriptions/${SUB}" \
   --data-urlencode "client_id=$(sec strava-client-id)" \
   --data-urlencode "client_secret=$(sec strava-client-secret)"
 ```
 
+The guard is not ceremony: an empty listing makes `jq` yield nothing and `[]` yields `null`, and
+either would send a `DELETE` to `/push_subscriptions/null` that reports nothing useful. `curl -s`
+alone stays quiet about an HTTP error, hence `-sf` on the read and the status code printed on the
+write — a successful delete is `204` with no body, so the status is the only thing that says so.
+
 The credentials go in the query string: Strava reads them as parameters, and `curl -d` would send
-them as a request body it ignores. Delete returns `204` and no body.
+them as a request body it ignores.
 
 There is **one subscription per application**: creating a second
 fails while the first exists, so changing the callback URL means deleting and recreating. That is
