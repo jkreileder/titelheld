@@ -10,6 +10,54 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.4.0] – 2026-08-22
+
+What the history teaches, and what it only warns about. The first real import put 1400 titles in
+front of the model as the athlete's own style; a quarter of them were another tool talking and
+nineteen of the newest twenty-five were commute templates. Two changes separate the two jobs the
+history does, and the seed was rebuilt on the new rules.
+
+- **Few-shot examples come from titles this service wrote, and from nothing else.** The two
+  lists the prompt builds from the named log used to share one filter, so both dropped templates
+  and kept everything else. That is right for the no-repeat list and wrong for the examples.
+  They are now two filters with opposite defaults: `RECENT` drops templates and keeps the rest,
+  imported rows included, because repeating an old title is exactly what to avoid; `EXAMPLES`
+  admits one source and no other. An imported row cannot carry it, so a decade of the athlete's
+  own shorthand is *structurally* unable to teach style rather than pattern-matched out of it —
+  and a row whose source is unknown or misspelled is not an example either. Until this service
+  has written a title, the synthetic set is what the prompt carries. That is its purpose, not a
+  cold-start stopgap.
+- **The import seeds rides only, and only what the athlete wrote.** `Ride` and `GravelRide`; a
+  run, a walk or a strength session is titled by whatever recorded it and is never named here.
+  Of those rides it skips Strava's defaults and machine titles as before, and now also anything
+  Zwift or Xert titled and this service's own commute and errand templates. The template list is
+  read from the athlete's configuration, so the list a run skips is the list that run would
+  write — rename your commute and *your* names are skipped instead.
+- **Two Xert focus types the pattern did not know.** `Pure Endurance` and `Polar Endurance`,
+  found by the import in titles Xert had written and this service had taken for the athlete's
+  own words. An unrecognized machine title is skipped rather than overwritten, so the cost was a
+  naming rather than a wrong write.
+- **`SourceLLM` is `SourceService`**, stored value included. Nothing had ever been named, so no
+  row carried the old value and no migration was needed.
+
+### Not in this release
+
+- **Strava push subscription.** Still nothing subscribed to the webhook; creating it is the next
+  step.
+- **Route repeats.** Still specified and unbuilt.
+- **The rest of the configuration.** Tiers, geofences, banned words and language preferences are
+  still the defaults shipped in code.
+
+### Upgrading
+
+Nothing to apply: this release changes no infrastructure. The Cloud Scheduler job stays paused
+and `DRY_RUN` stays on.
+
+Re-seed the title history after deploying, if it was seeded before: the rows written by an
+earlier import were selected by the old rules, and `cmd/titelheld-import` leaves an activity
+already in the named log exactly as it is. Deleting the imported rows and re-running is safe for
+as long as nothing has been named — after that it stops being a cleanup.
+
 ## [v0.3.0] – 2026-08-21
 
 Memory and configuration. The prompt now has a past to draw on, and the first piece of naming
@@ -128,6 +176,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.4.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.4.0
 [v0.3.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.3.0
 [v0.2.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.2.0
 [v0.1.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.1.0
