@@ -48,7 +48,12 @@
   hand, not a route: the service is invokable by `allUsers`, so an endpoint
   that exists for a job run once is surface for no reason. Idempotent and
   resumable with no state of its own — an activity already in the named log is
-  left alone.
+  left alone. It seeds rides only, and of those only what the athlete wrote:
+  Strava defaults, machine titles, anything Zwift or Xert titled, and this
+  service's own commute and errand templates are all skipped. The template list
+  is read from the athlete's configuration, so the list a run skips is the list
+  that run would write. None of this widens `MachineTitles` — that set decides
+  what may be *overwritten*, and a Zwift ride keeps its title.
 
 - `internal/naming/` builds the prompt, validates what comes back, and holds
   the two LLM implementations behind one interface it defines itself. No HTTP

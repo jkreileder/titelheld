@@ -79,11 +79,17 @@ func importWith(
 	}
 
 	result, err := importer.Run(ctx, importer.Deps{
-		Activities:    activities,
-		Store:         dataStore,
-		AthleteID:     athleteID,
-		MachineTitles: rules.MachineTitles,
-		Logger:        logger,
+		Activities: activities,
+		Store:      dataStore,
+		AthleteID:  athleteID,
+
+		// Both taken from the athlete's own rules rather than the importer's
+		// defaults, so a configured commute title is skipped by the same list
+		// that would write it.
+		MachineTitles:  rules.MachineTitles,
+		TemplateTitles: rules.TemplateTitles(),
+
+		Logger: logger,
 	})
 
 	// Reported either way. A run that stopped halfway still wrote what it
@@ -92,6 +98,7 @@ func importWith(
 		"seen", result.Seen,
 		"imported", result.Imported,
 		"skipped", result.Skipped,
+		"not_a_ride", result.NotARide,
 		"already_known", result.AlreadyKnown,
 		"pages", result.Pages)
 

@@ -491,12 +491,25 @@ refuses anything that is not a `GET`. The one request that does not go through i
 token refresh — a `POST` to `/oauth/token`, which issues tokens and cannot touch an activity, and
 which an import needs because a stored access token is only valid for a few hours.
 
-**What it seeds, and what it leaves out.** Only the athlete's own titles — which is every title
-on their activities that neither Strava nor a recognized tool wrote.
-Strava's own defaults are skipped, because a default is not a title — they repeat by design, so
-listing them under "never repeat" forbids the right answer — and recognized machine titles are
-skipped because they are the style this service exists to replace, which is the last thing a
-few-shot example should teach.
+**What it seeds, and what it leaves out.** Rides only — `Ride` and `GravelRide` — and of those,
+only the titles the athlete wrote themselves.
+A run, a walk or a strength session is titled by whatever recorded it and will never be named
+here, so its title is neither a repeat to avoid nor anything to learn from.
+Among rides, four kinds are skipped:
+
+- **Strava's own defaults**, because a default is not a title. They repeat by design, so listing
+  them under "never repeat" forbids the right answer.
+- **Recognized machine titles**, which are the style this service exists to replace.
+- **Anything Zwift or Xert titled** — a `Zwift - …` prefix or a suffix of `" - Xert"`. That is the tool
+  talking, whatever the sport type says: a Zwift session recorded by a head unit arrives as a
+  plain `Ride`.
+- **This service's own templates**, the commute pair and the errand pool. They are the correct
+  title for those rides and are meant to repeat, which is the opposite of a style.
+
+The template list is the configured one, not a fixed list of German words: an athlete who renames
+their commute has *their* names skipped, and the shipped ones become ordinary titles again. None
+of this widens what the service may overwrite — that is `MachineTitles`, and a Zwift ride still
+keeps the title Zwift gave it.
 
 **Idempotent and resumable, with no state of its own.** An activity already in the named log is
 left exactly as it is, so a second run writes nothing and an interrupted one continues where the
