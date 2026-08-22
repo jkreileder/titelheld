@@ -172,7 +172,32 @@ const (
 	EnvSweepPath           = "SWEEP_PATH"
 	EnvSweepAudience       = "SWEEP_AUDIENCE"
 	EnvSweepServiceAccount = "SWEEP_SERVICE_ACCOUNT"
+	EnvMaxInstances        = "MAX_INSTANCES"
 )
+
+// RequiredMaxInstances is the only value this service will start with.
+//
+// Not a tuning knob: four pieces of state live in the process and are correct
+// only because there is exactly one of it.
+//
+//   - [server.Server.states] holds the OAuth state parameters this process
+//     issued. A second instance would reject a callback it did not issue,
+//     turning the one-time authorization flow into a coin flip.
+//   - [server.Server.bind] serializes the first-bind decision. Two processes
+//     can both read "nothing is bound yet" and bind different athletes.
+//   - [strava.StoredTokenSource.mu] serializes token refresh. Strava rotates
+//     the refresh token on every refresh, so two processes refreshing at once
+//     invalidate each other's token and the athlete has to reauthorize.
+//   - [sweep.Handler.running] answers an overlapping fire with "already
+//     running" instead of sweeping twice. It is a mutex in this process, so a
+//     second process sweeps the same queue in parallel — and two sweeps can
+//     both read the named log for an activity before either writes it.
+//
+// Each of those is a lock or a map, and neither survives a second container.
+// Cloud Run is told `max_instance_count = 1` in Terraform; this variable is
+// how the binary learns what it was told, and refusing to start without it is
+// how the two stay in step.
+const RequiredMaxInstances = "1"
 
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.
 const (
@@ -199,6 +224,32 @@ type ErrMissing struct {
 
 func (e *ErrMissing) Error() string {
 	return "config: " + e.Name + " is required but not set"
+}
+
+// checkMaxInstances refuses to start on anything but the one supported value.
+//
+// It reports what it saw. "MAX_INSTANCES must be 1" sends an operator to look
+// at a variable that may not be set at all, and the two causes need different
+// fixes: an unset variable means the Terraform has not been applied since the
+// contract landed, while a wrong one means somebody scaled the service on
+// purpose and needs to read [RequiredMaxInstances] before doing that.
+func checkMaxInstances(raw string) error {
+	value := strings.TrimSpace(raw)
+
+	switch {
+	case value == "":
+		return errors.New("config: " + EnvMaxInstances + " is not set; Cloud Run must be " +
+			"configured with max_instance_count = " + RequiredMaxInstances +
+			" and pass it in, because this service keeps single-instance state - " +
+			"apply the Terraform before deploying this revision")
+	case value != RequiredMaxInstances:
+		return errors.New("config: " + EnvMaxInstances + " is " + strconv.Quote(value) +
+			", and this service only runs with " + strconv.Quote(RequiredMaxInstances) +
+			": OAuth state, the first-bind lock, token refresh and the sweep lock " +
+			"are all in-process and a second instance breaks each of them")
+	default:
+		return nil
+	}
 }
 
 // Load resolves the configuration.
@@ -253,6 +304,18 @@ func load(getenv func(string) string, serving bool) (Config, error) {
 	for name, value := range required {
 		if value == "" {
 			errs = append(errs, &ErrMissing{Name: name})
+		}
+	}
+
+	// Serving only. An import is a deliberate second process — it runs by
+	// hand, against the same Firestore, while the service is idle — and it
+	// touches none of the four pieces of state the ceiling protects: it serves
+	// no HTTP, completes no authorization flow and runs no sweep. Requiring
+	// the variable there would mean inventing a value to satisfy a check that
+	// is not about it.
+	if serving {
+		if err := checkMaxInstances(getenv(EnvMaxInstances)); err != nil {
+			errs = append(errs, err)
 		}
 	}
 

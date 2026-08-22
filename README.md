@@ -34,6 +34,7 @@ everything that should stay boring untouched.
 - [What gets written](#what-gets-written)
 - [What the prompt carries](#what-the-prompt-carries)
 - [Configuration](#configuration)
+  - [One instance, and the binary knows it](#one-instance-and-the-binary-knows-it)
 - [HTTP surface](#http-surface)
 - [Development](#development)
 - [Security and privacy](#security-and-privacy)
@@ -225,10 +226,38 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `STRAVA_VERIFY_TOKEN`  | yes      | —       | Shared secret for the subscription handshake |
 | `WEBHOOK_PATH_SECRET`  | yes      | —       | Unguessable segment of the webhook path      |
 | `BASE_URL`             | yes      | —       | Public base URL, used for the OAuth redirect |
+| `MAX_INSTANCES`        | yes      | —       | Must be `1`; Terraform sets it — see below   |
 | `STRAVA_ATHLETE_ID`    | no       | any     | Restrict processing to one athlete           |
 | `PROCESS_DELAY`        | no       | `10m`   | How long to wait before naming               |
 | `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
 | `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
+
+### One instance, and the binary knows it
+
+`MAX_INSTANCES` must be present and `1`, or the service refuses to start. It is not a tuning
+knob. Four pieces of state live in the process and are correct only because there is exactly one
+of it:
+
+| What | Where | What a second instance does to it |
+| --- | --- | --- |
+| OAuth state parameters | `server.Server.states` | rejects a callback it did not issue |
+| First-bind decision | `server.Server.bind` | two callbacks both bind, to different athletes |
+| Token refresh | `strava.StoredTokenSource.mu` | Strava rotates the refresh token; the two processes invalidate each other and the athlete reauthorizes |
+| Sweep overlap | `sweep.Handler.running` | two sweeps read the named log for one activity before either writes it |
+
+Each is a mutex or a map, and none of them survives a second container. Terraform sets
+`max_instance_count` and passes the same number in as `MAX_INSTANCES` from one local, so the
+platform limit and what the container believes cannot drift apart. The refusal reports what it
+saw — unset and wrong need different fixes.
+
+**Apply the Terraform before releasing a build that carries this contract.** A revision started
+against infrastructure that predates it fails readiness, `gcloud run deploy` fails with it, and
+the previous revision keeps serving — visible and safe, but a failed release rather than a
+deployed one.
+
+The import (`cmd/titelheld-import`) does not require it. It is a deliberate second process that
+serves no HTTP, completes no authorization flow and runs no sweep, so none of the four
+assumptions apply to it.
 
 The sweep that drains the delay queue is configured by three variables. Terraform sets all
 three; nothing else does, and none of them is written by hand.
@@ -702,8 +731,12 @@ $EDITOR ~/.config/titelheld/env      # export STRAVA_CLIENT_ID=… etc.
 chmod 600 ~/.config/titelheld/env
 
 set -a; . ~/.config/titelheld/env; set +a
-go run ./cmd/titelheld
+MAX_INSTANCES=1 go run ./cmd/titelheld
 ```
+
+`MAX_INSTANCES=1` is required to serve — see [Configuration](#configuration). It belongs on the
+command line rather than in the secrets file: it is not a secret, and a local run is exactly the
+place where a stale copy of it would be wrong.
 
 A gitignored `.env` inside the repository would also work, and `.gitignore` covers one, but it
 is reachable by `git add -f`, by editor plugins and by folder-sync tools — and `git clean -xdf`

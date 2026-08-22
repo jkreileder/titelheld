@@ -13,6 +13,14 @@ locals {
   # owns it from then on, which is what the ignore_changes below is for.
   placeholder_image = "us-docker.pkg.dev/cloudrun/container/hello"
 
+  # One instance, said once. The service keeps state that is correct only
+  # because there is a single container — the in-process OAuth state map, the
+  # first-bind lock, token-refresh serialization and the sweep lock — and the
+  # binary refuses to start unless it is told the ceiling it is running under.
+  # Both sides read this local, so the platform limit and what the container
+  # believes cannot drift apart; see config.RequiredMaxInstances.
+  max_instances = 1
+
   sweep_path = "/sweep/${random_password.sweep_path.result}"
 
   # The audience Cloud Scheduler mints its OIDC token for, and the audience the
@@ -50,7 +58,7 @@ resource "google_cloud_run_v2_service" "this" {
     # rotating refresh token.
     scaling {
       min_instance_count = 0
-      max_instance_count = 1
+      max_instance_count = local.max_instances
     }
 
     containers {
@@ -69,6 +77,15 @@ resource "google_cloud_run_v2_service" "this" {
       env {
         name  = "DRY_RUN"
         value = "1"
+      }
+
+      # The scaling ceiling above, told to the container that depends on it.
+      # The binary refuses to start without it, so a revision deployed against
+      # infrastructure that predates this contract fails readiness and the
+      # previous revision keeps serving.
+      env {
+        name  = "MAX_INSTANCES"
+        value = tostring(local.max_instances)
       }
 
       env {
