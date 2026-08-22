@@ -75,3 +75,39 @@ func TestCommuteTitleHasGermanDefaults(t *testing.T) {
 		t.Errorf("to home: %q", got)
 	}
 }
+
+// The shipped pattern recognizes the Xert titles this athlete actually has.
+//
+// Both were found by a history import: they carry Xert's construction but a
+// focus type the list did not have, so they were treated as the athlete's own
+// words. The failure is the safe one — an unmatched title is skipped, never
+// overwritten — but it costs a naming every time Xert writes one.
+func TestTheXertPatternMatchesTheObservedTitles(t *testing.T) {
+	t.Parallel()
+
+	machine := classifier.DefaultMachineTitles()
+
+	for _, title := range []string{
+		"Easy Pure Endurance Ride",
+		"Moderate Polar Endurance Ride",
+		"Difficult Mixed Breakaway Specialist Ride",
+	} {
+		if !machine.Matches(title) {
+			t.Errorf("%q is not recognized as a machine title", title)
+		}
+	}
+
+	// The other half of the asymmetry, and the more important one: a title
+	// built from the same words by a person is not Xert's construction, and
+	// matching it would overwrite what the athlete wrote.
+	for _, title := range []string{
+		"Pure Endurance",
+		"Endurance Ride",
+		"Easy Pure Endurance Ride im Regen",
+		"Eine Easy Pure Endurance Ride",
+	} {
+		if machine.Matches(title) {
+			t.Errorf("%q was taken for a machine title", title)
+		}
+	}
+}
