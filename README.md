@@ -1033,13 +1033,21 @@ failed dispatch leaves the job firing every five minutes:
 ```sh
 J="titelheld-sweep --location=$REGION --project=$PROJECT"
 
-gcloud scheduler jobs resume $J || exit 1
-gcloud scheduler jobs run $J; dispatched=$?
-gcloud scheduler jobs pause $J || echo "STILL RUNNING: pause it by hand" >&2
+if gcloud scheduler jobs resume $J; then
+  gcloud scheduler jobs run $J && dispatched=yes || dispatched=no
+  gcloud scheduler jobs pause $J || echo "STILL RUNNING: pause it by hand" >&2
+  [ "$dispatched" = yes ] || echo "the sweep was never dispatched" >&2
+else
+  echo "resume failed; the job is still paused and nothing ran" >&2
+fi
 
-[ "$dispatched" -eq 0 ] || echo "the sweep was never dispatched" >&2
 gcloud scheduler jobs describe $J --format='value(state)'    # want PAUSED
 ```
+
+No `exit` and no `set -e`: this is meant to be pasted into the shell you are sitting in, where
+`exit` closes the terminal and an errexit would skip the `pause` on a failed `run` — leaving the
+job firing every five minutes, which is the one outcome worth writing the block around. Everything
+after the `resume` runs, and each step says what went wrong.
 
 `$J` is deliberately unquoted — it is three arguments, and neither a region nor a project ID can
 contain a space. Run the lines one at a time if you prefer; only the order matters, and that the
@@ -1052,12 +1060,16 @@ sent the request, not what came back. The service's own log lines are the answer
 gcloud logging read 'resource.type="cloud_run_revision" AND
   resource.labels.service_name="titelheld" AND
   (jsonPayload.msg="sweep complete" OR jsonPayload.msg="sweep rejected"
-   OR jsonPayload.msg="sweep failed")' \
+   OR jsonPayload.msg="sweep failed"
+   OR jsonPayload.msg="sweep already running; skipping this fire")' \
   --project="$PROJECT" --limit=10 --freshness=10m
 ```
 
 Scoped to this service and to the last ten minutes, so what comes back is this dispatch rather
-than the last time anything swept.
+than the last time anything swept. `sweep already running; skipping this fire` is in there
+because it is a real answer for a manual run: the scheduled tick got there first, your request
+was answered `200` without starting a second sweep, and the `sweep complete` line next to it
+belongs to that tick rather than to you.
 
 `sweep complete` carries the counts, and the sweep drained the queue only if `failed` is zero
 **and** `cancelled` is false. A cancelled sweep is a `200` with a clean `failed` count: Cloud Run
