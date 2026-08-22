@@ -182,8 +182,11 @@ type Franchise struct {
 // past titles against a series, so it is cheaper to remember. Losing it costs
 // a repeated or skipped entry, not a wrong write.
 type Franchises interface {
-	// FranchisePosition returns where in the named franchise the rotation
-	// resumes: the index of the first entry not yet used or stepped over.
+	// FranchisePosition returns the index the named franchise's rotation
+	// resumes at. Not a count of what has been used: an entry the athlete
+	// reserved and spent by hand never moves it, which is what reserving one
+	// means.
+	//
 	// Zero for a franchise never used, which is also the answer for one that
 	// does not exist — a franchise removed from configuration should not
 	// error, it should simply stop being consulted.

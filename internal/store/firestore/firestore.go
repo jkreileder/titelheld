@@ -535,7 +535,7 @@ func franchiseKey(athleteID int64, franchise string) string {
 	return cacheDocID(strconv.FormatInt(athleteID, 10) + "-" + franchise)
 }
 
-// FranchisePosition returns how many entries of the franchise are used.
+// FranchisePosition returns the index the franchise's rotation resumes at.
 //
 // A franchise never used, and one that no longer exists in configuration, both
 // answer zero: removing a franchise from config should stop it being consulted,

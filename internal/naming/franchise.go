@@ -160,22 +160,29 @@ func FranchiseFor(franchises []Franchise, sportType, gearName string) (Franchise
 	return Franchise{}, false
 }
 
-// Offerable reports whether an entry can be used as a title at all.
+// Offerable reports whether an entry can be spent at all.
 //
-// An entry longer than a title may not be offered. The prompt bounds every
-// untrusted value it prints, so an over-long entry would reach the model as a
-// prefix of itself — which no title can contain, so the containment check
-// would decline it, the re-offer would decline it again, and every later ride
-// would be offered the same unusable entry. Better to notice it: a franchise
-// is typed into a document, and an entry that does not fit is a configuration
-// error rather than something to work around.
+// Two ways an entry cannot be, and they fail the same way. One longer than a
+// title reaches the model as a prefix of itself, because the prompt bounds
+// every value it prints — and no title can contain what was never shown. One
+// with no matchable core, punctuation or an article alone, is a thing
+// [UsesEntry] can never find in a title. Either would be declined, re-offered,
+// declined again, and then offered unchanged to the next ride: three model
+// calls a ride, forever, with nothing saying why.
+//
+// So the rule is the one the spending check applies, asked in advance: an
+// entry is offerable when it fits a title and [UsesEntry] could recognize it.
+// Anything else is a configuration error — a franchise is typed into a
+// document — and is reported rather than worked around.
 //
 // Nothing else is checked. An entry that fits but is awkward is the athlete's
 // business.
 func Offerable(entry string) bool {
-	trimmed := strings.TrimSpace(entry)
+	if entryCore(entry) == "" {
+		return false
+	}
 
-	return trimmed != "" && len([]rune(trimmed)) <= MaxTitleRunes
+	return len([]rune(strings.TrimSpace(entry))) <= MaxTitleRunes
 }
 
 // UsesEntry reports whether a title demonstrably uses a franchise entry.

@@ -579,10 +579,11 @@ it.
 
 ### What is stored
 
-Firestore stores a single integer per athlete per franchise: where the rotation resumes, which is
-the index of the first entry not yet used or stepped over. It never stores the titles, so editing
-a series never migrates anything — but the integer is an index into the list you edited, and two
-edits move what it means:
+Firestore stores a single integer per athlete per franchise: the index the rotation resumes at.
+Not "how many entries are used" — spending a reserved entry by hand does not move it, which is
+the point of reserving one. It never stores the titles, so editing a series never migrates
+anything — but the integer is an index into the list you edited, and two edits move what it
+means:
 
 | Edit | What happens to the position |
 | --- | --- |

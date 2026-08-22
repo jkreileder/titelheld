@@ -307,6 +307,17 @@ func TestOfferable(t *testing.T) {
 		{name: "umlauts at the limit", entry: strings.Repeat("ü", MaxTitleRunes), want: true},
 		{name: "empty", entry: "", want: false},
 		{name: "whitespace only", entry: "   ", want: false},
+
+		// Nothing UsesEntry could ever find in a title. Offerable has to
+		// refuse exactly what the spending check cannot recognize, or the
+		// entry is declined on every ride forever.
+		{name: "punctuation only", entry: "---", want: false},
+		{name: "punctuation and spaces", entry: " — : ", want: false},
+
+		// An article alone survives: the leading article is only dropped when
+		// something follows it, so "The" is still a token a title can carry.
+		// Absurd as an entry, and consistent, which is what matters here.
+		{name: "an article alone", entry: "The", want: true},
 		{name: "surrounding space does not count", entry: "  " + strings.Repeat("a", MaxTitleRunes) + "  ", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -316,5 +327,30 @@ func TestOfferable(t *testing.T) {
 				t.Errorf("Offerable(%d runes) = %v, want %v", len([]rune(tc.entry)), got, tc.want)
 			}
 		})
+	}
+}
+
+// Offerable and UsesEntry agree: nothing offerable is unrecognizable.
+//
+// The pair is the contract — an entry that gets offered has to be one a title
+// can demonstrably use, or the rotation stalls on it. Asserted over the two
+// together rather than trusting that the same rule was written twice.
+func TestNothingOfferableIsImpossibleToUse(t *testing.T) {
+	t.Parallel()
+
+	for _, entry := range []string{
+		"Son of the Pink Panther", "A Shot in the Dark", "The Pink Panther",
+		"---", "The", "   ", "", "Ocean's Eleven", "8½",
+		strings.Repeat("a", MaxTitleRunes), strings.Repeat("a", MaxTitleRunes+1),
+	} {
+		if !Offerable(entry) {
+			continue
+		}
+
+		// The title a compliant model would return: the entry itself.
+		if !UsesEntry(entry, entry) {
+			t.Errorf("Offerable(%q) is true, but the entry used verbatim does not count as used",
+				entry)
+		}
 	}
 }
