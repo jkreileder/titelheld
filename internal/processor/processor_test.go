@@ -137,26 +137,57 @@ func (f *fakeStrava) writes() []put {
 }
 
 // fakeProvider is the LLM. No live call ever happens in a test.
+//
+// Left to itself it is a model that does what it is told: when the prompt
+// offers a franchise entry it returns that entry as the title, so a test about
+// something else does not spend three calls and end up asserting against the
+// prompt of the attempt that gave up on the series. A test about a model that
+// ignores the entry sets ignoreFranchise, and one about a particular title
+// sets response.
 type fakeProvider struct {
 	response string
 	err      error
 	calls    int
+
+	// ignoreFranchise makes the model return its ordinary title even when an
+	// entry was offered — which is the case the re-offer exists for.
+	ignoreFranchise bool
 }
 
 func (f *fakeProvider) Name() string { return "fake" }
 
-func (f *fakeProvider) Complete(_ context.Context, _ naming.Prompt) (string, error) {
+func (f *fakeProvider) Complete(_ context.Context, prompt naming.Prompt) (string, error) {
 	f.calls++
 
 	if f.err != nil {
 		return "", f.err
 	}
 
-	if f.response == "" {
-		return `{"title":"Musterrunde am Musterbach","language":"de"}`, nil
+	if f.response != "" {
+		return f.response, nil
 	}
 
-	return f.response, nil
+	if entry := franchiseEntryOf(prompt); entry != "" && !f.ignoreFranchise {
+		return `{"title":"` + entry + `","language":"en"}`, nil
+	}
+
+	return `{"title":"Musterrunde am Musterbach","language":"de"}`, nil
+}
+
+// franchiseEntryOf reads back the entry a prompt offers, if it offers one.
+//
+// Parsed out of the prompt rather than passed in beside it, so what a fake
+// model can comply with is exactly what the real one is shown.
+func franchiseEntryOf(prompt naming.Prompt) string {
+	const marker = "- This ride continues a series. The next entry is: "
+
+	for line := range strings.Lines(prompt.User) {
+		if entry, found := strings.CutPrefix(strings.TrimRight(line, "\n"), marker); found {
+			return entry
+		}
+	}
+
+	return ""
 }
 
 type fakeGeo struct {

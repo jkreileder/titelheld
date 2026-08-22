@@ -237,8 +237,8 @@ func TestEveryMethodReportsAFailedClient(t *testing.T) {
 			_, err := firestoreStore.FranchisePosition(ctx, 1, "pink-panther")
 			return err
 		},
-		"AdvanceFranchise": func() error {
-			_, err := firestoreStore.AdvanceFranchise(ctx, 1, "pink-panther")
+		"AdvanceFranchisePast": func() error {
+			_, err := firestoreStore.AdvanceFranchisePast(ctx, 1, "pink-panther", 0)
 			return err
 		},
 	}
@@ -325,8 +325,8 @@ func TestCorruptDocumentsAreReported(t *testing.T) {
 
 	// The same document read inside the transaction, so the decode failure
 	// there is reported rather than starting the series again.
-	if _, err := firestoreStore.AdvanceFranchise(t.Context(), 1, "pink-panther"); err == nil {
-		t.Error("AdvanceFranchise on a corrupt document = nil error, want a decode failure")
+	if _, err := firestoreStore.AdvanceFranchisePast(t.Context(), 1, "pink-panther", 0); err == nil {
+		t.Error("AdvanceFranchisePast on a corrupt document = nil error, want a decode failure")
 	}
 
 	// A configuration that cannot be read must be reported, not returned as
@@ -392,13 +392,13 @@ func TestFranchiseNamesThatAreNotValidDocumentIDs(t *testing.T) {
 	positions := make(map[string]int, len(names))
 
 	for _, name := range names {
-		position, err := firestoreStore.AdvanceFranchise(t.Context(), 1, name)
+		position, err := firestoreStore.AdvanceFranchisePast(t.Context(), 1, name, 0)
 		if err != nil {
-			t.Fatalf("AdvanceFranchise(%q): %v", name, err)
+			t.Fatalf("AdvanceFranchisePast(%q): %v", name, err)
 		}
 
 		if position != 1 {
-			t.Errorf("AdvanceFranchise(%q) = %d, want 1", name, position)
+			t.Errorf("AdvanceFranchisePast(%q) = %d, want 1", name, position)
 		}
 
 		positions[name] = position
@@ -406,8 +406,8 @@ func TestFranchiseNamesThatAreNotValidDocumentIDs(t *testing.T) {
 
 	// Advance one of them again. If any two names collided, another franchise
 	// would see this increment.
-	if _, err := firestoreStore.AdvanceFranchise(t.Context(), 1, names[0]); err != nil {
-		t.Fatalf("second AdvanceFranchise: %v", err)
+	if _, err := firestoreStore.AdvanceFranchisePast(t.Context(), 1, names[0], 1); err != nil {
+		t.Fatalf("second AdvanceFranchisePast: %v", err)
 	}
 
 	for _, name := range names {

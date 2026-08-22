@@ -37,6 +37,12 @@ type gathered struct {
 	// Franchise is the series the offered entry came from. Empty when none
 	// applied, which is also when Context.FranchiseNext is empty.
 	Franchise string
+
+	// FranchiseIndex is where in that series the offered entry sits. The
+	// position is advanced past this index and not by one step, because the
+	// rotation walks over reserved entries: advancing by one from a position
+	// that stepped over two would offer a reserved title next.
+	FranchiseIndex int
 }
 
 // promptContext gathers everything the prompt needs beyond the ride itself.
@@ -63,10 +69,14 @@ func (p *Processor) promptContext(
 		Examples:     p.examplesFrom(ctx, history, logger),
 	}
 
-	next, franchise := p.franchiseNext(ctx, athleteID, ride, logger)
+	next, index, franchise := p.franchiseNext(ctx, athleteID, ride, logger)
 	promptContext.FranchiseNext = next
 
-	return gathered{Context: promptContext, Franchise: franchise}, nil
+	return gathered{
+		Context:        promptContext,
+		Franchise:      franchise,
+		FranchiseIndex: index,
+	}, nil
 }
 
 // history reads the titles this service has written for an athlete.
@@ -95,21 +105,21 @@ func titlesOf(history []store.NamedTitle) []string {
 }
 
 // franchiseNext offers the next entry of a series the ride qualifies for, and
-// names the series it came from.
+// names the series and the index it came from.
 //
-// Both together, so a caller cannot advance a different series than the one
-// the prompt was shown.
+// All three together, so a caller cannot advance a different series than the
+// one the prompt was shown, or a different place in it.
 //
 // Never blocking. A gear lookup that fails, a franchise that has run out, an
 // athlete with no franchises: all of them mean this ride is named normally,
 // which is the same outcome as the feature being off.
 func (p *Processor) franchiseNext(
 	ctx context.Context, athleteID int64, ride naming.Ride, logger *slog.Logger,
-) (next, franchiseName string) {
+) (next string, index int, franchiseName string) {
 	franchise, ok := naming.FranchiseFor(
 		p.franchises(ctx, athleteID, logger), ride.SportType, ride.GearName)
 	if !ok {
-		return "", ""
+		return "", 0, ""
 	}
 
 	position, err := p.deps.Store.FranchisePosition(ctx, athleteID, franchise.Name)
@@ -117,18 +127,21 @@ func (p *Processor) franchiseNext(
 		logger.Warn("could not read the franchise position; naming without it",
 			"franchise", logsafe.String(franchise.Name), "error", err)
 
-		return "", ""
+		return "", 0, ""
 	}
 
-	next, ok = franchise.Next(position)
+	next, index, ok = franchise.Next(position)
 	if !ok {
-		logger.Info("franchise exhausted; naming normally",
+		// Exhausted, or nothing left that is not reserved for the athlete to
+		// spend by hand. Both mean the same thing here: this ride is named
+		// normally.
+		logger.Info("no franchise entry to offer; naming normally",
 			"franchise", logsafe.String(franchise.Name), "position", position)
 
-		return "", ""
+		return "", 0, ""
 	}
 
-	return next, franchise.Name
+	return next, index, franchise.Name
 }
 
 // franchises are the athlete's configured series.
@@ -165,7 +178,7 @@ func (p *Processor) franchises(
 		// Not cached. Answering from the default profile is the right thing to
 		// do for this ride, and the wrong thing to keep doing: if the athlete
 		// removed or renamed a series, every later ride in the process would
-		// still be offered it, and AdvanceFranchise would durably count a
+		// still be offered it, and the advance would durably count a
 		// position the configuration no longer names. A repeated read is
 		// cheap; a wrong write is not.
 		logger.Error("could not read the athlete configuration; naming this ride from the default profile",
@@ -216,6 +229,7 @@ func fromStored(stored []store.Franchise) []naming.Franchise {
 			SportTypes: entry.SportTypes,
 			GearName:   strings.TrimSpace(entry.GearName),
 			Titles:     entry.Titles,
+			Reserved:   entry.Reserved,
 		})
 	}
 

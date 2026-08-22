@@ -111,6 +111,19 @@ words and language preferences still ship as defaults in code and belong in
 that same document. What ships in code for franchises is the default profile:
 what applies until a document exists.
 
+An entry is spent when it is *used*, not when it is offered. The prompt asks
+for the entry's wording and a request to a model is not a guarantee, so
+`naming.UsesEntry` decides: normalized containment of the entry's core - both
+sides lowercased, punctuation flattened, whitespace collapsed, the leading
+article dropped, matched on token boundaries. Unused means one more offer, at
+most one, and then a third call carrying no FRANCHISE block; the position does
+not move. It fails closed, because a repeated offer can be noticed and a film
+spent on a title that never carried it cannot. Entries listed under `reserved`
+are never offered - they keep their place in the series and the athlete spends
+them by hand - and the position therefore advances *past the index* that was
+offered rather than by one step, monotonically, so a rotation that stepped over
+a reserved entry never hands it out later.
+
 Not built yet: route repeats. The Strava push subscription exists and is
 feeding the queue; the Cloud Scheduler job is deliberately paused, so nothing
 drains it until a sweep is run by hand. The title history is seeded by

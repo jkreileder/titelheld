@@ -1,6 +1,9 @@
 package naming
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // Franchise is an ordered list of titles walked one entry at a time.
 //
@@ -23,18 +26,53 @@ type Franchise struct {
 
 	// Titles are the entries, in order.
 	Titles []string
+
+	// Reserved are entries the rotation never offers. They keep their place
+	// in Titles — reserving is not deleting — and the athlete spends them by
+	// hand. Matched against Titles case-insensitively and trimmed, because
+	// both lists are typed into the same document by the same person.
+	//
+	// An entry named here that is not in Titles is simply inert, and one that
+	// is reserved after the position has already passed it changes nothing:
+	// the position only ever moves forward.
+	Reserved []string
 }
 
-// Next returns the entry at a position, and whether there is one.
+// Next returns the next offerable entry at or after a position, the index it
+// sits at, and whether there is one.
+//
+// Reserved entries are stepped over rather than skipped past: the index comes
+// back with the title so the caller advances to just after the entry it
+// actually offered, and a reserved entry the rotation walked over is
+// therefore never handed out later either.
 //
 // A position past the end is not an error and not a wrap-around: the series
 // is finished, the franchise stops applying, and the ride is named normally.
-func (f Franchise) Next(position int) (string, bool) {
-	if position < 0 || position >= len(f.Titles) {
-		return "", false
+func (f Franchise) Next(position int) (title string, index int, ok bool) {
+	if position < 0 {
+		return "", 0, false
 	}
 
-	return f.Titles[position], true
+	for at := position; at < len(f.Titles); at++ {
+		if f.reserved(f.Titles[at]) {
+			continue
+		}
+
+		return f.Titles[at], at, true
+	}
+
+	return "", 0, false
+}
+
+// reserved reports whether an entry is the athlete's to spend by hand.
+func (f Franchise) reserved(title string) bool {
+	for _, entry := range f.Reserved {
+		if strings.EqualFold(strings.TrimSpace(entry), strings.TrimSpace(title)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Applies reports whether a ride belongs to this franchise.
@@ -67,12 +105,20 @@ func (f Franchise) Applies(sportType, gearName string) bool {
 // the default profile the spec asks for — what applies until a document is
 // written, and what a first document is seeded from.
 //
-// The three entries already used by hand — "The Pink Panther Checks Inn",
-// "The Pink Panther Strikes Again" and "Revenge of the Pink Panther" — are
-// deliberately absent. A stored position starts at zero, so listing them would
-// hand out a title the athlete already has. A canon added later that has never
-// been used needs no such care; one that has, needs its position seeded, and
-// the README says how.
+// The four entries already used by hand — "The Pink Panther Checks Inn", "The
+// Pink Panther Strikes Again", "Revenge of the Pink Panther" and "Curse of the
+// Pink Panther" — are deliberately absent. A stored position starts at zero, so
+// listing them would hand out a title the athlete already has. A canon added
+// later that has never been used needs no such care; one that has, needs its
+// position seeded, and the README says how.
+//
+// Everything the athlete's own rotation has already passed is listed and
+// reserved rather than dropped. The series is walked in release order and the
+// athlete is at "Curse of the Pink Panther", so the four films before it and
+// "Trail of the Pink Panther", which was deliberately stepped over, are the
+// athlete's to spend by hand. That leaves "Son of the Pink Panther" as the one
+// entry this service may offer, and it is offered at position zero without any
+// position needing to be seeded.
 func DefaultProfile() []Franchise {
 	return []Franchise{
 		{
@@ -85,8 +131,14 @@ func DefaultProfile() []Franchise {
 				"Inspector Clouseau",
 				"The Return of the Pink Panther",
 				"Trail of the Pink Panther",
-				"Curse of the Pink Panther",
 				"Son of the Pink Panther",
+			},
+			Reserved: []string{
+				"The Pink Panther",
+				"A Shot in the Dark",
+				"Inspector Clouseau",
+				"The Return of the Pink Panther",
+				"Trail of the Pink Panther",
 			},
 		},
 	}
@@ -103,4 +155,79 @@ func FranchiseFor(franchises []Franchise, sportType, gearName string) (Franchise
 	}
 
 	return Franchise{}, false
+}
+
+// UsesEntry reports whether a title demonstrably uses a franchise entry.
+//
+// This is what decides whether an entry has been spent. The prompt asks the
+// model to carry the entry's wording into the title and invites it to add to
+// it; a request is not a guarantee, so the position moves on evidence rather
+// than on having made the offer. Without this a title that ignored the series
+// still consumed a film, and the athlete would find one missing with nothing
+// to say where it went.
+//
+// The evidence is containment of the entry's core after normalization: both
+// sides lowercased, punctuation flattened to spaces and whitespace collapsed,
+// the core being the entry without a leading article, and the match made on
+// token boundaries so "Pink Panther" does not match inside "Pink Panthers".
+// "Son of the Pink Panther im Nebel" counts; "Der Panther im Nebel" does not.
+//
+// It fails closed. A translated or paraphrased entry is not recognized, the
+// title stands and the entry stays unspent — the next ride is offered it
+// again. The opposite error, treating a gesture at the series as a use, spends
+// a film on a title that never carried it, and unlike a repeated offer that
+// cannot be noticed afterwards.
+func UsesEntry(title, entry string) bool {
+	core := entryCore(entry)
+	if core == "" {
+		return false
+	}
+
+	normalized := normalizeForMatch(title)
+	if normalized == "" {
+		return false
+	}
+
+	// Padded on both sides so containment lands on whole tokens: without it
+	// "a shot in the dark" would match inside "a shot in the darkness".
+	return strings.Contains(" "+normalized+" ", " "+core+" ")
+}
+
+// entryCore is the part of an entry a title has to carry.
+//
+// The leading article is dropped because adapting an entry into a sentence
+// usually loses it — "Pink Panther im Nebel" is the entry used, and "The" is
+// the first thing a German title would shed. Nothing else is dropped: what is
+// left has to appear, or the series is only being gestured at.
+func entryCore(entry string) string {
+	normalized := normalizeForMatch(entry)
+
+	// English only, and deliberately so: a German article is also an ordinary
+	// word — dropping the "die" from "Die Hard" would leave a one-word core
+	// that matches almost anything.
+	for _, article := range []string{"the ", "a ", "an "} {
+		if rest, found := strings.CutPrefix(normalized, article); found {
+			return rest
+		}
+	}
+
+	return normalized
+}
+
+// normalizeForMatch reduces a title to lowercase words separated by single
+// spaces.
+//
+// Punctuation goes because a model asked to adapt an entry will punctuate it —
+// "Son of the Pink Panther: Gegenwind" is the entry used, and a comparison
+// that fails on the colon would spend nothing. Case goes for the same reason.
+func normalizeForMatch(text string) string {
+	folded := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+
+		return ' '
+	}, text)
+
+	return strings.Join(strings.Fields(folded), " ")
 }

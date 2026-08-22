@@ -3,6 +3,7 @@ package store
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -259,7 +260,7 @@ func (m *Memory) SavePlace(_ context.Context, key string, place Place) error {
 	return nil
 }
 
-// FranchisePosition returns how many entries of the franchise are used.
+// FranchisePosition returns where the franchise rotation resumes.
 func (m *Memory) FranchisePosition(_ context.Context, athleteID int64, franchise string) (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -267,13 +268,24 @@ func (m *Memory) FranchisePosition(_ context.Context, athleteID int64, franchise
 	return m.franchises[franchiseKey{athleteID: athleteID, franchise: franchise}], nil
 }
 
-// AdvanceFranchise moves one entry along and returns the new position.
-func (m *Memory) AdvanceFranchise(_ context.Context, athleteID int64, franchise string) (int, error) {
+// AdvanceFranchisePast moves the position past a used entry and returns it.
+//
+// Monotonic, like the Firestore implementation: a lower index than the stored
+// position leaves it alone rather than rewinding the series.
+func (m *Memory) AdvanceFranchisePast(
+	_ context.Context, athleteID int64, franchise string, index int,
+) (int, error) {
+	if index < 0 {
+		return 0, fmt.Errorf("advance franchise %q: index %d is negative", franchise, index)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	k := franchiseKey{athleteID: athleteID, franchise: franchise}
-	m.franchises[k]++
+	if next := index + 1; next > m.franchises[k] {
+		m.franchises[k] = next
+	}
 
 	return m.franchises[k], nil
 }
@@ -312,6 +324,7 @@ func cloneConfig(config AthleteConfig) AthleteConfig {
 	for index, franchise := range config.Franchises {
 		franchise.SportTypes = slices.Clone(franchise.SportTypes)
 		franchise.Titles = slices.Clone(franchise.Titles)
+		franchise.Reserved = slices.Clone(franchise.Reserved)
 		franchises[index] = franchise
 	}
 

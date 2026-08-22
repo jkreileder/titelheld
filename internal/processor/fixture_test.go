@@ -94,7 +94,19 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 	}
 
 	memory := store.NewMemory()
-	provider := &fakeProvider{}
+
+	// The fixture rides the franchise bike, so the model is offered an entry
+	// and this one uses it — extended with something from the ride, which is
+	// what the prompt invites and what the position moves on.
+	entry, _, ok := naming.DefaultProfile()[0].Next(0)
+	if !ok {
+		t.Fatal("the shipped franchise offers nothing at position zero")
+	}
+
+	wantTitle := entry + " am Musterbach"
+	provider := &fakeProvider{
+		response: `{"title":"` + wantTitle + `","language":"de"}`,
+	}
 
 	proc, err := New(Deps{
 		Store:      memory,
@@ -139,8 +151,8 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 	}
 
 	// The title the mocked model returned, validated and sent on.
-	if got := puts[0]["name"]; got != "Musterrunde am Musterbach" {
-		t.Errorf("name is %q, want the validated title", got)
+	if got := puts[0]["name"]; got != wantTitle {
+		t.Errorf("name is %q, want %q", got, wantTitle)
 	}
 
 	// The attribution went in front of the third-party content, which came
