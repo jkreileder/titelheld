@@ -7,7 +7,7 @@ SHELL := bash
 
 GO := go
 # Pinned so the Makefile, the pre-commit hook and CI all run the same linter.
-GOLANGCI_LINT_VERSION := v2.13.0
+GOLANGCI_LINT_VERSION := v2.13.1
 GOVULNCHECK_VERSION := v1.7.0
 GOTESTSUM_VERSION := v1.13.0
 
