@@ -1101,3 +1101,47 @@ func TestTheFranchiseEntryIsMarkedAsData(t *testing.T) {
 		t.Errorf("the franchise block does not mark its entry as data:\n%s", prompt.User)
 	}
 }
+
+// Every untrusted string in the prompt is declared as data.
+//
+// Three strings reach the model that this service did not write: the bike
+// name the athlete typed, the ride notes parsed out of a description other
+// tools filled in, and the names of segments — which are the least trusted of
+// the three, because a segment is named by whoever created it and every rider
+// who crosses it inherits that name.
+//
+// The validator is what enforces the outcome; this asserts the request is
+// made at all. A block added later without its rule is the failure this
+// catches.
+func TestEverySourceOfUntrustedTextIsDeclaredAsData(t *testing.T) {
+	t.Parallel()
+
+	system := BuildPrompt(Ride{}, Context{}).System
+
+	// Split into rules, so a mention of one block inside another block's rule
+	// cannot satisfy the assertion for it.
+	rules := strings.Split(system, "\n- ")
+
+	for _, block := range []string{"Bike", "NOTES", "ACHIEVEMENTS"} {
+		mentioned, declared := false, false
+
+		for _, rule := range rules {
+			if !strings.Contains(rule, block) {
+				continue
+			}
+
+			mentioned = true
+
+			if strings.Contains(rule, "data") && strings.Contains(rule, "instruction") {
+				declared = true
+			}
+		}
+
+		switch {
+		case !mentioned:
+			t.Errorf("the system prompt never mentions %s", block)
+		case !declared:
+			t.Errorf("no rule says %s is data and never instructions:\n%s", block, system)
+		}
+	}
+}

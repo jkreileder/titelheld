@@ -1412,6 +1412,13 @@ func TestTheAchievementsBlockIsBoundedAndNamesOnly(t *testing.T) {
 		})
 	}
 
+	// A qualifying effort past the cap, named so the assertion is about this
+	// one rather than about a count. Counting six alone would pass on an
+	// implementation that kept six of the wrong efforts.
+	const beyondTheCap = "Musterrampe hinter der Grenze"
+
+	efforts = append(efforts, strava.SegmentEffort{Name: beyondTheCap, PRRank: 1})
+
 	h.strava.activity.SegmentEfforts = efforts
 
 	h.enqueue(t, "create")
@@ -1420,7 +1427,20 @@ func TestTheAchievementsBlockIsBoundedAndNamesOnly(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 
-	if got := strings.Count(capture.first().User, "Mustersegment "); got != maxAchievements {
+	prompt := capture.first().User
+
+	if got := strings.Count(prompt, "Mustersegment "); got != maxAchievements {
 		t.Errorf("%d segments in the prompt, want %d", got, maxAchievements)
+	}
+
+	if strings.Contains(prompt, beyondTheCap) {
+		t.Errorf("an effort past the cap reached the prompt:\n%s", prompt)
+	}
+
+	// And the six that did are the first six offered, not an arbitrary six.
+	for index := range maxAchievements {
+		if want := fmt.Sprintf("Mustersegment %d", index); !strings.Contains(prompt, want) {
+			t.Errorf("the prompt does not carry %q", want)
+		}
 	}
 }

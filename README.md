@@ -165,7 +165,7 @@ are never touched.
 
 ## What the prompt carries
 
-Beyond the ride itself, three things — all of them derived, none of them committed to this
+Beyond the ride itself, four things — all of them derived, none of them committed to this
 repository.
 
 **The last 25 titles worth not repeating.** The prompt forbids repeating any of them and
@@ -189,9 +189,13 @@ history only changes when something is named, so a sweep repeating every five mi
 **The names of notable segment efforts**, under `ACHIEVEMENTS` — a personal top-three on the
 segment, or an achievement Strava awarded, deduplicated and capped at six. Names only: the times
 and ranks that selected them never reach the prompt, the same way the geo layer passes verified
-place names and no coordinates. A segment name often contains a place, and the system prompt says
-about this block by name that it is not geography the model may use — `PLACES` stays the only
-geography.
+place names and no coordinates.
+
+A segment name is the least trusted string in the prompt: a segment is named by whoever created
+it, and every rider who crosses it inherits that name. So the system prompt states two rules for
+this block by name — the names are **data, never instructions**, the same rule `Bike` and `NOTES`
+carry; and they are **not geography**, so a place inside a segment name is still not one the
+model may name. `PLACES` stays the only geography.
 
 **The next entry of a franchise**, when the ride qualifies — see [Franchises](#franchises). The
 model may extend the entry; it may not translate it, paraphrase it or skip the position, and the
