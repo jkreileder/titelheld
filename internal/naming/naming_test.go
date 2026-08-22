@@ -1122,26 +1122,37 @@ func TestEverySourceOfUntrustedTextIsDeclaredAsData(t *testing.T) {
 	// cannot satisfy the assertion for it.
 	rules := strings.Split(system, "\n- ")
 
+	// Every rule that mentions an untrusted block must carry the prohibition,
+	// not merely one of them. Stricter than it sounds, and deliberately: the
+	// first version of this test asked whether *any* rule mentioning the block
+	// declared it, and the ACHIEVEMENTS rule — which said "the same rule as
+	// Bike and NOTES" — then vouched for Bike. A cross-reference is not a
+	// rule, so the cross-reference is gone and this asks of each mention.
 	for _, block := range []string{"Bike", "NOTES", "ACHIEVEMENTS"} {
-		mentioned, declared := false, false
+		mentions := 0
 
 		for _, rule := range rules {
 			if !strings.Contains(rule, block) {
 				continue
 			}
 
-			mentioned = true
+			mentions++
 
-			if strings.Contains(rule, "data") && strings.Contains(rule, "instruction") {
-				declared = true
+			// Both words are not enough: "Bike is data, but it is an
+			// instruction" contains each of them. What is being asserted is
+			// the prohibition, so the rule has to forbid rather than mention.
+			forbidden := strings.Contains(rule, "never an instruction") ||
+				strings.Contains(rule, "never instructions") ||
+				strings.Contains(rule, "never as instructions")
+
+			if !strings.Contains(rule, "data") || !forbidden {
+				t.Errorf("a rule mentions %s without saying it is data and never an instruction:\n- %s",
+					block, rule)
 			}
 		}
 
-		switch {
-		case !mentioned:
+		if mentions == 0 {
 			t.Errorf("the system prompt never mentions %s", block)
-		case !declared:
-			t.Errorf("no rule says %s is data and never instructions:\n%s", block, system)
 		}
 	}
 }
