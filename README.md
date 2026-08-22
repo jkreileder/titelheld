@@ -842,14 +842,39 @@ a cold start alone can spend most of that budget.
 sec() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT"; }
 BASE_URL=$(cd infra && terraform output -raw service_url)
 
-curl -s "$BASE_URL/health" >/dev/null          # warm the instance first
+create_subscription() {
+  curl -sf -o /dev/null "$BASE_URL/health" ||
+    { echo "the service did not answer; not creating a subscription" >&2; return 1; }
 
-curl -s -X POST https://www.strava.com/api/v3/push_subscriptions \
-  -F "client_id=$(sec strava-client-id)" \
-  -F "client_secret=$(sec strava-client-secret)" \
-  -F "callback_url=${BASE_URL}/webhook/$(sec webhook-path-secret)" \
-  -F "verify_token=$(sec strava-verify-token)"
+  response=$(curl -s -w '\n%{http_code}' -X POST https://www.strava.com/api/v3/push_subscriptions \
+    -F "client_id=$(sec strava-client-id)" \
+    -F "client_secret=$(sec strava-client-secret)" \
+    -F "callback_url=${BASE_URL}/webhook/$(sec webhook-path-secret)" \
+    -F "verify_token=$(sec strava-verify-token)") ||
+    { echo "create request failed" >&2; return 1; }
+
+  code=$(printf '%s' "$response" | tail -n 1)
+  body=$(printf '%s' "$response" | sed '$d')
+
+  case $code in
+    2??) ;;
+    *) echo "create returned $code: $body" >&2; return 1 ;;
+  esac
+
+  id=$(printf '%s' "$body" | jq -r '.id // empty')
+  [ -n "$id" ] || { echo "no subscription id in the response: $body" >&2; return 1; }
+
+  echo "subscription $id created"
+}
+
+create_subscription
 ```
+
+The warm-up is a precondition, not a courtesy, so its status is checked: creating against a
+service that is not answering burns the callback validation for no reason. The `POST` is checked
+the same way — `curl -s` alone exits 0 on a `4xx`, so a rejected callback would print Strava's
+error and look like it worked. Any `2xx` is accepted rather than one exact code, and the id in the
+body is what actually says a subscription exists.
 
 A successful response is `{"id": <subscription id>}`. The handshake shows up in the service log as
 `webhook subscription validated`; a rejection names its reason (`unexpected hub.mode`,
