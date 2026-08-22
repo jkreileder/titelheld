@@ -1077,7 +1077,9 @@ took the instance away and the sweep stopped at an activity boundary, leaving th
 a run that is not coming while the job is paused. `sweep rejected` is the `401` — it names the
 claim that did not check out, and an audience mismatch is silent in every other place you could
 look: Cloud Scheduler reports a delivered request, and the response body is the bare word
-`unauthorized`.
+`unauthorized`. `sweep failed` is the `500`, and it means no sweep happened at all: the queue
+itself could not be read, so nothing was fetched, named or dequeued. Find out why before running
+it again — everything is still queued, so nothing is lost by waiting.
 
 **There is a race, and it is deliberate.** While the job is resumed its own schedule can fire —
 five minutes is the interval, the three commands take seconds, so it usually does not, but it
