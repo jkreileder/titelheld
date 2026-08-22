@@ -84,13 +84,21 @@
   validator and are reported as it words them, with the audience that was
   required.
 
-The prompt carries three derived things beyond the ride: the last 25 titles a
-model wrote, six few-shot examples rebuilt by re-reading past activities, and
-the next franchise entry when one applies. Both title lists are filtered to
-model-written titles - a commute template is meant to repeat, and six of them
-would teach the model to name a gravel ride "Zur Arbeit". Only the title history is worth failing an
-activity for - the realistic cause is the composite index missing. Everything
-else degrades rather than blocking a title.
+The prompt carries three derived things beyond the ride: the last 25 titles
+worth not repeating, six few-shot examples rebuilt by re-reading past
+activities, and the next franchise entry when one applies. The two lists are
+filtered differently, and that difference is the rule. RECENT drops only
+templates - a commute name is meant to repeat, so listing it forbids the right
+answer - and keeps imported titles, because repeating one is exactly what to
+avoid. EXAMPLES admits one source and no other, `SourceService`: a title this
+service's own pipeline wrote. An imported row is structurally unable to become
+an example, which is the point - a decade of the athlete's shorthand says what
+not to write twice and nothing about what a title should sound like, and no
+pattern has to be maintained to keep a bare town name out. Until this service has
+named something the synthetic set is what the prompt carries, which is its
+purpose rather than a cold-start stopgap. Only the title history is worth
+failing an activity for - the realistic cause is the composite index missing.
+Everything else degrades rather than blocking a title.
 
 Route repeats are specified and not built. Hashing a rounded polyline never
 matches a re-ride (0/50 under 5 m jitter; Strava's simplification changes the

@@ -304,7 +304,7 @@ func namedLogRoundTrip(t *testing.T, s store.Store) {
 	if err := s.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 1, ActivityID: 5,
 		Title: "The Pink Panther Strikes Again", Language: "en",
-		Source: store.SourceLLM, At: Now,
+		Source: store.SourceService, At: Now,
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -515,7 +515,7 @@ func recentTitlesNewestFirst(t *testing.T, s store.Store) {
 			ActivityID: int64(100 + index),
 			Title:      title,
 			Language:   "de",
-			Source:     store.SourceLLM,
+			Source:     store.SourceService,
 			At:         Now.Add(time.Duration(index) * time.Hour),
 		}); err != nil {
 			t.Fatalf("MarkNamed(%q): %v", title, err)
@@ -543,8 +543,8 @@ func recentTitlesNewestFirst(t *testing.T, s store.Store) {
 		t.Errorf("language = %q, want %q", titles[0].Language, "de")
 	}
 
-	if len(titles) > 0 && titles[0].Source != store.SourceLLM {
-		t.Errorf("source = %q, want %q", titles[0].Source, store.SourceLLM)
+	if len(titles) > 0 && titles[0].Source != store.SourceService {
+		t.Errorf("source = %q, want %q", titles[0].Source, store.SourceService)
 	}
 }
 

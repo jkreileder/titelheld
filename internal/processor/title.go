@@ -144,7 +144,7 @@ func (p *Processor) llmTitle(
 	return titled{
 		Text:      title.Text,
 		Language:  title.Language,
-		Source:    store.SourceLLM,
+		Source:    store.SourceService,
 		Franchise: gathered.Franchise,
 	}, nil
 }

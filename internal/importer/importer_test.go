@@ -220,7 +220,7 @@ func TestImportLeavesServiceWrittenTitlesAlone(t *testing.T) {
 	if err := memory.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 30,
 		Title: "Musterrunde am Musterbach", Language: "de",
-		Source: store.SourceLLM, At: time.Now(),
+		Source: store.SourceService, At: time.Now(),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}

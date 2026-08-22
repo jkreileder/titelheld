@@ -275,12 +275,21 @@ func TestFewShotExamplesAreDerivedFromHistory(t *testing.T) {
 	h := newHarness(t, true, nil)
 	capture := withCapture(h)
 
+	// Not one of [naming.SyntheticExamples]: asserting on one of those would
+	// pass on the fallback, which is what an empty history produces — so the
+	// test would hold with the derivation switched off entirely.
+	const written = "Schotterhusten am Mustersee"
+
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID:  4242,
 		ActivityID: 901,
-		Title:      "Gegenwind bis Musterdorf",
+		Title:      written,
 		Language:   "de",
-		At:         h.now.Add(-time.Hour),
+
+		// The source is what admits it as an example. Left empty, this fixture
+		// is not one, and everything below would be testing the fallback.
+		Source: store.SourceService,
+		At:     h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -293,7 +302,7 @@ func TestFewShotExamplesAreDerivedFromHistory(t *testing.T) {
 
 	user := capture.prompt.User
 
-	if !strings.Contains(user, "Gegenwind bis Musterdorf") {
+	if !strings.Contains(section(t, user, "EXAMPLES"), written) {
 		t.Errorf("the athlete's own title is not among the examples:\n%s", user)
 	}
 
@@ -343,7 +352,8 @@ func TestDerivedExamplesAreNotRefetchedEverySweep(t *testing.T) {
 
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 901,
-		Title: "Gegenwind bis Musterdorf", Language: "de", At: h.now.Add(-time.Hour),
+		Title: "Gegenwind bis Musterdorf", Language: "de",
+		Source: store.SourceService, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -436,9 +446,13 @@ func TestUnreadableHistoryFallsBackToSyntheticExamples(t *testing.T) {
 
 	h.strava.getErrFor = map[int64]error{901: errors.New("strava: 404 deleted")}
 
+	// Marked as this service's own, so the row reaches the derivation and the
+	// fallback below is reached because the activity cannot be re-read — not
+	// because the history was filtered away before anything was attempted.
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 901,
-		Title: "Eine gelöschte Runde", Language: "de", At: h.now.Add(-time.Hour),
+		Title: "Eine gelöschte Runde", Language: "de",
+		Source: store.SourceService, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -499,7 +513,7 @@ func TestExamplesSurviveTheHistoryChangingMidSweep(t *testing.T) {
 			ActivityID: int64(900 + index),
 			Title:      title,
 			Language:   "de",
-			Source:     store.SourceLLM,
+			Source:     store.SourceService,
 			At:         h.now.Add(-time.Duration(index+1) * time.Hour),
 		}); err != nil {
 			t.Fatalf("MarkNamed: %v", err)
@@ -579,7 +593,7 @@ func TestTemplateTitlesAreKeptOutOfThePrompt(t *testing.T) {
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 900,
 		Title: "Gegenwind bis Musterdorf", Language: "de",
-		Source: store.SourceLLM, At: h.now.Add(-time.Hour),
+		Source: store.SourceService, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -621,8 +635,8 @@ func TestTheSourceOfEachTitleIsRecorded(t *testing.T) {
 		t.Fatalf("%d history entries, want 1", len(history))
 	}
 
-	if history[0].Source != store.SourceLLM {
-		t.Errorf("source = %q, want %q", history[0].Source, store.SourceLLM)
+	if history[0].Source != store.SourceService {
+		t.Errorf("source = %q, want %q", history[0].Source, store.SourceService)
 	}
 
 	if history[0].Language == "" {
@@ -667,7 +681,7 @@ func TestAnExampleWithoutALanguageFallsBack(t *testing.T) {
 
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 901,
-		Title: "Eine alte Runde", Source: store.SourceLLM, At: h.now.Add(-time.Hour),
+		Title: "Eine alte Runde", Source: store.SourceService, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -1149,5 +1163,134 @@ func TestAnEmptyFranchiseListDisablesTheDefaults(t *testing.T) {
 
 	if writes := h.strava.writes(); len(writes) != 1 {
 		t.Errorf("%d PUTs, want the ride named normally", len(writes))
+	}
+}
+
+// section returns one labeled block of a built prompt, without its heading.
+//
+// The two lists the history feeds are asserted separately, so a test that
+// means "in RECENT but not in EXAMPLES" has to be able to say which is which:
+// searching the whole prompt for a title cannot tell them apart, and that is
+// exactly the distinction this rule turns on.
+func section(t *testing.T, prompt, heading string) string {
+	t.Helper()
+
+	_, after, found := strings.Cut(prompt, "\n"+heading+"\n")
+	if !found {
+		return ""
+	}
+
+	// Sections are separated by a blank line before the next heading.
+	if end := strings.Index(after, "\n\n"); end >= 0 {
+		return after[:end]
+	}
+
+	return after
+}
+
+// An imported title is worth not repeating, and is never an example.
+//
+// The split this test asserts is the whole rule: a decade of the athlete's own
+// shorthand — bare place names, private jokes, whatever a tool left behind —
+// says exactly what must not be written twice and nothing about what a title
+// should sound like. It is enforced by the source a row carries, so no pattern
+// has to be maintained and no title can slip through by looking harmless.
+func TestImportedTitlesNeverTeachStyle(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	imported := []string{"Beispielstadt", "Beispieldorf", "Beispielbach - Beispieldorf"}
+
+	// None of them may occur inside a synthetic example, or "it never became an
+	// example" would hold for a title the fallback supplied anyway. "Musterdorf"
+	// failed exactly this way: it is part of "Gegenwind bis Musterdorf".
+	for _, title := range imported {
+		for _, example := range naming.SyntheticExamples() {
+			if strings.Contains(example.Title, title) {
+				t.Fatalf("%q occurs in the synthetic example %q", title, example.Title)
+			}
+		}
+	}
+
+	for index, title := range imported {
+		if err := h.store.MarkNamed(t.Context(), store.Naming{
+			AthleteID:  4242,
+			ActivityID: int64(700 + index),
+			Title:      title,
+			Language:   "de",
+			Source:     store.SourceImported,
+			At:         h.now.Add(-time.Duration(index+1) * time.Hour),
+		}); err != nil {
+			t.Fatalf("MarkNamed: %v", err)
+		}
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	recent := section(t, capture.prompt.User, "RECENT")
+	examples := section(t, capture.prompt.User, "EXAMPLES")
+
+	for _, title := range imported {
+		if !strings.Contains(recent, title) {
+			t.Errorf("imported title %q is missing from RECENT:\n%s", title, recent)
+		}
+
+		if strings.Contains(examples, title) {
+			t.Errorf("imported title %q was taught as an example:\n%s", title, examples)
+		}
+	}
+
+	// And with nothing else in the log, the examples are the shipped set —
+	// which is what "structurally unable to become an example" means when the
+	// entire history is imported.
+	if first := naming.SyntheticExamples()[0]; !strings.Contains(examples, first.Title) {
+		t.Errorf("the synthetic examples did not stand in for an imported history:\n%s", examples)
+	}
+}
+
+// A title this service wrote does become an example.
+//
+// The positive half of the split: a rule that excluded everything would pass
+// the test above and leave the prompt permanently synthetic.
+func TestServiceWrittenTitlesDoTeachStyle(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	// A title deliberately absent from the synthetic set. Asserting on one of
+	// those would pass whether or not the history reached the examples, since
+	// the synthetic set is what an empty history falls back to.
+	const written = "Schotterhusten am Mustersee"
+
+	for _, example := range naming.SyntheticExamples() {
+		if example.Title == written {
+			t.Fatalf("%q is a synthetic example; this test cannot tell the two apart", written)
+		}
+	}
+
+	if err := h.store.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 4242, ActivityID: 901,
+		Title: written, Language: "de",
+		Source: store.SourceService, At: h.now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if examples := section(t, capture.prompt.User, "EXAMPLES"); !strings.Contains(
+		examples, written) {
+		t.Errorf("a service-written title did not become an example:\n%s", examples)
 	}
 }
