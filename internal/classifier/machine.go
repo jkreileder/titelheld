@@ -40,11 +40,18 @@ var xertDifficulties = []string{
 
 // xertFocusTypes are Xert's rider focus-type names, optionally prefixed by
 // "Mixed" in the observed title.
+//
+// "Pure Endurance" and "Polar Endurance" were added after a history import
+// found two titles Xert had written that this list did not recognize — the
+// safe kind of wrong, since an unmatched title is skipped rather than
+// overwritten, but a naming opportunity lost every time it happens.
 var xertFocusTypes = []string{
 	"Breakaway Specialist",
 	"Climber",
 	"GC Specialist",
+	"Polar Endurance",
 	"Puncheur",
+	"Pure Endurance",
 	"Rouleur",
 	"Sprinter",
 	"Time Trialist",
