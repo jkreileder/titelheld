@@ -864,25 +864,39 @@ curl -s -G https://www.strava.com/api/v3/push_subscriptions \
 ```
 
 Deleting takes the id from that listing rather than from this page — recreating after a rotation
-mints a new one, and a runbook that hard-codes the old id deletes nothing:
+mints a new one, and a runbook that hard-codes the old id deletes nothing. As a function, so a
+failed step returns instead of closing the shell you pasted it into:
 
 ```sh
-SUB=$(curl -sf -G https://www.strava.com/api/v3/push_subscriptions \
-  --data-urlencode "client_id=$(sec strava-client-id)" \
-  --data-urlencode "client_secret=$(sec strava-client-secret)" | jq -r '.[0].id // empty')
+delete_subscription() {
+  subs=$(curl -sf -G https://www.strava.com/api/v3/push_subscriptions \
+    --data-urlencode "client_id=$(sec strava-client-id)" \
+    --data-urlencode "client_secret=$(sec strava-client-secret)") ||
+    { echo "listing failed" >&2; return 1; }
 
-[[ $SUB =~ ^[0-9]+$ ]] || { echo "no subscription to delete"; return 2>/dev/null || exit 1; }
+  sub=$(printf '%s' "$subs" | jq -r '.[0].id // empty')
+  case $sub in
+    '' | *[!0-9]*) echo "no subscription to delete" >&2; return 1 ;;
+  esac
 
-curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -G \
-  "https://www.strava.com/api/v3/push_subscriptions/${SUB}" \
-  --data-urlencode "client_id=$(sec strava-client-id)" \
-  --data-urlencode "client_secret=$(sec strava-client-secret)"
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -G \
+    "https://www.strava.com/api/v3/push_subscriptions/${sub}" \
+    --data-urlencode "client_id=$(sec strava-client-id)" \
+    --data-urlencode "client_secret=$(sec strava-client-secret)") ||
+    { echo "delete request failed" >&2; return 1; }
+
+  [ "$code" = 204 ] || { echo "delete returned $code, not 204" >&2; return 1; }
+}
+
+delete_subscription
 ```
 
-The guard is not ceremony: an empty listing makes `jq` yield nothing and `[]` yields `null`, and
-either would send a `DELETE` to `/push_subscriptions/null` that reports nothing useful. `curl -s`
-alone stays quiet about an HTTP error, hence `-sf` on the read and the status code printed on the
-write — a successful delete is `204` with no body, so the status is the only thing that says so.
+Every step is checked because none of them is loud on failure. `curl -s` says nothing about an
+HTTP error, so the read needs `-f` *and* its exit status inspected before the output is parsed —
+a pipeline reports `jq`'s status, not `curl`'s, so a failed listing can otherwise be parsed into a
+plausible-looking id. An empty listing yields no id at all rather than a wrong one, which the
+`case` catches. And a successful delete is `204` with an empty body, so the status code is the
+only thing that distinguishes it from a `404` or an authentication failure.
 
 The credentials go in the query string: Strava reads them as parameters, and `curl -d` would send
 them as a request body it ignores.
