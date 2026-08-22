@@ -552,9 +552,13 @@ Franchises are **data, not code**. Adding one is a configuration change and need
 The prompt asks for the entry's wording; a request to a model is not a guarantee. So the position
 moves only when the title that comes back **demonstrably uses** the entry: containment of the
 entry's core after normalizing both sides — lowercased, punctuation flattened to spaces,
-whitespace collapsed, the entry's leading article dropped — matched on token boundaries.
-`Son of the Pink Panther: Gegenwind` counts. `Der Panther im Morgengrauen` does not, and neither
-does a translation.
+whitespace collapsed, a leading `the`, `a` or `an` dropped when something follows it — matched on
+token boundaries. `Son of the Pink Panther: Gegenwind` counts. `Der Panther im Morgengrauen` does
+not, and neither does a translation.
+
+Dropping the article is what lets `Pink Panther im Nebel` count as `The Pink Panther`. It only
+applies when a word follows, so a one-word entry keeps that word and stays matchable rather than
+becoming an empty core that matches everything.
 
 If the entry goes unused the model is offered it **once more**, and no more than that: a model
 that has declined an entry twice will not be argued into it, and each attempt is a paid call.
@@ -672,7 +676,9 @@ To add one:
    stay in the series, in order, and are never offered.
    Seeding the position also works and is sometimes clearer: it lives in
    `franchise/{athleteID}-{name}` as a single `position` integer, and setting it to the index the
-   rotation should resume at is the whole of it.
+   rotation should resume at is the whole of it. That index is **zero-based** — `0` is the first
+   entry of `titles`, so a series to be resumed at the fourth entry gets `3`. Counting from one
+   silently skips a title.
 
 **Still shipped in code:** the *default profile* — what applies when the document is absent or
 cannot be read. Tiers,

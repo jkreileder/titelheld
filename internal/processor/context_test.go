@@ -1066,8 +1066,8 @@ func TestAConfigurationDocumentReplacesTheDefaultProfile(t *testing.T) {
 //
 // Answering from the default profile is right for the ride in hand and wrong
 // to keep doing: if the athlete removed or renamed a series, every later ride
-// in the process would still be offered it, and AdvanceFranchise would
-// durably count a position the configuration no longer names. A repeated read
+// in the process would still be offered it, and AdvanceFranchisePast would
+// durably record a position the configuration no longer names. A repeated read
 // is cheap; a wrong write is not.
 func TestAFailedConfigurationReadIsNotCached(t *testing.T) {
 	t.Parallel()
