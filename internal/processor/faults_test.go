@@ -302,7 +302,7 @@ func TestTheCommuteSafetyNetHasDefaultsOfItsOwn(t *testing.T) {
 			// Deliberately blank, which is what an unconfigured athlete has.
 			cfg := classifier.Config{Home: syntheticHome, Work: syntheticWork}
 
-			got := commuteTitle(classifier.Decision{Direction: tc.direction}, cfg)
+			got := cfg.CommuteTitle(tc.direction)
 			if got != tc.want {
 				t.Errorf("title %q, want %q", got, tc.want)
 			}

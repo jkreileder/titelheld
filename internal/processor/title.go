@@ -30,7 +30,7 @@ func (p *Processor) title(
 		// German templates, and the language is stated rather than guessed:
 		// the named log keeps it, and few-shot examples read it back.
 		return titled{
-			Text:     commuteTitle(decision, p.deps.Classifier),
+			Text:     p.deps.Classifier.CommuteTitle(decision.Direction),
 			Language: naming.German,
 			Source:   store.SourceTemplate,
 		}, nil
@@ -238,23 +238,6 @@ func (p *Processor) geography(
 	return summary, nil
 }
 
-// commuteTitle is the safety net for a commute ActivityFix did not title.
-func commuteTitle(decision classifier.Decision, cfg classifier.Config) string {
-	if decision.Direction == classifier.DirectionToHome {
-		if cfg.ToHomeTitle != "" {
-			return cfg.ToHomeTitle
-		}
-
-		return "Nach Hause"
-	}
-
-	if cfg.ToWorkTitle != "" {
-		return cfg.ToWorkTitle
-	}
-
-	return "Zur Arbeit"
-}
-
 // errandTitle picks a deliberately boring German name.
 //
 // No LLM and no geocoding: an errand's destination is exactly the thing a
@@ -262,7 +245,7 @@ func commuteTitle(decision classifier.Decision, cfg classifier.Config) string {
 // comes from a reverse-geocoded point of interest. The pool is small on
 // purpose — these titles are meant to be unremarkable.
 func errandTitle(activity *strava.Activity) string {
-	pool := []string{"Besorgungen", "In die Stadt", "Stadtrunde"}
+	pool := classifier.DefaultErrandTitles()
 
 	// Chosen from the activity ID rather than at random, so replaying the same
 	// activity produces the same title and a test can assert on it.

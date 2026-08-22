@@ -55,8 +55,14 @@ func TestImportWithSeedsTheBoundAthlete(t *testing.T) {
 	memory := boundMemory(t)
 
 	list := &listOnce{activities: []strava.Activity{
-		{ID: 1, Name: "Gegenwind bis Musterdorf", StartDate: time.Now().Add(-24 * time.Hour)},
-		{ID: 2, Name: "Morning Ride", StartDate: time.Now().Add(-48 * time.Hour)},
+		{
+			ID: 1, Name: "Gegenwind bis Musterdorf", SportType: "GravelRide",
+			StartDate: time.Now().Add(-24 * time.Hour),
+		},
+		{
+			ID: 2, Name: "Morning Ride", SportType: "Ride",
+			StartDate: time.Now().Add(-48 * time.Hour),
+		},
 	}}
 
 	if err := importWith(t.Context(), config.Config{}, realStore{memory}, list, 4242, quietLogger()); err != nil {

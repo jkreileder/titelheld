@@ -53,6 +53,16 @@ type Deps struct {
 	// outcome the skip exists to prevent, arrived at by omission.
 	MachineTitles classifier.MachineTitles
 
+	// TemplateTitles are the titles this service writes itself — the commute
+	// pair and the errand pool. They are skipped for the opposite reason to a
+	// machine title: they are correct, and they are meant to repeat. Seeded as
+	// history they would be indistinguishable from the athlete's own words,
+	// and a working week produces enough of them to drown everything else.
+	//
+	// Empty means the shipped set, on the same reasoning as [Deps.MachineTitles]:
+	// a caller that omitted it would seed exactly what it meant to exclude.
+	TemplateTitles []string
+
 	// PerPage defaults to [strava.MaxActivitiesPerPage]. Lower it only to
 	// exercise paging in a test.
 	PerPage int
@@ -76,9 +86,16 @@ type Result struct {
 	// Imported is how many titles were written.
 	Imported int
 
-	// Skipped counts activities whose title is a Strava default or a
-	// recognized machine title.
+	// Skipped counts activities whose title is not the athlete's own style: a
+	// Strava default, another tool's output, or one of this service's own
+	// templates.
 	Skipped int
+
+	// NotARide counts activities excluded by sport type before their title was
+	// looked at. Separate from [Result.Skipped] because the two say different
+	// things: one is a title worth nothing to the history, the other an
+	// activity this service would never name at all.
+	NotARide int
 
 	// AlreadyKnown counts activities the named log already had, which is what
 	// makes a second run cheap and a resumed one correct.
@@ -122,6 +139,10 @@ func Run(ctx context.Context, deps Deps) (Result, error) {
 
 	if deps.MachineTitles.IsEmpty() {
 		deps.MachineTitles = classifier.DefaultMachineTitles()
+	}
+
+	if len(deps.TemplateTitles) == 0 {
+		deps.TemplateTitles = classifier.DefaultConfig().TemplateTitles()
 	}
 
 	var result Result
@@ -170,6 +191,7 @@ func Run(ctx context.Context, deps Deps) (Result, error) {
 		"seen", result.Seen,
 		"imported", result.Imported,
 		"skipped", result.Skipped,
+		"not_a_ride", result.NotARide,
 		"already_known", result.AlreadyKnown,
 		"pages", result.Pages)
 
@@ -182,13 +204,22 @@ func (d Deps) importOne(
 ) error {
 	result.Seen++
 
-	// A Strava default is not a title, and a machine title is one this service
-	// exists to replace. Either would arrive in RECENT as something not to
-	// repeat — which is wrong for a default, since they repeat by design — and
-	// in the few-shot examples as the athlete's style, which neither is. Fifty
-	// "Morning Ride"s would do to the history exactly what commute templates
-	// did before they were filtered out.
-	if classifier.IsDefaultTitle(activity.Name) || d.MachineTitles.Matches(activity.Name) {
+	// Rides only, decided before the title is looked at. The history exists to
+	// remember what this athlete's rides are called; a strength session or a
+	// walk is titled by whatever recorded it, and this service will never name
+	// one, so its title is neither a repeat to avoid nor a style to learn.
+	if !importableSport(activity.SportType) {
+		result.NotARide++
+
+		return nil
+	}
+
+	// What is left is a ride, which does not make its title the athlete's.
+	// Anything this service would not have learned from arrives in RECENT as
+	// something not to repeat — wrong for a Strava default, which repeats by
+	// design — and would once have arrived in the few-shot examples as the
+	// athlete's style, which none of these are.
+	if d.notTheAthletesStyle(activity.Name) {
 		result.Skipped++
 
 		return nil
