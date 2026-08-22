@@ -1018,11 +1018,32 @@ also what to do after a `webhook-path-secret` rotation — the old URL stops exi
 new secret is deployed, and Strava will keep posting to it until told otherwise.
 
 Events accumulate in the `pending` queue from the moment the subscription exists. Nothing drains
-them until the Cloud Scheduler job is unpaused or a sweep is triggered by hand:
+them until the Cloud Scheduler job is unpaused or a sweep is triggered by hand.
+
+Triggering one by hand is three commands, not one: `gcloud scheduler jobs run` refuses a paused
+job, so the job is resumed, run, and paused again.
 
 ```sh
-gcloud scheduler jobs run titelheld-sweep --location="$REGION" --project="$PROJECT"
+gcloud scheduler jobs resume titelheld-sweep --location="$REGION" --project="$PROJECT"
+gcloud scheduler jobs run    titelheld-sweep --location="$REGION" --project="$PROJECT"
+gcloud scheduler jobs pause  titelheld-sweep --location="$REGION" --project="$PROJECT"
 ```
+
+Run them one after another and check the last one succeeded: the job must end up paused again,
+and a `pause` that failed leaves the sweep running every five minutes with nothing saying so.
+`gcloud scheduler jobs describe titelheld-sweep --location="$REGION" --project="$PROJECT"` says
+`state: PAUSED` when it is.
+
+**There is a race, and it is deliberate.** While the job is resumed its own schedule can fire —
+five minutes is the interval, the three commands take seconds, so it usually does not, but it
+can. That extra tick is one more sweep over the same queue, which is exactly what the manual run
+does anyway, and a fire that lands while a sweep is running is answered `already running`
+without starting a second one. Under `DRY_RUN=1` a sweep writes nothing to Strava at all and
+leaves every activity queued, so the worst case is a second line in the log. This stops being
+free the day writes are enabled: a scheduled tick between `resume` and `pause` would then rename
+activities, and the sequence needs reconsidering rather than repeating.
+
+Executed this way on 2026-08-23.
 
 ## Cutting a release
 
