@@ -861,8 +861,12 @@ create_subscription() {
     *) echo "create returned $code: $body" >&2; return 1 ;;
   esac
 
-  id=$(printf '%s' "$body" | jq -r '.id // empty')
-  [ -n "$id" ] || { echo "no subscription id in the response: $body" >&2; return 1; }
+  id=$(printf '%s' "$body" | jq -r '.id // empty') ||
+    { echo "unparseable response: $body" >&2; return 1; }
+
+  case $id in
+    '' | *[!0-9]*) echo "no subscription id in the response: $body" >&2; return 1 ;;
+  esac
 
   echo "subscription $id created"
 }
