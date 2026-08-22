@@ -658,6 +658,7 @@ To add one:
 
    ```sh
    gcloud logging read 'resource.type="cloud_run_revision" AND
+     resource.labels.service_name="titelheld" AND
      (jsonPayload.msg="loaded the athlete configuration"
       OR jsonPayload.msg="no athlete configuration; using the default franchise profile")' \
      --project="$PROJECT" --limit=5 --freshness=1h
