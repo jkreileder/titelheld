@@ -42,21 +42,36 @@ func TestDecodePolylineRejectsGarbage(t *testing.T) {
 	tests := []struct {
 		name    string
 		encoded string
+		wantMsg string // empty: only ErrBadPolyline is asserted
 	}{
 		{name: "truncated pair", encoded: "_p~iF"},
 		{name: "byte below the printable range", encoded: "_p~iF\x01"},
 		{name: "byte above the alphabet", encoded: "_p~iF~ps|U\x7f\x7f"},
 		{name: "utf-8 continuation byte", encoded: "_p~iF~ps|U\xc3\xa9"},
-		{name: "value never terminates", encoded: "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"},
-		{name: "value wider than the format allows", encoded: "\xfe\xfe\xfe\xfe\xfe\xfe\xfe\xfe"},
+		{
+			// Seven '~' bytes are seven in-alphabet continuation chunks: six
+			// fill the 30-bit value, and the seventh must trip the width
+			// guard rather than be folded in. Bytes outside the alphabet
+			// (\xff and friends) never get that far — they die at the
+			// alphabet check above — so this is the ONLY case here that
+			// exercises it.
+			name:    "value wider than the format allows",
+			encoded: "~~~~~~~",
+			wantMsg: "does not terminate",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := DecodePolyline(tt.encoded); !errors.Is(err, ErrBadPolyline) {
+			_, err := DecodePolyline(tt.encoded)
+			if !errors.Is(err, ErrBadPolyline) {
 				t.Errorf("DecodePolyline(%q) = %v, want ErrBadPolyline", tt.encoded, err)
+			}
+
+			if tt.wantMsg != "" && !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("DecodePolyline(%q) = %q, want the %q guard", tt.encoded, err, tt.wantMsg)
 			}
 		})
 	}
