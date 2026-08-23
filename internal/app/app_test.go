@@ -45,6 +45,7 @@ func env(overrides map[string]string) func(string) string {
 		"STRAVA_VERIFY_TOKEN":  "test-verify-token",
 		"BASE_URL":             "https://namer.example.invalid",
 		"WEBHOOK_PATH_SECRET":  "s3cr3t-segment",
+		"MAX_INSTANCES":        "1",
 	}
 
 	for key, value := range overrides {

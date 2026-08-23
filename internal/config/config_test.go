@@ -16,6 +16,7 @@ func env(overrides map[string]string) func(string) string {
 		"STRAVA_VERIFY_TOKEN":  "test-verify-token",
 		"BASE_URL":             "https://namer.example.invalid",
 		"WEBHOOK_PATH_SECRET":  "s3cr3t-segment",
+		"MAX_INSTANCES":        "1",
 	}
 
 	for key, value := range overrides {
@@ -513,5 +514,67 @@ func TestHealthPathAvoidsThePlatformsReservedPath(t *testing.T) {
 	if HealthPath != "/health" {
 		t.Errorf("HealthPath = %q; if this moved deliberately, move this assertion with it",
 			HealthPath)
+	}
+}
+
+// The service refuses to start unless Cloud Run told it there is one instance.
+//
+// Four pieces of state in this process — the OAuth state map, the first-bind
+// lock, token-refresh serialization and the sweep lock — are correct only
+// because there is one container. Terraform sets max_instance_count = 1 and
+// passes the same number in as MAX_INSTANCES; this is the binary checking that
+// it was told, rather than assuming.
+func TestMaxInstancesIsRequiredToServe(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "unset", raw: "", want: "is not set"},
+		{name: "two", raw: "2", want: `"2"`},
+		{name: "zero", raw: "0", want: `"0"`},
+		{name: "empty-ish", raw: "  ", want: "is not set"},
+		{name: "not a number", raw: "one", want: `"one"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Load(env(map[string]string{"MAX_INSTANCES": tc.raw}))
+			if err == nil {
+				t.Fatalf("MAX_INSTANCES=%q was accepted", tc.raw)
+			}
+
+			// The evidence, not an interpretation of it: an unset variable and
+			// a wrong one need different fixes, so the message has to tell
+			// them apart.
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not report %s", err, tc.want)
+			}
+
+			if !strings.Contains(err.Error(), "MAX_INSTANCES") {
+				t.Errorf("error %q does not name the variable", err)
+			}
+		})
+	}
+
+	// And one is accepted, with surrounding space, because a Terraform-rendered
+	// value is a string somebody could indent.
+	if _, err := Load(env(map[string]string{"MAX_INSTANCES": " 1 "})); err != nil {
+		t.Errorf("MAX_INSTANCES=\" 1 \" was refused: %v", err)
+	}
+}
+
+// An import is a second process on purpose, and needs no ceiling.
+//
+// It serves no HTTP, completes no authorization flow and runs no sweep, so
+// none of the four assumptions the ceiling protects apply to it. Requiring the
+// variable would mean inventing a value for a check that is not about it.
+func TestMaxInstancesIsNotRequiredForAnImport(t *testing.T) {
+	t.Parallel()
+
+	if _, err := LoadImport(env(map[string]string{"MAX_INSTANCES": ""})); err != nil {
+		t.Errorf("an import refused to run without MAX_INSTANCES: %v", err)
 	}
 }
