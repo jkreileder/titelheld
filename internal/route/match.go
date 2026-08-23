@@ -35,15 +35,24 @@ type Verdict struct {
 //
 // Both floors must clear before similarity is even considered — that is the
 // fail-closed shape the negative case needs: a short trace cannot match,
-// whatever its score.
+// whatever its score. Configuration that should never have been built also
+// refuses here: a threshold outside [0, 1] compares against nothing
+// meaningful, and a non-positive floor means the caller disabled the guard
+// this verdict exists to enforce. Garbage in matches nothing, ever.
 func (v Verdict) Matched() bool {
+	if v.Threshold < 0 || v.Threshold > 1 || v.MinCells <= 0 {
+		return false
+	}
+
 	return !v.SmallA && !v.SmallB && v.Similarity >= v.Threshold
 }
 
 // Match compares two cell sets and returns the verdict.
 //
-// A threshold outside [0, 1] or a non-positive floor simply never matches;
-// garbage configuration fails closed rather than panicking or matching.
+// There is no error return because there is no way to fail usefully: a NaN
+// threshold, an infinite one, a negative floor — every malformed input ends
+// in a verdict whose Matched() is false, and the fields record what was
+// actually compared so a caller can log why.
 func Match(a, b Set, threshold float64, minCells int) Verdict {
 	return Verdict{
 		Similarity: Jaccard(a, b),

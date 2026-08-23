@@ -167,6 +167,21 @@ func loadFixtureRides(t *testing.T) (map[string][]Point, bool) {
 	return rides, rides != nil
 }
 
+// fixtureRide returns one ride from a loaded fixture, failing loudly when the
+// ID is gone: a nil slice would fingerprint as an empty set and "pass"
+// without any geometry, so a renamed fixture must not be able to quietly
+// remove the real-ride controls.
+func fixtureRide(t *testing.T, rides map[string][]Point, id string) []Point {
+	t.Helper()
+
+	points, ok := rides[id]
+	if !ok || len(points) == 0 {
+		t.Fatalf("the fixture is present but ride %q is missing or empty; the real-ride controls need it", id)
+	}
+
+	return points
+}
+
 // mustGrid builds a grid or fails the test.
 func mustGrid(t *testing.T, size float64) Grid {
 	t.Helper()
@@ -458,9 +473,16 @@ func TestMatchAppliesTheFloorBeforeSimilarity(t *testing.T) {
 			a:    big, b: big, threshold: 1.7, minCells: 25,
 		},
 		{
-			name: "zero floor disables the floor",
+			name: "a negative threshold fails closed, not open",
+			a:    big, b: big, threshold: -0.5, minCells: 25,
+		},
+		{
+			name: "a NaN threshold fails closed",
+			a:    big, b: big, threshold: math.NaN(), minCells: 25,
+		},
+		{
+			name: "a zeroed floor fails closed instead of disabling the guard",
 			a:    small, b: small, threshold: 0.7, minCells: 0,
-			wantMatched: true,
 		},
 	}
 
@@ -521,8 +543,8 @@ func TestFingerprintIsReversalInvariant(t *testing.T) {
 	}
 
 	if rides, ok := loadFixtureRides(t); ok {
-		subjects["real aug15_east"] = rides["aug15_east"]
-		subjects["real aug19_west"] = rides["aug19_west"]
+		subjects["real aug15_east"] = fixtureRide(t, rides, "aug15_east")
+		subjects["real aug19_west"] = fixtureRide(t, rides, "aug19_west")
 	}
 
 	for _, size := range []float64{DefaultGridSizeMeters, 400} {
@@ -617,7 +639,7 @@ func TestFingerprintToleratesFiveMetresOfJitter(t *testing.T) {
 
 	if rides, ok := loadFixtureRides(t); ok {
 		for _, id := range []string{"aug15_east", "aug16_west_long", "aug19_west", "aug21_west"} {
-			subjects["real "+id] = rides[id]
+			subjects["real "+id] = fixtureRide(t, rides, id)
 		}
 	}
 
