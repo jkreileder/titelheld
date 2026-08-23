@@ -10,6 +10,81 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.6.0] – 2026-08-23
+
+What an external review found, and what the tests could not have.
+Five changes, four of them defects that every existing test agreed were fine — because each test
+built the thing it was testing.
+
+- **The deployed service banned no words at all.**
+  `BANNED_WORDS` unset produced an empty list and the empty list went straight to the validator,
+  while the configuration field's own comment said "empty means the shipped list".
+  Nothing anywhere made that true.
+  The fallback now lives where the validator is built, beside the machine-title patterns that
+  already worked this way.
+  A configured list *replaces* the shipped one, so removing a word means naming the ones you
+  keep, and there is no environment spelling for "ban nothing".
+- **Every test in the wiring package hand-built its configuration**, which agrees with itself by
+  construction and cannot notice a default that never reaches production.
+  `sweepDeps` is now the one place configuration becomes the processor's dependencies, and three
+  tests drive the real loader through it from an environment that sets nothing optional: the
+  shipped words are banned, a configured list replaces them, and the rest of the posture a
+  revision gets — writes off, attribution on, franchises unpinned, Strava defaults and Xert
+  titles renamable, a human title skipped, a Zwift ride kept.
+- **The ACHIEVEMENTS block was never fed.**
+  It has been in the prompt builder since the prompt existed, and `Ride.Achievements` was
+  populated nowhere, so every ride reached the model with an empty list.
+  Segment efforts fill it now: a personal top-three or a Strava achievement, deduplicated, capped
+  at six, and names only — the times and ranks that selected an effort never reach the prompt.
+  Segment names are the least trusted text in the prompt, since a segment is named by whoever
+  created it, so the system prompt declares them data and never instructions, and states that a
+  place inside a segment name is still not a place the model may name.
+- **The release refuses to deploy a writing revision** instead of reporting one afterwards.
+  The `DRY_RUN` assertion ran after `gcloud run deploy`, so by the time it went red the revision
+  was live and naming.
+  It now reads the service the deploy will land on, before deploying — sound because the job sets
+  the image and nothing else, so a new revision inherits the running service's environment.
+  Enabling writes becomes two deliberate acts: the Terraform change that sets `DRY_RUN=0`, and
+  the repository variable `WRITES_ACKNOWLEDGED=1` that says a release is meant to carry it.
+  Acknowledgement covers writes being legibly on and nothing else — an unreadable value fails the
+  release either way.
+- **A draft release requires a deploy.**
+  The job accepted `skipped` from the image and deploy jobs, which was right during the Workload
+  Identity bootstrap and wrong afterwards: a draft for a version nobody deployed is how a tag
+  comes to look shipped.
+  `RELEASE_BOOTSTRAP=1` restores the lenient path for a repository with no infrastructure yet,
+  and marks what it produces `NOT DEPLOYED` in the title and the notes.
+- **`MAX_INSTANCES` is now a startup contract.**
+  Four pieces of state are correct only while one instance serves — the OAuth state map, the
+  first-bind lock, token-refresh serialization and the sweep lock — so Terraform passes the
+  scaling ceiling into the container and the binary refuses to start without it.
+  It is a deployment check and not a mutex: the ceiling is per revision, so a rolling deploy or a
+  traffic split runs two instances that each read `1`.
+  What makes that tolerable is the deployment pattern rather than the code, and the README says
+  so, along with the fixes that are not built — a compare-and-set on the token document, and a
+  lease for the sweep.
+
+### Not in this release
+
+- **Route repeats.** Still specified and unbuilt.
+- **The rest of the configuration.**
+  Tiers, geofences, banned words and language preferences are still the defaults shipped in code.
+- **Human titles in the no-repeat list.**
+  A ride titled by hand is still dropped by the skip-gate without being recorded.
+  Re-running `cmd/titelheld-import` closes the gap by hand.
+
+### Upgrading
+
+**Apply the Terraform before deploying this release.**
+The service must carry `MAX_INSTANCES=1` before a revision that demands it starts; without it the
+container refuses to start, fails readiness, and the deploy fails with it — safe, and a failed
+release rather than a deployed one.
+
+Nothing else to apply.
+`DRY_RUN` stays on, the Cloud Scheduler job stays paused, and no repository variable needs
+setting: `WRITES_ACKNOWLEDGED` and `RELEASE_BOOTSTRAP` are both unset, which is the intended
+posture for a service that cannot write.
+
 ## [v0.5.0] – 2026-08-22
 
 An offer is not a use.
@@ -248,6 +323,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.6.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.6.0
 [v0.5.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.5.0
 [v0.4.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.4.0
 [v0.3.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.3.0
