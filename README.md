@@ -1268,9 +1268,10 @@ into one stale click and one unnoticed diff.
 
 So the value must parse as `YYYY-MM-DD`, dated no more than **7 days before** the tag and no more
 than **1 day after** it. A bare `1` is refused for being the wrong shape, `2026-02-30` for not
-being a date, and any date more than 7 days before the tag for being stale — each with what it
-saw and the tag's own date in the message. The single day of slack in the future is for a tag
-pushed late in the UTC evening, which is already tomorrow for the person pushing it.
+being a date, and any date more than 7 days before the tag for being stale. Every refusal quotes
+the value it saw; the ones about age name the tag's own date beside it. The single day of slack
+in the future is for a tag pushed late in the UTC evening, which is already tomorrow for the
+person pushing it.
 
 The comparison is against the **tag's** timestamp, not the clock: re-running an old release
 cannot make a stale acknowledgement fresh again.
