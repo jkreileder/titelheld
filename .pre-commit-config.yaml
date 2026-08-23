@@ -49,6 +49,19 @@ repos:
       # Lints GitHub Actions workflows; runs shellcheck on run: blocks when
       # shellcheck is on PATH. Degrades to YAML/expression checks otherwise.
       - id: actionlint
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: 99470f5e12208ff0fb17ab81c3c494f7620a1d8d  # frozen: v0.11.0
+    hooks:
+      # Shell that lives in a file rather than in a `run:` block. actionlint
+      # covers the workflows' inline shell; this covers the scripts they call,
+      # which is where the logic worth testing ended up.
+      - id: shellcheck
+        args: [--severity=style]
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: 05c1426671b9237fb5e1444dd63aa5731bec0dfb  # frozen: v3.13.1-1
+    hooks:
+      - id: shfmt
+        args: [--write, --indent=2, --case-indent]
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
     rev: 451b56af716f9f0d0c2b816503a3fd0cf8b036fa  # frozen: v1.29.0
     hooks:

@@ -1258,7 +1258,22 @@ Turning writes on is therefore two deliberate acts, and the second one is this:
 | | |
 | --- | --- |
 | **1. Terraform** | set `DRY_RUN=0` on the service, review it, apply it |
-| **2. Repository variable** | set `WRITES_ACKNOWLEDGED=1` |
+| **2. Repository variable** | set `WRITES_ACKNOWLEDGED` to today's date, `YYYY-MM-DD` |
+
+**The acknowledgement is a date, and it expires.** A flag would not: set once during a flip and
+never removed, `WRITES_ACKNOWLEDGED=1` would still be sitting there months later, and the day an
+accidental Terraform change reintroduced `DRY_RUN=0` — the drift this gate exists for — the next
+signed tag would ship a writing revision on a warning. Two deliberate acts would have decayed
+into one stale click and one unnoticed diff.
+
+So the value must parse as `YYYY-MM-DD`, dated no more than **7 days before** the tag and no more
+than **1 day after** it. A bare `1` is refused for being the wrong shape, `2026-02-30` for not
+being a date, and a value from last month for being stale — each with what it saw and the tag's
+own date in the message. The single day of slack in the future is for a tag pushed late in the
+UTC evening, which is already tomorrow for the person pushing it.
+
+The comparison is against the **tag's** timestamp, not the clock: re-running an old release
+cannot make a stale acknowledgement fresh again.
 
 With the variable set, a release whose target service has writes enabled proceeds and says so
 loudly in the log. Without it, that release fails before deploying anything. A repository
