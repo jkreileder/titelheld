@@ -259,13 +259,6 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
-      # By digest, never by tag. The version tags exist for humans; what runs
-      # is the exact image the attestation covers, so a tag moved afterwards
-      # cannot change it.
-      #
-      # Only the image is set here. Everything else about the service — the
-      # service account, the scaling bounds, the environment, the secret
-      # references — belongs to Terraform, which ignores the image in return.
       # The writes gate, before the deploy rather than after it.
       #
       # Releasing a version must never be the thing that turns writes on:
@@ -275,33 +268,23 @@ jobs:
       # by the time the job went red.
       #
       # The existing service predicts the new revision. `gcloud run deploy`
-      # here sets the image and nothing else; every environment variable
+      # below sets the image and nothing else; every environment variable
       # belongs to Terraform, which ignores the image in return. So a revision
       # deployed by this job inherits the environment of the one running now,
       # and reading it beforehand answers the question this gate is asking.
       #
-      # The escape hatch is a repository variable, not a flag on the tag: the
-      # day writes are switched on, DRY_RUN=0 will be a Terraform change that
-      # was reviewed and applied, and WRITES_ACKNOWLEDGED=1 is the second,
-      # separate act that says the release is meant to carry it. Setting a
-      # repository variable is visible, dated and revocable; a tag is not.
-      # The writes gate, before the deploy rather than after it.
+      # The escape hatch is a repository variable rather than something on the
+      # tag: the day writes are switched on, DRY_RUN=0 is a Terraform change
+      # that was reviewed and applied, and WRITES_ACKNOWLEDGED — set to that
+      # day's date, YYYY-MM-DD — is the second, separate act saying this
+      # release is meant to carry it. A bare "1" is refused; the value expires
+      # seven days after the date it names, so one left behind stops mattering
+      # on its own. See writes-gate.sh.
       #
-      # Releasing a version must never be the thing that turns writes on:
-      # there is no version number that means "now write to Strava". This used
-      # to be checked after `gcloud run deploy`, which made it a report of
-      # something that had already happened — the revision was live and naming
-      # by the time the job went red.
-      #
-      # The existing service predicts the new revision. `gcloud run deploy`
-      # here sets the image and nothing else; every environment variable
-      # belongs to Terraform, which ignores the image in return. So a revision
-      # deployed by this job inherits the environment of the one running now,
-      # and reading it beforehand answers the question this gate is asking.
-      #
-      # The logic lives in a script so that something can execute it — see the
-      # header of writes-gate.sh, and the tests that run it against a stubbed
-      # gcloud.
+      # The logic lives in that script so that something can execute it: a
+      # `run:` block can be linted and cannot be run, which is how the version
+      # of this gate that checked after the deploy stayed as lint-clean as
+      # this one. release-logic.yaml runs it against a stubbed gcloud.
       - name: Check the service the deploy will land on
         env:
           PHASE: pre
@@ -312,6 +295,13 @@ jobs:
           TAG_EPOCH: ${{ needs.check-release-version.outputs.tag_epoch }}
         run: bash .github/scripts/writes-gate.sh
 
+      # By digest, never by tag. The version tags exist for humans; what runs
+      # is the exact image the attestation covers, so a tag moved afterwards
+      # cannot change it.
+      #
+      # Only the image is set here. Everything else about the service — the
+      # service account, the scaling bounds, the environment, the secret
+      # references — belongs to Terraform, which ignores the image in return.
       - name: Deploy the revision
         env:
           PROJECT: ${{ vars.GCP_PROJECT }}
