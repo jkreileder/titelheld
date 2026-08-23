@@ -50,6 +50,13 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Python bytecode. The repository is Go, but the release workflow's decision
+# logic is tested by a Python script, and importing it — which the negative
+# controls do — leaves a __pycache__ beside it. One such file was committed
+# before this existed.
+__pycache__/
+*.py[cod]
+
 # Output of local security scans. Reports name file paths and quote source, and
 # a scan is a local artifact of one moment rather than something the repository
 # should carry.
