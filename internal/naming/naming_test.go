@@ -1101,3 +1101,58 @@ func TestTheFranchiseEntryIsMarkedAsData(t *testing.T) {
 		t.Errorf("the franchise block does not mark its entry as data:\n%s", prompt.User)
 	}
 }
+
+// Every untrusted string in the prompt is declared as data.
+//
+// Three strings reach the model that this service did not write: the bike
+// name the athlete typed, the ride notes parsed out of a description other
+// tools filled in, and the names of segments — which are the least trusted of
+// the three, because a segment is named by whoever created it and every rider
+// who crosses it inherits that name.
+//
+// The validator is what enforces the outcome; this asserts the request is
+// made at all. A block added later without its rule is the failure this
+// catches.
+func TestEverySourceOfUntrustedTextIsDeclaredAsData(t *testing.T) {
+	t.Parallel()
+
+	system := BuildPrompt(Ride{}, Context{}).System
+
+	// Split into rules, so a mention of one block inside another block's rule
+	// cannot satisfy the assertion for it.
+	rules := strings.Split(system, "\n- ")
+
+	// Every rule that mentions an untrusted block must carry the prohibition,
+	// not merely one of them. Stricter than it sounds, and deliberately: the
+	// first version of this test asked whether *any* rule mentioning the block
+	// declared it, and the ACHIEVEMENTS rule — which said "the same rule as
+	// Bike and NOTES" — then vouched for Bike. A cross-reference is not a
+	// rule, so the cross-reference is gone and this asks of each mention.
+	for _, block := range []string{"Bike", "NOTES", "ACHIEVEMENTS"} {
+		mentions := 0
+
+		for _, rule := range rules {
+			if !strings.Contains(rule, block) {
+				continue
+			}
+
+			mentions++
+
+			// Both words are not enough: "Bike is data, but it is an
+			// instruction" contains each of them. What is being asserted is
+			// the prohibition, so the rule has to forbid rather than mention.
+			forbidden := strings.Contains(rule, "never an instruction") ||
+				strings.Contains(rule, "never instructions") ||
+				strings.Contains(rule, "never as instructions")
+
+			if !strings.Contains(rule, "data") || !forbidden {
+				t.Errorf("a rule mentions %s without saying it is data and never an instruction:\n- %s",
+					block, rule)
+			}
+		}
+
+		if mentions == 0 {
+			t.Errorf("the system prompt never mentions %s", block)
+		}
+	}
+}

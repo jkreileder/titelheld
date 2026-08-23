@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1337,5 +1338,109 @@ func TestServiceWrittenTitlesDoTeachStyle(t *testing.T) {
 	if examples := section(t, capture.prompt.User, "EXAMPLES"); !strings.Contains(
 		examples, written) {
 		t.Errorf("a service-written title did not become an example:\n%s", examples)
+	}
+}
+
+// Notable segment efforts reach the prompt, by name and nothing else.
+//
+// The ACHIEVEMENTS block was in the prompt builder from the start and had
+// never been given anything to print: every ride reached it with an empty
+// list, so the section never rendered. The spec asks for named segments and
+// personal records under Gather, and this is that.
+func TestNotableSegmentEffortsReachThePrompt(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	h.strava.activity.SegmentEfforts = []strava.SegmentEffort{
+		{Name: "Anstieg zur Musterhöhe", PRRank: 1},
+		{Name: "Musterbach-Sprint", Achievements: []strava.SegmentAchievement{{Type: "overall", Rank: 3}}},
+
+		// Ridden, not notable: the prompt is not a list of every segment a
+		// long ride crossed.
+		{Name: "Mustertalstraße"},
+
+		// The same climb on the second lap.
+		{Name: "anstieg zur musterhöhe", PRRank: 2},
+
+		// No name of its own; Strava puts it on the segment instead.
+		{PRRank: 2, Segment: struct {
+			Name string `json:"name"`
+		}{Name: "Musterwald-Rampe"}},
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	prompt := capture.first().User
+
+	if !strings.Contains(prompt, "ACHIEVEMENTS") {
+		t.Fatalf("the prompt has no ACHIEVEMENTS block:\n%s", prompt)
+	}
+
+	for _, want := range []string{"Anstieg zur Musterhöhe", "Musterbach-Sprint", "Musterwald-Rampe"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the prompt does not carry %q:\n%s", want, prompt)
+		}
+	}
+
+	if strings.Contains(prompt, "Mustertalstraße") {
+		t.Errorf("an effort that was neither a personal best nor an achievement was listed:\n%s", prompt)
+	}
+
+	if got := strings.Count(strings.ToLower(prompt), "anstieg zur musterhöhe"); got != 1 {
+		t.Errorf("the same segment is listed %d times, want 1", got)
+	}
+}
+
+// The block is bounded, and carries nothing but names.
+func TestTheAchievementsBlockIsBoundedAndNamesOnly(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	efforts := make([]strava.SegmentEffort, 0, 20)
+	for index := range 20 {
+		efforts = append(efforts, strava.SegmentEffort{
+			Name:   fmt.Sprintf("Mustersegment %d", index),
+			PRRank: 1,
+		})
+	}
+
+	// A qualifying effort past the cap, named so the assertion is about this
+	// one rather than about a count. Counting six alone would pass on an
+	// implementation that kept six of the wrong efforts.
+	const beyondTheCap = "Musterrampe hinter der Grenze"
+
+	efforts = append(efforts, strava.SegmentEffort{Name: beyondTheCap, PRRank: 1})
+
+	h.strava.activity.SegmentEfforts = efforts
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	prompt := capture.first().User
+
+	if got := strings.Count(prompt, "Mustersegment "); got != maxAchievements {
+		t.Errorf("%d segments in the prompt, want %d", got, maxAchievements)
+	}
+
+	if strings.Contains(prompt, beyondTheCap) {
+		t.Errorf("an effort past the cap reached the prompt:\n%s", prompt)
+	}
+
+	// And the six that did are the first six offered, not an arbitrary six.
+	for index := range maxAchievements {
+		if want := fmt.Sprintf("Mustersegment %d", index); !strings.Contains(prompt, want) {
+			t.Errorf("the prompt does not carry %q", want)
+		}
 	}
 }

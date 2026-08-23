@@ -94,6 +94,7 @@ func (p *Processor) llmTitle(
 	}
 
 	ride.GearName = p.gearName(ctx, activity.GearID, logger)
+	ride.Achievements = achievementsOf(activity)
 
 	// An indoor ride is named from effort and season only. Watopia is not in
 	// the Solomon Islands, and geocoding a fictional coordinate would produce
@@ -242,6 +243,67 @@ func (p *Processor) ask(ctx context.Context, prompt naming.Prompt) (naming.Title
 	}
 
 	return title, nil
+}
+
+// maxAchievements bounds what the ACHIEVEMENTS block carries.
+//
+// A long ride crosses a lot of segments. Six is the same order as the few-shot
+// examples: enough for the model to notice one, few enough that the block does
+// not become the loudest thing in the prompt.
+const maxAchievements = 6
+
+// achievementsOf picks the efforts worth telling a model about.
+//
+// Names only. An effort carries times, ranks and identifiers; a title has no
+// business with any of them, so nothing but the name crosses into the prompt —
+// the same discipline the geo layer applies, where verified place names cross
+// and coordinates cannot.
+//
+// Notable means a personal top-three on the segment, or an achievement Strava
+// awarded. Strava already returns only what it considers notable with a
+// detailed activity, but which efforts those are is Strava's decision and can
+// change without telling anyone, so the selection is made here as well: the
+// prompt should not fill up with every segment a long ride happened to cross.
+//
+// Deduplicated by name, because a loop ridden twice produces two efforts on
+// one segment and "the same climb, twice" is not what a repeated line says to
+// a model.
+func achievementsOf(activity *strava.Activity) []string {
+	names := make([]string, 0, maxAchievements)
+	seen := make(map[string]bool, maxAchievements)
+
+	for _, effort := range activity.SegmentEfforts {
+		if len(names) >= maxAchievements {
+			break
+		}
+
+		if !notableEffort(effort) {
+			continue
+		}
+
+		name := strings.TrimSpace(effort.Name)
+		if name == "" {
+			name = strings.TrimSpace(effort.Segment.Name)
+		}
+
+		// Folded for the duplicate check only; the name reaches the prompt as
+		// the athlete's community spelled it.
+		key := strings.ToLower(name)
+		if name == "" || seen[key] {
+			continue
+		}
+
+		seen[key] = true
+
+		names = append(names, name)
+	}
+
+	return names
+}
+
+// notableEffort reports whether an effort is worth a line in the prompt.
+func notableEffort(effort strava.SegmentEffort) bool {
+	return (effort.PRRank >= 1 && effort.PRRank <= 3) || len(effort.Achievements) > 0
 }
 
 // gearName resolves a gear ID to the name a franchise matches on.
