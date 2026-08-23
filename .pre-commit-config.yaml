@@ -49,12 +49,19 @@ repos:
       # Lints GitHub Actions workflows; runs shellcheck on run: blocks when
       # shellcheck is on PATH. Degrades to YAML/expression checks otherwise.
       - id: actionlint
-  - repo: https://github.com/koalaman/shellcheck-precommit
-    rev: 99470f5e12208ff0fb17ab81c3c494f7620a1d8d  # frozen: v0.11.0
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # frozen: v0.11.0.1
     hooks:
       # Shell that lives in a file rather than in a `run:` block. actionlint
       # covers the workflows' inline shell; this covers the scripts they call,
       # which is where the logic worth testing ended up.
+      #
+      # shellcheck-py rather than koalaman's own hook, which is a docker_image
+      # hook: it pulls from Docker Hub, and every workflow here runs under a
+      # blocked egress policy that does not allow registry-1.docker.io. It
+      # passed locally, where Docker could reach the registry, and failed in
+      # CI — which is the argument for the wheel, since PyPI is already
+      # allowed for the hooks that need it.
       - id: shellcheck
         args: [--severity=style]
   - repo: https://github.com/scop/pre-commit-shfmt
