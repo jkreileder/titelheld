@@ -499,7 +499,8 @@ make release-logic # run the release workflow's decisions, not just lint them
 ```
 
 Install the pre-commit hooks with `pre-commit install` or `prek install`. They cover Go, Markdown,
-Terraform, workflows (actionlint, zizmor) and shell scripts (shellcheck, shfmt).
+workflows (actionlint, zizmor) and shell scripts (shellcheck, shfmt). Terraform is not among them:
+`make tf-check` and `terraform.yaml` cover `infra/`.
 
 `make release-logic` exists because a linter reads a workflow and cannot run one. The writes gate
 is a script the release calls, so a test drives it against a stubbed `gcloud`; the draft-release

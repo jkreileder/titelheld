@@ -25,7 +25,17 @@ RESULTS = ("success", "skipped", "failure", "cancelled")
 # GitHub applies an implicit success() to a job condition that names no status
 # check function of its own. Without one, a job whose dependency was skipped is
 # skipped too — however the rest of the expression evaluates.
-STATUS_FUNCTIONS = ("always(", "success(", "failure(", "cancelled(")
+#
+# Matched as a call, not as a substring, and with quoted literals blanked out
+# first: `vars.X != 'always('` names no status function, and treating it as
+# one would suppress the implicit success() this models.
+STATUS_CALL = re.compile(r"\b(?:always|success|failure|cancelled)\s*\(")
+QUOTED = re.compile(r"'[^']*'")
+
+
+def names_status_function(expr: str) -> bool:
+    """Report whether the expression calls a status-check function."""
+    return bool(STATUS_CALL.search(QUOTED.sub("''", expr)))
 
 
 def draft_condition(text: str) -> str:
@@ -92,7 +102,7 @@ def evaluate(expr: str, needs: dict[str, str], variables: dict[str, str], ref: s
     # evaluates it at all — so a test that ignored this would go on passing
     # while bootstrap mode quietly stopped drafting anything, its skipped
     # image and deploy jobs now skipping the draft with them.
-    if not any(function in expr for function in STATUS_FUNCTIONS):
+    if not names_status_function(expr):
         result = result and all(value == "success" for value in needs.values())
 
     return result
