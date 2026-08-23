@@ -32,17 +32,32 @@ checks=0
 stub_dir=$(mktemp -d)
 trap 'rm -rf "$stub_dir"' EXIT
 
+# A name that is not the production service's. The stub does not care what it
+# is called, and that is the point: a script that reached for "titelheld"
+# instead of "$SERVICE" would pass with the real name and fail here.
+service=muster-service
+
 cat >"${stub_dir}/gcloud" <<'STUB'
 #!/usr/bin/env bash
 # Stands in for `gcloud run services describe`, in its two shapes: the
 # existence probe (--format='value(name)') and the DRY_RUN read.
+
+# Which service was asked about — `gcloud run services describe <name> ...`.
+# Checked rather than ignored, so a script that reached for a hardcoded name
+# instead of "$SERVICE" fails here. A stub that answers whatever it is asked
+# makes the name in the test decorative.
+if [ "$4" != "${STUB_SERVICE_NAME}" ]; then
+  echo "stub: asked about '$4', expected '${STUB_SERVICE_NAME}'" >&2
+  exit 64
+fi
+
 case "$*" in
   *"value(name)"*)
     if [ "${STUB_SERVICE_MISSING:-}" = "1" ]; then
-      echo "ERROR: (gcloud.run.services.describe) NOT_FOUND: Resource 'titelheld' was not found" >&2
+      echo "ERROR: (gcloud.run.services.describe) NOT_FOUND: Resource '${STUB_SERVICE_NAME}' was not found" >&2
       exit 1
     fi
-    echo titelheld
+    printf '%s\n' "${STUB_SERVICE_NAME}"
     ;;
   *) printf '%s\n' "${STUB_DRY_RUN-}" ;;
 esac
@@ -59,9 +74,9 @@ check() {
   set +e
   output=$(
     PATH="${stub_dir}:${PATH}" \
-      PHASE="$phase" PROJECT=musterproject REGION=europe-west3 SERVICE=titelheld \
+      PHASE="$phase" PROJECT=musterproject REGION=europe-west3 SERVICE="$service" \
       TAG_EPOCH="$tag_epoch" WRITES_ACKNOWLEDGED="$ack" \
-      STUB_DRY_RUN="$dry" STUB_SERVICE_MISSING="$missing" \
+      STUB_DRY_RUN="$dry" STUB_SERVICE_MISSING="$missing" STUB_SERVICE_NAME="$service" \
       bash "$gate" 2>&1
   )
   status=$?
@@ -125,7 +140,7 @@ check "two values, acknowledged" 1 pre "$tag_date" "['1', '0']" "" -- "cannot re
 echo
 echo "# the service must exist before a deploy, and the report says what to do"
 
-check "service missing" 1 pre "" "['1']" 1 -- "cannot read the Cloud Run service" "NOT_FOUND" "apply the Terraform first"
+check "service missing" 1 pre "" "['1']" 1 -- "cannot read the Cloud Run service" "muster-service" "NOT_FOUND" "apply the Terraform first"
 
 echo
 echo "# the post-deploy phase applies the same rules to what was deployed"

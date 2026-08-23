@@ -112,13 +112,20 @@ def main() -> int:
             failures += 1
             print(f"FAIL ref={ref}: drafts a release off a non-tag ref")
 
-    # And a failed version check stops everything.
-    for image, deploy in itertools.product(RESULTS, RESULTS):
-        needs = {"check-release-version": "failure", "image": image, "deploy": deploy}
+    # Only a *successful* version check lets anything be drafted. Testing
+    # `failure` alone would pass on a condition weakened to
+    # `!= 'failure'` — which would then draft a release whose version check
+    # was skipped or cancelled, and neither of those checked the tag or the
+    # changelog.
+    for check, image, deploy in itertools.product(RESULTS, RESULTS, RESULTS):
+        if check == "success":
+            continue
+
+        needs = {"check-release-version": check, "image": image, "deploy": deploy}
         rows += 1
         if evaluate(expr, needs, {"RELEASE_BOOTSTRAP": "1"}, "refs/tags/v1.2.3"):
             failures += 1
-            print(f"FAIL check=failure image={image} deploy={deploy}: drafts anyway")
+            print(f"FAIL check={check} image={image} deploy={deploy}: drafts anyway")
 
     print(f"{rows} combinations, {failures} failures")
 
