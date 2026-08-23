@@ -45,7 +45,14 @@
 - `internal/server/` assembles the HTTP surface: health, the one-time OAuth
   bootstrap, and the webhook at its unguessable path.
 - `internal/app/` wires everything together and serves; it takes `getenv` as a
-  parameter so the whole service can be started in a test.
+  parameter so the whole service can be started in a test. `sweepDeps` is the
+  one place configuration becomes the processor's dependencies, and the
+  defaults a deployment gets are resolved there - the shipped banned-word list
+  when the environment names none, the shipped machine titles likewise. Assert
+  those through `config.Load` and `sweepDeps`, never a hand-built
+  `config.Config`: a config a test builds agrees with itself and cannot notice
+  a default that never reaches production, which is how the banned-word list
+  shipped empty.
 - `internal/logsafe/` neutralizes untrusted text before it reaches a log. Use it
   for anything from a webhook body, Strava, a geocoder or an LLM.
 - `cmd/titelheld/` is a shim with no behavior, and is excluded from coverage.

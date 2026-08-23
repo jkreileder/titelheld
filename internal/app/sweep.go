@@ -65,31 +65,12 @@ func buildSweep(
 		return nil, fmt.Errorf("build the Strava client: %w", err)
 	}
 
-	geographer, err := buildGeographer(cfg, dataStore, logger)
+	deps, err := sweepDeps(ctx, cfg, dataStore, client, logger)
 	if err != nil {
 		return nil, err
 	}
 
-	provider, err := buildProvider(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	rules, err := classifierConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	proc, err := processor.New(processor.Deps{
-		Store:         dataStore,
-		Activities:    client,
-		Geo:           geographer,
-		Provider:      provider,
-		Classifier:    rules,
-		Validator:     naming.NewValidator(cfg.LLM.BannedWords),
-		WritesEnabled: cfg.WritesEnabled,
-		Logger:        logger,
-	})
+	proc, err := processor.New(deps)
 	if err != nil {
 		return nil, fmt.Errorf("build the processor: %w", err)
 	}
@@ -108,8 +89,9 @@ func buildSweep(
 	// then be able to trigger a sweep, or would if the OIDC check ever
 	// regressed, and the two defenses are meant to be independent.
 	logger.Info("sweep route mounted",
-		"llm", provider.Name(),
-		"writes_enabled", cfg.WritesEnabled)
+		"llm", deps.Provider.Name(),
+		"writes_enabled", cfg.WritesEnabled,
+		"banned_words", len(bannedWords(cfg)))
 
 	return handler, nil
 }
@@ -159,6 +141,68 @@ func buildProvider(ctx context.Context, cfg config.Config) (naming.Provider, err
 // The shipped defaults, plus the machine titles the deployment configured.
 // When the per-athlete configuration store exists, this is the one function
 // that changes.
+// sweepDeps resolves everything the processor is given.
+//
+// Separated from [buildSweep] so there is one place where configuration
+// becomes the processor's dependencies, and so a test can drive the real
+// loader through the real wiring and inspect what a deployment would actually
+// get. Every test that hand-builds a config.Config agrees with itself by
+// construction and would hide a default that never reaches production — which
+// is exactly how the banned-word list stayed empty in the deployed service
+// while the field comment said it defaulted.
+func sweepDeps(
+	ctx context.Context, cfg config.Config, dataStore boundStore,
+	client *strava.Client, logger *slog.Logger,
+) (processor.Deps, error) {
+	geographer, err := buildGeographer(cfg, dataStore, logger)
+	if err != nil {
+		return processor.Deps{}, err
+	}
+
+	provider, err := buildProvider(ctx, cfg)
+	if err != nil {
+		return processor.Deps{}, err
+	}
+
+	rules, err := classifierConfig(cfg)
+	if err != nil {
+		return processor.Deps{}, err
+	}
+
+	return processor.Deps{
+		Store:         dataStore,
+		Activities:    client,
+		Geo:           geographer,
+		Provider:      provider,
+		Classifier:    rules,
+		Validator:     naming.NewValidator(bannedWords(cfg)),
+		WritesEnabled: cfg.WritesEnabled,
+		Logger:        logger,
+	}, nil
+}
+
+// bannedWords resolves the list the validator rejects titles against.
+//
+// The shipped list applies when the environment names none, the same way an
+// unset machine-title pattern falls back to the shipped set in
+// [classifierConfig]. Without this the production service ran with no banned
+// words at all: the field's own comment said "empty means the shipped list",
+// and nothing anywhere made that true.
+//
+// A configured list *replaces* the shipped one rather than adding to it, which
+// is what makes it configuration. The consequence is that there is no way to
+// spell "no banned words" in the environment — set-but-empty and unset are the
+// same string — and that is the right trade: the failure mode of the missing
+// default was silent, and the failure mode of an unwanted default is a title
+// the athlete can see was refused.
+func bannedWords(cfg config.Config) []string {
+	if len(cfg.LLM.BannedWords) > 0 {
+		return cfg.LLM.BannedWords
+	}
+
+	return naming.DefaultBannedWords()
+}
+
 func classifierConfig(cfg config.Config) (classifier.Config, error) {
 	rules := classifier.DefaultConfig()
 

@@ -10,6 +10,8 @@ import (
 
 	"github.com/jkreileder/titelheld/internal/classifier"
 	"github.com/jkreileder/titelheld/internal/config"
+	"github.com/jkreileder/titelheld/internal/naming"
+	"github.com/jkreileder/titelheld/internal/processor"
 	"github.com/jkreileder/titelheld/internal/store"
 	"github.com/jkreileder/titelheld/internal/strava"
 )
@@ -177,4 +179,170 @@ func anthropicConfig() config.Config {
 	cfg.LLM.APIKey = "test-key-not-a-real-one"
 
 	return cfg
+}
+
+// deployedEnv is the environment a Cloud Run revision actually has, minus
+// everything optional.
+//
+// Required variables only, plus the two that pick a provider needing no cloud
+// credentials — Vertex is the production default, but reaching it from a test
+// would mean depending on ambient Google credentials, and the provider is not
+// what these assertions are about.
+//
+// Nothing else is set. That is the point: every other test in this package
+// hands buildSweep a config.Config it built itself, which agrees with itself
+// by construction and cannot notice a default that never reaches production.
+func deployedEnv(overrides map[string]string) func(string) string {
+	values := map[string]string{
+		"STRAVA_CLIENT_ID":     "12345",
+		"STRAVA_CLIENT_SECRET": "test-client-secret",
+		"STRAVA_VERIFY_TOKEN":  "test-verify-token",
+		"BASE_URL":             "https://namer.example.invalid",
+		"WEBHOOK_PATH_SECRET":  "s3cr3t-segment",
+		"MAX_INSTANCES":        "1",
+		"LLM_PROVIDER":         "anthropic",
+		"LLM_API_KEY":          "test-key",
+	}
+
+	for key, value := range overrides {
+		values[key] = value
+	}
+
+	return func(key string) string { return values[key] }
+}
+
+// depsFromEnv runs the real loader through the real wiring.
+func depsFromEnv(t *testing.T, overrides map[string]string) processor.Deps {
+	t.Helper()
+
+	cfg, err := config.Load(deployedEnv(overrides))
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	client, err := strava.NewClient(strava.ClientConfig{
+		Tokens: strava.NewStoredTokenSource(&strava.OAuth{}, store.NewMemory(), cfg.AthleteID),
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	deps, err := sweepDeps(t.Context(), cfg, memoryStore{store.NewMemory()}, client, quiet())
+	if err != nil {
+		t.Fatalf("sweepDeps: %v", err)
+	}
+
+	return deps
+}
+
+// title is a model response the validator would otherwise accept.
+func title(text string) string {
+	return `{"title":"` + text + `","language":"en"}`
+}
+
+// An environment that sets nothing optional still bans the shipped words.
+//
+// This is the regression that shipped: BANNED_WORDS unset produced an empty
+// list, `naming.NewValidator` was handed it, and the deployed service rejected
+// nothing — while the configuration field's own comment said "empty means the
+// shipped list". Every existing test built its own config.Config, so every
+// existing test agreed the words were banned.
+func TestAnEmptyEnvironmentStillBansTheShippedWords(t *testing.T) {
+	t.Parallel()
+
+	deps := depsFromEnv(t, nil)
+
+	for _, word := range naming.DefaultBannedWords() {
+		if _, err := deps.Validator.ParseAndValidate(title(word + " ride")); !errors.Is(err, naming.ErrTitleBanned) {
+			t.Errorf("a title containing %q was accepted with no BANNED_WORDS set: %v", word, err)
+		}
+	}
+}
+
+// A configured list replaces the shipped one rather than adding to it.
+//
+// The half of the contract a fallback is easy to get wrong: an append would
+// pass the test above and quietly keep banning words the athlete removed.
+func TestConfiguredBannedWordsReplaceTheShippedList(t *testing.T) {
+	t.Parallel()
+
+	deps := depsFromEnv(t, map[string]string{"BANNED_WORDS": "Musterwort"})
+
+	if _, err := deps.Validator.ParseAndValidate(title("Musterwort am Bach")); !errors.Is(err, naming.ErrTitleBanned) {
+		t.Errorf("the configured banned word was not rejected: %v", err)
+	}
+
+	if _, err := deps.Validator.ParseAndValidate(title("Epic ride")); err != nil {
+		t.Errorf("a shipped word was still banned after configuring a list: %v", err)
+	}
+}
+
+// The rest of the posture a deployment gets from an environment that sets
+// nothing optional.
+//
+// One test rather than five, because the thing under test is the same thing:
+// what a Cloud Run revision is actually wired with. Each assertion is a
+// default that exists in code and has to survive the trip through
+// config.Load — the class of regression the banned-word list belongs to.
+func TestTheDefaultPostureOfADeployedRevision(t *testing.T) {
+	t.Parallel()
+
+	deps := depsFromEnv(t, nil)
+
+	// Writes are off unless DRY_RUN says otherwise. The zero value is the safe
+	// one, and an empty environment must land on it.
+	if deps.WritesEnabled {
+		t.Error("an environment with no DRY_RUN set produced a processor that can write")
+	}
+
+	// Attribution is on by default, so the field that disables it is false.
+	if deps.DisableAttribution {
+		t.Error("attribution was disabled by default")
+	}
+
+	// Franchises unset means "read the athlete's document, falling back to the
+	// shipped profile" — an empty non-nil slice would mean "this athlete has
+	// none" and silently turn the feature off.
+	if deps.Franchises != nil {
+		t.Errorf("franchises were pinned at startup: %v", deps.Franchises)
+	}
+
+	// A sport ride at a Strava default title is renamable; Xert's machine
+	// title is renamable; a human's title is not. These are the shipped
+	// classifier defaults, reached with no MACHINE_TITLE_PATTERNS set.
+	ride := func(name string) classifier.Activity {
+		return classifier.Activity{
+			Name: name, SportType: "Ride",
+			DistanceMeters: 67638, MovingTimeSeconds: 10876,
+		}
+	}
+
+	for name, wantSkip := range map[string]bool{
+		"Afternoon Ride": false,
+		"Difficult Mixed Breakaway Specialist Ride": false,
+		"Musterrunde am Musterbach":                 true,
+	} {
+		got := classifier.Classify(ride(name), deps.Classifier)
+		if skipped := got.Action == classifier.ActionSkip; skipped != wantSkip {
+			t.Errorf("Classify(%q) skip = %v, want %v (%s)", name, skipped, wantSkip, got.Reason)
+		}
+	}
+
+	// A Zwift ride keeps its title: the shipped zwift_mode is `keep`, and
+	// `llm_indoor` has no configuration path at all.
+	virtual := classifier.Activity{
+		Name: "Afternoon Ride", SportType: "VirtualRide", Trainer: true,
+		DistanceMeters: 30000, MovingTimeSeconds: 3600,
+	}
+
+	if got := classifier.Classify(virtual, deps.Classifier); got.Action != classifier.ActionSkip {
+		t.Errorf("a Zwift ride was named rather than kept: %v (%s)", got.Action, got.Reason)
+	}
+
+	// And the pieces that make a pipeline are all there, so the assertions
+	// above are about a processor that could actually run.
+	if deps.Store == nil || deps.Activities == nil || deps.Geo == nil || deps.Provider == nil {
+		t.Errorf("an incomplete pipeline: store=%v activities=%v geo=%v provider=%v",
+			deps.Store != nil, deps.Activities != nil, deps.Geo != nil, deps.Provider != nil)
+	}
 }
