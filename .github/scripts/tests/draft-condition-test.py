@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Enumerate the draft-release condition over every combination of job results.
+
+The condition decides whether a tag gets a GitHub release. It used to accept a
+skipped deploy, which meant a version nobody deployed could be drafted and
+published — and no test could have noticed, because a workflow `if:` is a
+string that actionlint checks the syntax of and nothing evaluates.
+
+So this reads the expression out of release.yaml and evaluates it. Not a copy:
+delete the strictness from the workflow and this fails, which is the whole
+point of it existing.
+"""
+
+from __future__ import annotations
+
+import itertools
+import re
+import sys
+from pathlib import Path
+
+WORKFLOW = Path(__file__).resolve().parents[2] / "workflows" / "release.yaml"
+
+RESULTS = ("success", "skipped", "failure", "cancelled")
+
+
+def draft_condition(text: str) -> str:
+    """Return the draft-release job's `if:` expression, without its ${{ }}."""
+    jobs = text.split("\n  draft-release:\n", 1)
+    if len(jobs) != 2:
+        raise SystemExit("draft-release job not found in release.yaml")
+
+    match = re.search(r"^    if: >-\n((?:      .*\n)+)", jobs[1], re.M)
+    if not match:
+        raise SystemExit("draft-release has no `if: >-` block")
+
+    folded = " ".join(line.strip() for line in match.group(1).splitlines())
+    inner = folded.strip()
+    if not (inner.startswith("${{") and inner.endswith("}}")):
+        raise SystemExit(f"unexpected expression shape: {inner!r}")
+
+    return inner[3:-2].strip()
+
+
+def evaluate(expr: str, needs: dict[str, str], variables: dict[str, str], ref: str) -> bool:
+    """Evaluate the subset of GitHub expression syntax this condition uses.
+
+    Deliberately narrow: booleans, comparisons, parentheses, `always()`,
+    `startsWith()`, `needs.<job>.result` and `vars.<name>`. Anything else in
+    the expression is an error rather than something quietly treated as true —
+    a condition this test cannot read is a condition it must not vouch for.
+    """
+    python = expr
+    python = python.replace("&&", " and ").replace("||", " or ")
+    python = re.sub(r"\balways\(\)", "True", python)
+    python = re.sub(
+        r"startsWith\(github\.ref,\s*'([^']*)'\)",
+        lambda m: repr(ref.startswith(m.group(1))),
+        python,
+    )
+    python = re.sub(
+        r"needs\.([A-Za-z0-9_-]+)\.result",
+        lambda m: repr(needs[m.group(1)]),
+        python,
+    )
+    python = re.sub(
+        r"vars\.([A-Za-z0-9_]+)",
+        lambda m: repr(variables.get(m.group(1), "")),
+        python,
+    )
+    python = python.replace("!=", " != ").replace("==", " == ")
+
+    allowed = re.compile(r"^[\sA-Za-z0-9_'\"()=!.andor]*$")
+    if not allowed.match(python):
+        raise SystemExit(f"expression uses syntax this test cannot evaluate: {python!r}")
+
+    return bool(eval(python, {"__builtins__": {}}, {}))  # noqa: S307 - vetted above
+
+
+def main() -> int:
+    expr = draft_condition(WORKFLOW.read_text(encoding="utf-8"))
+    print(f"# condition under test:\n#   {expr}\n")
+
+    failures = 0
+    rows = 0
+
+    for image, deploy, bootstrap in itertools.product(RESULTS, RESULTS, ("", "1")):
+        needs = {"check-release-version": "success", "image": image, "deploy": deploy}
+        got = evaluate(expr, needs, {"RELEASE_BOOTSTRAP": bootstrap}, "refs/tags/v1.2.3")
+
+        # What the workflow is supposed to do: draft when the image built and
+        # the deploy succeeded; in bootstrap mode also when either was skipped,
+        # never when either failed or was cancelled.
+        strict = image == "success" and deploy == "success"
+        lenient = (
+            bootstrap == "1"
+            and image not in ("failure", "cancelled")
+            and deploy not in ("failure", "cancelled")
+        )
+        want = strict or lenient
+
+        rows += 1
+        if got != want:
+            failures += 1
+            print(f"FAIL image={image} deploy={deploy} bootstrap={bootstrap or '(unset)'}: "
+                  f"drafts={got}, want {want}")
+
+    # A tag is required whatever the job results say.
+    for ref in ("refs/heads/main", "refs/pull/1/merge"):
+        needs = {"check-release-version": "success", "image": "success", "deploy": "success"}
+        rows += 1
+        if evaluate(expr, needs, {}, ref):
+            failures += 1
+            print(f"FAIL ref={ref}: drafts a release off a non-tag ref")
+
+    # And a failed version check stops everything.
+    for image, deploy in itertools.product(RESULTS, RESULTS):
+        needs = {"check-release-version": "failure", "image": image, "deploy": deploy}
+        rows += 1
+        if evaluate(expr, needs, {"RELEASE_BOOTSTRAP": "1"}, "refs/tags/v1.2.3"):
+            failures += 1
+            print(f"FAIL check=failure image={image} deploy={deploy}: drafts anyway")
+
+    print(f"{rows} combinations, {failures} failures")
+
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

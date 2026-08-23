@@ -24,6 +24,15 @@ lint:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) config verify
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
+# The release workflow's own decision logic, run rather than linted: the writes
+# gate against a stubbed gcloud, and the draft-release condition read out of
+# release.yaml and evaluated over every combination of job results. CI runs the
+# same two scripts.
+.PHONY: release-logic
+release-logic:
+	bash .github/scripts/tests/writes-gate-test.sh
+	python3 .github/scripts/tests/draft-condition-test.py
+
 .PHONY: test
 test:
 	$(GO) test -race -coverprofile=coverage.out -covermode=atomic ./...

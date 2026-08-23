@@ -491,13 +491,22 @@ entry left queued, never a rename sent with nothing recorded. The response is a 
 ## Development
 
 ```sh
-make           # lint, test, build
-make test      # go test -race with coverage
-make lint      # go vet + golangci-lint
-make vulncheck # govulncheck
+make               # lint, test, build
+make test          # go test -race with coverage
+make lint          # go vet + golangci-lint
+make vulncheck     # govulncheck
+make release-logic # run the release workflow's decisions, not just lint them
 ```
 
-Install the pre-commit hooks with `pre-commit install` or `prek install`.
+Install the pre-commit hooks with `pre-commit install` or `prek install`. They cover Go, Markdown,
+Terraform, workflows (actionlint, zizmor) and shell scripts (shellcheck, shfmt).
+
+`make release-logic` exists because a linter reads a workflow and cannot run one. The writes gate
+is a script the release calls, so a test drives it against a stubbed `gcloud`; the draft-release
+condition is read out of `release.yaml` and evaluated over every combination of job results and
+the bootstrap variable. Reverting either — the gate back after the deploy, a bare
+`WRITES_ACKNOWLEDGED`, a draft on a skipped deploy — fails these rather than passing every hook,
+which is what the earlier versions of both did.
 
 ## Security and privacy
 

@@ -245,6 +245,13 @@ drains it until a sweep is run by hand. The title history is seeded by
   low-level git data API unsigned and would fail the signed-commits rule, and a
   PR opened with `GITHUB_TOKEN` never triggers a workflow run so it could not
   satisfy the required checks on `main`, which have no bypass.
+- `release-logic.yaml` runs the release's own decisions rather than linting
+  them: `.github/scripts/tests/writes-gate-test.sh` drives the real gate script
+  against a stubbed `gcloud`, and `draft-condition-test.py` reads the
+  draft-release `if:` out of `release.yaml` and evaluates it over every
+  combination of job results. `make release-logic` runs both. A linter reads a
+  workflow and cannot run one - which is why a gate that checked DRY_RUN after
+  the deploy was as lint-clean as the one that checks before it.
 - Every workflow hardens the runner with a blocked egress policy and pins actions
   by commit SHA. Renovate keeps the pins and the Go toolchain current.
 
