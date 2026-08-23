@@ -1,5 +1,17 @@
+//go:build routefixture
+
 package route
 
+// The calibration needs testdata/real_rides.json — real coordinates,
+// deliberately untracked — so everything here sits behind this build tag and
+// is absent from the default `go test ./...` run:
+//
+//	go test -tags routefixture ./internal/route/...
+//
+// Under this tag a missing fixture FAILS rather than skips: a build that
+// promises the data must not stay silent when the data is gone. Every
+// property these tests pin against real rides is also pinned against
+// committed synthetic shapes in route_test.go, which is what CI runs.
 import (
 	"encoding/json"
 	"fmt"
@@ -22,6 +34,21 @@ type pairFixture struct {
 type labeledFixture struct {
 	Rides        []rideFixture `json:"rides"`
 	LabeledPairs []pairFixture `json:"labeled_pairs"`
+}
+
+// requirePairRides fails when a labeled pair names a ride the fixture no
+// longer carries: a nil fingerprint would silently reclassify the pair
+// instead of announcing that its data is gone.
+func requirePairRides(t *testing.T, rides map[string][]Point, labeled []pairFixture) {
+	t.Helper()
+
+	for _, pair := range labeled {
+		for _, id := range []string{pair.A, pair.B} {
+			if len(rides[id]) == 0 {
+				t.Fatalf("labeled pair references missing or empty ride %q", id)
+			}
+		}
+	}
 }
 
 func loadLabeledPairs(t *testing.T) []pairFixture {
@@ -104,10 +131,11 @@ func containsFold(s, substring string) bool {
 func TestCalibrationMatrices(t *testing.T) {
 	rides, ok := loadFixtureRides(t)
 	if !ok {
-		t.Skip("testdata/real_rides.json not present; calibration runs where the fixture lives")
+		t.Fatal("testdata/real_rides.json is missing; the routefixture tag promises it is there")
 	}
 
 	labeled := loadLabeledPairs(t)
+	requirePairRides(t, rides, labeled)
 
 	const (
 		recommendedGrid = 400.0
@@ -202,17 +230,25 @@ func TestCalibrationMatrices(t *testing.T) {
 		byGrid[feas.grid] = feas
 	}
 
-	// The measured truths, pinned so regressions in the data or the snapping
-	// announce themselves here.
-	if feas := byGrid[100]; feas.posMin <= feas.negMax {
-		t.Logf("grid 100 m: NO separating threshold exists "+
-			"(positive %.4f ≤ worst negative %.4f) — expected, recorded",
+	// The measured inversions are ASSERTED, not just logged: if new data or
+	// different snapping makes these grids separable, this fails and forces
+	// the report and its recommendation to be re-examined rather than the
+	// change sailing through as a silent pass.
+	if feas := byGrid[100]; feas.posMin > feas.negMax {
+		t.Errorf("grid 100 m became separable (positive %.4f > negative %.4f); "+
+			"the pinned inversion no longer holds — re-examine REPORT.md",
+			feas.posMin, feas.negMax)
+	} else {
+		t.Logf("grid 100 m: inversion holds (positive %.4f ≤ worst negative %.4f)",
 			feas.posMin, feas.negMax)
 	}
 
-	if feas := byGrid[DefaultGridSizeMeters]; feas.posMin <= feas.negMax {
-		t.Logf("grid %.0f m: NO separating threshold exists "+
-			"(positive %.4f ≤ worst negative %.4f) — THE headline finding",
+	if feas := byGrid[DefaultGridSizeMeters]; feas.posMin > feas.negMax {
+		t.Errorf("grid %.0f m became separable (positive %.4f > negative %.4f); "+
+			"the headline finding no longer holds — re-examine REPORT.md",
+			DefaultGridSizeMeters, feas.posMin, feas.negMax)
+	} else {
+		t.Logf("grid %.0f m: inversion holds (positive %.4f ≤ worst negative %.4f) — THE headline finding",
 			DefaultGridSizeMeters, feas.posMin, feas.negMax)
 	}
 
@@ -250,10 +286,11 @@ func TestCalibrationMatrices(t *testing.T) {
 func TestCalibrationThresholdSweep(t *testing.T) {
 	rides, ok := loadFixtureRides(t)
 	if !ok {
-		t.Skip("testdata/real_rides.json not present; calibration runs where the fixture lives")
+		t.Fatal("testdata/real_rides.json is missing; the routefixture tag promises it is there")
 	}
 
 	labeled := loadLabeledPairs(t)
+	requirePairRides(t, rides, labeled)
 
 	for _, size := range []float64{100, DefaultGridSizeMeters, 400} {
 		grid, err := NewGrid(size)
@@ -311,7 +348,7 @@ func TestCalibrationThresholdSweep(t *testing.T) {
 func TestCalibrationJitterOnRealRides(t *testing.T) {
 	rides, ok := loadFixtureRides(t)
 	if !ok {
-		t.Skip("testdata/real_rides.json not present; calibration runs where the fixture lives")
+		t.Fatal("testdata/real_rides.json is missing; the routefixture tag promises it is there")
 	}
 
 	const (
@@ -374,10 +411,11 @@ func TestCalibrationJitterOnRealRides(t *testing.T) {
 func TestContainmentDiagnosis(t *testing.T) {
 	rides, ok := loadFixtureRides(t)
 	if !ok {
-		t.Skip("testdata/real_rides.json not present; calibration runs where the fixture lives")
+		t.Fatal("testdata/real_rides.json is missing; the routefixture tag promises it is there")
 	}
 
 	labeled := loadLabeledPairs(t)
+	requirePairRides(t, rides, labeled)
 	grid := DefaultGrid()
 
 	fingerprints := make(map[string]Set, len(rides))
