@@ -231,9 +231,14 @@ drains it until a sweep is run by hand. The title history is seeded by
   land on and refuses outright if writes are on: the job sets the image and
   nothing else, so a new revision inherits the running service's environment
   and the existing service predicts it. The escape hatch is the repository
-  variable `WRITES_ACKNOWLEDGED=1`, the second deliberate act after the
-  Terraform change that sets `DRY_RUN=0`. A second read after the deploy
-  remains, as a check that the prediction held. Build
+  variable `WRITES_ACKNOWLEDGED`, a *date* (`YYYY-MM-DD`, accepted only within
+  7 days before the tag and 1 day after it, so one left behind expires on its
+  own), and it is the second deliberate act after the Terraform change that
+  sets `DRY_RUN=0`. A second read after the deploy remains, as a check that
+  the prediction held. Both checks live in `.github/scripts/writes-gate.sh`
+  rather than in `run:` blocks, because a linter can read a workflow and only
+  a test can run one - and shell in a file is covered by the shellcheck and
+  shfmt hooks. Build
   and attest share one reusable file because signed provenance names the
   workflow file, which is what makes the SLSA Build L3 claim.
 - No bot may release. release-please was rejected: its commits go through the
