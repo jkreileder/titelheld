@@ -1,0 +1,57 @@
+# Executes the release workflow's own decision logic.
+#
+# actionlint and zizmor read `release.yaml`; nothing ran it. That is not a
+# theoretical gap: the version of the writes gate that checked DRY_RUN *after*
+# `gcloud run deploy` was exactly as lint-clean as the one that checks before
+# it, and the draft-release condition that would publish a version nobody
+# deployed passed every hook. Both were caught by review, twice, which is not a
+# mechanism.
+#
+# So the gate lives in a script this runs against a stubbed gcloud, and the
+# draft condition is read out of release.yaml and evaluated over every
+# combination of job results.
+name: Release logic
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-logic:
+    name: Release logic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          disable-sudo: true
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs the script release.yaml calls, with a stubbed gcloud standing in
+      # for the service. Reverting the gate, or accepting a bare
+      # WRITES_ACKNOWLEDGED again, fails here.
+      - name: The writes gate decides correctly
+        run: bash .github/scripts/tests/writes-gate-test.sh
+
+      # Reads the draft-release condition out of release.yaml and evaluates it
+      # over every combination of job results and the bootstrap variable.
+      - name: The draft condition drafts only what was deployed
+        run: python3 .github/scripts/tests/draft-condition-test.py
