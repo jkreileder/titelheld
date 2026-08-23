@@ -22,6 +22,11 @@ WORKFLOW = Path(__file__).resolve().parents[2] / "workflows" / "release.yaml"
 
 RESULTS = ("success", "skipped", "failure", "cancelled")
 
+# GitHub applies an implicit success() to a job condition that names no status
+# check function of its own. Without one, a job whose dependency was skipped is
+# skipped too — however the rest of the expression evaluates.
+STATUS_FUNCTIONS = ("always(", "success(", "failure(", "cancelled(")
+
 
 def draft_condition(text: str) -> str:
     """Return the draft-release job's `if:` expression, without its ${{ }}."""
@@ -73,7 +78,24 @@ def evaluate(expr: str, needs: dict[str, str], variables: dict[str, str], ref: s
     if not allowed.match(python):
         raise SystemExit(f"expression uses syntax this test cannot evaluate: {python!r}")
 
-    return bool(eval(python, {"__builtins__": {}}, {}))  # noqa: S307 - vetted above
+    try:
+        result = bool(eval(python, {"__builtins__": {}}, {}))  # noqa: S307 - vetted above
+    except NameError as err:
+        # A bare word the character filter let through — `true` rather than
+        # `true()`, say. Reported as unevaluatable rather than raised as a
+        # traceback: this test refuses to vouch for an expression it cannot
+        # read, and that refusal should look like a verdict.
+        raise SystemExit(f"expression uses syntax this test cannot evaluate: {python!r} ({err})")
+
+    # The implicit success(). Deleting `always()` from the workflow does not
+    # change what the expression evaluates to — it changes whether GitHub
+    # evaluates it at all — so a test that ignored this would go on passing
+    # while bootstrap mode quietly stopped drafting anything, its skipped
+    # image and deploy jobs now skipping the draft with them.
+    if not any(function in expr for function in STATUS_FUNCTIONS):
+        result = result and all(value == "success" for value in needs.values())
+
+    return result
 
 
 def main() -> int:
