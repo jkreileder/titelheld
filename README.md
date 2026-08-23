@@ -54,6 +54,7 @@ everything that should stay boring untouched.
 - [Cutting a release](#cutting-a-release)
   - [The steps](#the-steps)
   - [What the tag push does](#what-the-tag-push-does)
+  - [A draft means it is running](#a-draft-means-it-is-running)
   - [Versions do not turn on writes](#versions-do-not-turn-on-writes)
 - [Attribution](#attribution)
 - [License](#license)
@@ -1204,7 +1205,7 @@ and stores nothing.
 | Build  | `release-image.yaml` | One image, cache-free, tagged `0.1.0`, `0.1`, `0` and `sha-<commit>`                                          |
 | Attest | `release-image.yaml` | Sigstore-signed SLSA provenance, stored in GitHub and pushed to Artifact Registry as a referrer of the digest |
 | Deploy | `release.yaml`       | `gcloud run deploy` of that **digest**, via Workload Identity Federation                                      |
-| Draft  | `release.yaml`       | A draft GitHub release for you to publish                                                                     |
+| Draft  | `release.yaml`       | A draft release for you to publish — only if the image built *and* deployed                                   |
 
 The image is built exactly once. Everything after it refers to the digest, never to a version
 tag, so moving a tag afterward cannot change what is running.
@@ -1220,6 +1221,23 @@ gh attestation verify \
   --repo jkreileder/titelheld \
   --signer-workflow jkreileder/titelheld/.github/workflows/release-image.yaml
 ```
+
+### A draft means it is running
+
+The draft release is created only when the image job succeeded **and** the deploy job succeeded.
+Not "did not fail": a skipped deploy produces no draft either, because a draft for a version
+nobody deployed is how a tag comes to look shipped when it is not.
+
+That leniency existed for a reason and outlived it. Before the Workload Identity bootstrap, the
+image and deploy jobs skipped on purpose — the repository variables they need did not exist yet —
+and a draft was still the right outcome. The variables are set now.
+
+`RELEASE_BOOTSTRAP=1` brings the old behavior back for a repository that has no infrastructure
+yet. The draft it produces is titled `vX.Y.Z - NOT DEPLOYED` and opens with a caution block
+naming how each job finished, so nothing can be published by accident that is not running
+anywhere. Bootstrap is a variable rather than something inferred from the job results, because
+"the deploy was skipped" and "the deploy should have been skipped" look identical from inside the
+workflow.
 
 ### Versions do not turn on writes
 

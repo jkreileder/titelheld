@@ -388,17 +388,32 @@ jobs:
       - check-release-version
       - image
       - deploy
-    # Both image and deploy are skipped until the infrastructure variables are
-    # set, and a draft release is still right in that case. `skipped` cannot be
-    # told apart from "an upstream job failed", though, so failure and
-    # cancellation are checked on each of them explicitly — otherwise a build
-    # that never produced an image would still be drafted as a release.
+    # A release is drafted when the image was built and deployed. Nothing
+    # else, now that the infrastructure exists.
+    #
+    # This used to accept `skipped` on both, because before the Workload
+    # Identity bootstrap the image and deploy jobs skipped on purpose and a
+    # draft was still the right outcome. That leniency outlived its reason:
+    # once the variables are set, a skipped deploy means something went wrong
+    # with the conditions, and drafting a release for a version nobody
+    # deployed is how a tag comes to look shipped when it is not.
+    #
+    # `RELEASE_BOOTSTRAP=1` brings the old behavior back for the phase that
+    # needs it — a repository with no infrastructure yet — and the draft it
+    # produces is marked NOT DEPLOYED in its title and its notes. Bootstrap
+    # mode is a variable rather than an inference, because "the deploy was
+    # skipped" and "the deploy should have been skipped" look identical from
+    # here.
     if: >-
       ${{ always()
       && needs.check-release-version.result == 'success'
-      && needs.image.result != 'failure' && needs.image.result != 'cancelled'
-      && needs.deploy.result != 'failure' && needs.deploy.result != 'cancelled'
-      && startsWith(github.ref, 'refs/tags/') }}
+      && startsWith(github.ref, 'refs/tags/')
+      && (
+           (needs.image.result == 'success' && needs.deploy.result == 'success')
+        || (vars.RELEASE_BOOTSTRAP == '1'
+            && needs.image.result != 'failure' && needs.image.result != 'cancelled'
+            && needs.deploy.result != 'failure' && needs.deploy.result != 'cancelled')
+         ) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -423,6 +438,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          IMAGE_RESULT: ${{ needs.image.result }}
         run: |
           set -euo pipefail
 
@@ -431,8 +448,34 @@ jobs:
             exit 0
           fi
 
+          # Only reachable in bootstrap mode: the condition on this job
+          # requires a successful deploy otherwise. A draft that nobody
+          # deployed must say so where it cannot be missed — in the title,
+          # which survives skimming, as well as in the notes.
+          title="$TAG"
+          notes=""
+
+          if [ "$DEPLOY_RESULT" != "success" ]; then
+            title="$TAG - NOT DEPLOYED"
+            notes=$(printf '%s\n' \
+              "> [!CAUTION]" \
+              "> **NOT DEPLOYED.** This draft was created in bootstrap mode" \
+              "> (\`RELEASE_BOOTSTRAP=1\`). The image job finished as" \
+              "> \`${IMAGE_RESULT}\` and the deploy job as \`${DEPLOY_RESULT}\`," \
+              "> so no Cloud Run revision carries this tag." \
+              "" \
+              "Publishing this release would announce a version that is not" \
+              "running anywhere.")
+            echo "::warning::drafting $TAG as NOT DEPLOYED: image=${IMAGE_RESULT} deploy=${DEPLOY_RESULT}"
+          fi
+
+          # --notes with --generate-notes prepends rather than replaces, which
+          # is gh's documented behavior: "Additional release notes can be
+          # prepended to automatically generated notes by using the --notes
+          # flag." An explicit --title likewise survives --generate-notes.
           gh release create "$TAG" \
             --draft \
-            --title "$TAG" \
+            --title "$title" \
+            --notes "$notes" \
             --verify-tag \
             --generate-notes
