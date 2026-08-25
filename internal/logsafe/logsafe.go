@@ -79,6 +79,10 @@ const MaxBlockLen = 16 << 10
 //
 // This does not make the content trustworthy. It makes it unable to forge
 // structure in the log that carries it.
+//
+// For text this service composed, whose untrusted parts have already been
+// through [naming.OneLine]. A raw third-party field belongs in [String]: the
+// newlines kept here are assumed to be the caller's own.
 func Block(s string) string {
 	if s == "" {
 		return ""

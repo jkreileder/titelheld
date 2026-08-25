@@ -296,9 +296,14 @@ is the observation window and the time when what the model received is the thing
 The counters on the `named` line — places, achievements, facts, examples, recent titles — remain
 the steady-state signal; they say how much the prompt carried and never what it was.
 
-What is gated here is verbosity, not privacy. A prompt cannot contain a coordinate: the geo layer
-hands the naming layer place *names* and has nowhere to put a position, and everything else in it
-is either text the athlete typed or already visible on a public feed.
+What is gated here is verbosity. A prompt is the athlete's own material — the ride, the gear name,
+titles already used, and place names the geo layer resolved, which produces names and has nowhere
+to hold a coordinate.
+
+One value is not this service's to vouch for: a `NOTES` fact has an allow-listed *label* and a
+free-text *value*, taken from a description another tool wrote. A tool that writes a coordinate
+into one of those fields puts it in the prompt, and with logging on, in Cloud Logging. Allow-listing
+fact values by shape would close that; it is not built.
 
 The sweep that drains the delay queue is configured by three variables. Terraform sets all
 three; nothing else does, and none of them is written by hand.

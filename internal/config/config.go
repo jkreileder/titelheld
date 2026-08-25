@@ -75,10 +75,15 @@ type Config struct {
 	// window and its whole purpose is judging what the model was given rather
 	// than inferring it from counters. LOG_PROMPT forces it either way.
 	//
-	// It is verbosity that is being gated here, not privacy: a prompt carries
-	// no coordinates by construction — the geo layer hands the naming layer
-	// names and has nowhere to put a position — and everything else in it is
-	// already on a public feed.
+	// Verbosity is what this gates. A prompt is the athlete's own material:
+	// their ride, their gear name, titles they have used, and place names the
+	// geo layer resolved — that layer produces names and has nowhere to hold a
+	// coordinate.
+	//
+	// One value is not this service's to vouch for. A NOTES fact has an
+	// allow-listed label and a free-text value, taken from a description
+	// another tool wrote, so a tool that puts a coordinate in one puts it in
+	// the prompt and therefore in the log.
 	LogPrompt bool
 
 	// StravaClientID and StravaClientSecret identify the Strava API

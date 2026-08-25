@@ -86,10 +86,12 @@ type Deps struct {
 	// about the material the model actually received, so an inference from
 	// counts is the wrong evidence.
 	//
-	// Verbosity is what this gates, not privacy. A prompt carries no
-	// coordinates by construction — the geo layer produces names and has
-	// nowhere to put a position — and every other value in it is either the
-	// athlete's own text or already on a public feed.
+	// Verbosity is what this gates. Everything in a prompt is the athlete's
+	// own material, and the geo layer cannot contribute a coordinate: it
+	// produces names and has nowhere to hold a position.
+	//
+	// The exception worth knowing is a NOTES fact, whose label is allow-listed
+	// and whose value is free text from a description another tool wrote.
 	LogPrompt bool
 
 	Logger *slog.Logger
