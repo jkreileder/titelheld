@@ -119,6 +119,19 @@ func (p *Processor) reconcileTitle(
 		"sent", logsafe.String(title.Text),
 		"stored", logsafe.String(written.Name))
 
+	// A franchise entry is spent before the write and the advance is
+	// monotonic, so it cannot be taken back here. But an entry is inserted
+	// into the prompt verbatim and never normalized — a series whose titles
+	// carry initials, "S.W.A.T.", has exactly the shape Strava removes — and
+	// the entry can therefore be spent on a title that no longer contains it.
+	// That is the failure the advance-on-use rule exists to prevent, so it is
+	// said out loud and the athlete can reserve the entry again by hand.
+	if title.Franchise != "" && !naming.UsesEntry(written.Name, title.FranchiseEntry) {
+		logger.Warn("the franchise entry was spent on a title strava then rewrote; reserve it again by hand",
+			"franchise", logsafe.String(title.Franchise),
+			"stored", logsafe.String(written.Name))
+	}
+
 	if err := p.deps.Store.MarkNamed(ctx, store.Naming{
 		AthleteID:  athleteID,
 		ActivityID: activityID,

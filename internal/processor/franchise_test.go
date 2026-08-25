@@ -1,8 +1,10 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -517,5 +519,81 @@ func TestAnUnchangedTitleIsNotRewritten(t *testing.T) {
 
 	if got := counting.count(); got != 1 {
 		t.Errorf("the named log was written %d times, want 1: nothing was mangled, so nothing needed correcting", got)
+	}
+}
+
+// A spent entry that Strava then removes is said out loud.
+//
+// The advance happens before the write and is monotonic, so it cannot be taken
+// back. A franchise entry reaches the prompt verbatim and is never normalized —
+// a series whose titles carry initials has exactly the shape Strava removes —
+// so the entry can be spent on a title that no longer contains it, which is
+// the failure advance-on-use exists to prevent.
+func TestAFranchiseEntryLostToStravaIsReported(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
+		d.Franchises = []naming.Franchise{{
+			Name: "initials", GearName: "Pink Panther", Titles: []string{"S.W.A.T. am Musterbach"},
+		}}
+	})
+
+	h.strava.gearName = "Pink Panther"
+	h.strava.activity.GearID = "b1234567"
+	h.provider.response = title("S.W.A.T. am Musterbach")
+	h.strava.mangle = func(string) string { return "am Musterbach" }
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	out := logged.String()
+
+	if !strings.Contains(out, "reserve it again by hand") {
+		t.Errorf("a franchise entry was spent on a title Strava rewrote, without saying so:\n%s", out)
+	}
+
+	// The position still moved: that is the ordering the design chose, and the
+	// warning exists precisely because it cannot be undone here.
+	position, err := h.store.FranchisePosition(t.Context(), 4242, "initials")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 1 {
+		t.Errorf("position = %d, want 1", position)
+	}
+}
+
+// A franchise title Strava keeps intact says nothing.
+func TestAnIntactFranchiseEntryIsNotReported(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
+		d.Franchises = []naming.Franchise{{
+			Name: "plain", GearName: "Pink Panther", Titles: []string{"Son of the Pink Panther"},
+		}}
+	})
+
+	h.strava.gearName = "Pink Panther"
+	h.strava.activity.GearID = "b1234567"
+	h.provider.response = title("Son of the Pink Panther am Musterbach")
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if strings.Contains(logged.String(), "reserve it again by hand") {
+		t.Error("an intact franchise title was reported as lost")
 	}
 }
