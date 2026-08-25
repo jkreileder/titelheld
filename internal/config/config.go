@@ -211,31 +211,17 @@ const (
 //     second process sweeps the same queue in parallel — and two sweeps can
 //     both read the named log for an activity before either writes it.
 //
-// Each of those is a lock or a map, and neither survives a second container.
-// Cloud Run is told `max_instance_count = 1` in Terraform; this variable is
-// how the binary learns what it was told, and refusing to start without it is
-// how the two stay in step.
+// Terraform tells Cloud Run `max_instance_count = 1` and passes the same
+// number in here, so the ceiling and what the binary believes cannot drift.
 //
-// What this does NOT establish is that exactly one process exists. The ceiling
-// is per revision, so two revisions serving at once — the overlap during a
-// rolling deploy, or a deliberate traffic split — are two instances that each
-// read MAX_INSTANCES=1 and each start happily. Cloud Run also documents
-// running briefly above a configured maximum. So this is a deployment check:
-// it catches a service scaled past one, and a container running against
-// infrastructure that never set the ceiling. It is not a mutex.
-//
-// The exposure that leaves is real and unmeasured: an overlap is short, but
-// nothing here times it, and a traffic split lasts as long as it is left in
-// place. Under overlap each of the four states fails the way its bullet says —
-// callbacks bound to different athletes, two sweeps over one queue, refresh
-// tokens invalidating each other.
-//
-// What makes it tolerable is the deployment pattern rather than this code:
-// single-revision releases, no traffic split, an authorization flow that has
-// already run, and a paused scheduler. None of that is enforced here. The
-// fixes are a compare-and-set on the token document and a lease for the
-// sweep; neither is built, and it is not this constant's job to imply
-// otherwise.
+// This is a deployment check and not a mutex. The ceiling is per revision, so
+// two revisions serving at once — a rolling deploy, a traffic split — are two
+// instances that each read 1 and each start happily, and each of the four
+// states above then fails the way its bullet says. What keeps that tolerable
+// is the deployment pattern rather than this code: single-revision releases,
+// no traffic split, a paused scheduler. None of it is enforced here, and the
+// fixes that would be — a compare-and-set on the token document, a lease for
+// the sweep — are not built.
 const RequiredMaxInstances = "1"
 
 // Fixed paths, so the OAuth redirect and the router cannot drift apart.
