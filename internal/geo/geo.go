@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"regexp"
 	"strconv"
 
 	"github.com/jkreileder/titelheld/internal/logsafe"
@@ -76,6 +77,41 @@ func (s Summary) Names() []string {
 	}
 
 	return names
+}
+
+// dottedAbbreviation matches a period sitting directly between two letters.
+//
+// Digits are excluded so a name carrying a decimal is left alone.
+var dottedAbbreviation = regexp.MustCompile(`(\p{L})\.(\p{L})`)
+
+// NormalizePlaceName spaces out dotted abbreviations in a place name.
+//
+// Strava deletes tokens from a title that look like a hostname. Observed live
+// on 2026-08-24: "Über Ruhstorf a.d.Rott nach Pocking" was stored as
+// "Über Ruhstorf  nach Pocking" — the token excised, both spaces left behind.
+// `a.d.Rott` is label.label.label, which is what a naive link filter matches.
+//
+// Nominatim returns the official compact form and Bavaria is full of it —
+// Ruhstorf a.d.Rott, Neustadt a.d.Donau, Rothenburg o.d.Tauber — so a title
+// built from these names would be mangled routinely. Spacing the periods is
+// also the correct German typography, and it stops the token looking like a
+// host.
+//
+// Applied to every resolved place rather than to a list of German
+// abbreviations: the shape is the problem, and anything genuinely URL-like has
+// no business in a title either.
+//
+// Repeated until stable because the matches overlap: "a.d.Rott" needs two
+// passes, the second seeing the "d" the first consumed.
+func NormalizePlaceName(name string) string {
+	for {
+		spaced := dottedAbbreviation.ReplaceAllString(name, "$1. $2")
+		if spaced == name {
+			return name
+		}
+
+		name = spaced
+	}
 }
 
 // Reverser resolves one coordinate into a place. [Nominatim] implements it;
@@ -148,6 +184,13 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 		if err != nil {
 			return Summary{}, err
 		}
+
+		// Normalized here, once, so everything downstream — the names, the
+		// region, the country, and the deduplication below — works on the
+		// form a title can actually carry.
+		place.Name = NormalizePlaceName(place.Name)
+		place.Region = NormalizePlaceName(place.Region)
+		place.Country = NormalizePlaceName(place.Country)
 
 		if place.Empty() {
 			continue

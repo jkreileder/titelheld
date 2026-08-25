@@ -72,12 +72,16 @@ func (p *Processor) write(
 	// prevent.
 	p.recordFranchise(ctx, athleteID, title, logger)
 
-	var err error
+	var (
+		written *strava.Activity
+		err     error
+	)
+
 	if attribute {
-		_, err = p.deps.Activities.UpdateActivityNameAndDescription(
+		written, err = p.deps.Activities.UpdateActivityNameAndDescription(
 			ctx, activity.ID, title.Text, description)
 	} else {
-		_, err = p.deps.Activities.UpdateActivityName(ctx, activity.ID, title.Text)
+		written, err = p.deps.Activities.UpdateActivityName(ctx, activity.ID, title.Text)
 	}
 
 	if err != nil {
@@ -87,7 +91,49 @@ func (p *Processor) write(
 	logger.Info("wrote the title",
 		"title", logsafe.String(title.Text), "attributed", attribute)
 
+	p.reconcileTitle(ctx, athleteID, activity.ID, title, written, logger)
+
 	return true, nil
+}
+
+// reconcileTitle records what Strava kept, when that is not what was sent.
+//
+// Strava rewrites a title it thinks contains a link: a hand-written
+// "Über Ruhstorf a.d.Rott nach Pocking" came back as "Über Ruhstorf  nach
+// Pocking" on 2026-08-24, the token excised and both spaces left behind.
+// Place names are normalized before they reach the prompt so this should not
+// arise, but "should not" is not a guarantee about somebody else's server.
+//
+// The named log is written before the PUT, deliberately, so that a crash
+// cannot rename an activity twice. The cost is that the row holds what was
+// sent. Left uncorrected, RECENT would forbid repeating a title that does not
+// exist and a few-shot example could teach a form that never survives a write.
+//
+// Never fatal. The title is already on Strava; a failure to correct the record
+// is worth a log line and nothing more.
+func (p *Processor) reconcileTitle(
+	ctx context.Context, athleteID, activityID int64,
+	title titled, written *strava.Activity, logger *slog.Logger,
+) {
+	if written == nil || written.Name == "" || written.Name == title.Text {
+		return
+	}
+
+	logger.Warn("strava stored a different title than the one sent; correcting the record",
+		"sent", logsafe.String(title.Text),
+		"stored", logsafe.String(written.Name))
+
+	if err := p.deps.Store.MarkNamed(ctx, store.Naming{
+		AthleteID:  athleteID,
+		ActivityID: activityID,
+		Title:      written.Name,
+		Language:   string(title.Language),
+		Source:     title.Source,
+		At:         p.deps.Now(),
+	}); err != nil {
+		logger.Error("could not correct the named log; it holds the title that was sent",
+			"error", err)
+	}
 }
 
 // wouldAttribute reports what a real write would have done about the

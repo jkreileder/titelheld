@@ -388,3 +388,72 @@ func TestAnUnusableEntryIsNotOffered(t *testing.T) {
 		t.Errorf("position = %d, want 0: an entry that was never offered was spent", position)
 	}
 }
+
+// The named log records what Strava kept, not what was sent.
+//
+// Strava deletes tokens from a title that look like a hostname: a hand-written
+// "Über Ruhstorf a.d.Rott nach Pocking" came back as "Über Ruhstorf  nach
+// Pocking" on 2026-08-24. The named log is written before the PUT — on purpose,
+// so a crash cannot rename an activity twice — so without a correction the row
+// would hold a title that does not exist, RECENT would forbid repeating it, and
+// a few-shot example could teach a form that never survives a write.
+func TestTheNamedLogRecordsWhatStravaKept(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+
+	const sent = "Über Ruhstorf a.d.Rott nach Pocking"
+
+	const kept = "Über Ruhstorf  nach Pocking"
+
+	h.provider.response = title(sent)
+	h.strava.mangle = func(string) string { return kept }
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	// What went out is still what the model produced.
+	writes := h.strava.writes()
+	if len(writes) != 1 || writes[0].name != sent {
+		t.Fatalf("writes = %+v, want one PUT of %q", writes, sent)
+	}
+
+	stored, named, err := h.store.Named(t.Context(), 4242, 777)
+	if err != nil {
+		t.Fatalf("Named: %v", err)
+	}
+
+	if !named {
+		t.Fatal("the activity is not in the named log")
+	}
+
+	if stored != kept {
+		t.Errorf("named log holds %q, want what Strava kept: %q", stored, kept)
+	}
+}
+
+// A title Strava stores unchanged leaves the record alone.
+func TestAnUnchangedTitleIsNotRewritten(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	h.provider.response = title("Musterrunde am Musterbach")
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	stored, _, err := h.store.Named(t.Context(), 4242, 777)
+	if err != nil {
+		t.Fatalf("Named: %v", err)
+	}
+
+	if stored != "Musterrunde am Musterbach" {
+		t.Errorf("named log holds %q", stored)
+	}
+}

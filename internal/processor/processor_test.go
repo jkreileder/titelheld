@@ -21,7 +21,13 @@ func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)
 
 // fakeStrava stands in for the API. It records every write, which is what the
 // idempotency criterion is asserted against.
+// mangle rewrites a title the way Strava does when it thinks one contains a
+// link. Empty means store what was sent.
+type mangler func(string) string
+
 type fakeStrava struct {
+	mangle mangler
+
 	mu sync.Mutex
 
 	activity strava.Activity
@@ -88,11 +94,16 @@ func (f *fakeStrava) UpdateActivityName(_ context.Context, id int64, name string
 
 	f.puts = append(f.puts, put{name: name})
 
+	stored := name
+	if f.mangle != nil {
+		stored = f.mangle(name)
+	}
+
 	if activity, ok := f.byID[id]; ok {
-		activity.Name = name
+		activity.Name = stored
 		f.byID[id] = activity
 	} else {
-		f.activity.Name = name
+		f.activity.Name = stored
 	}
 
 	return &f.activity, nil
@@ -109,7 +120,11 @@ func (f *fakeStrava) UpdateActivityNameAndDescription(
 	}
 
 	f.puts = append(f.puts, put{name: name, description: description, hadDesc: true})
+
 	f.activity.Name = name
+	if f.mangle != nil {
+		f.activity.Name = f.mangle(name)
+	}
 	f.activity.Description = description
 
 	return &f.activity, nil
