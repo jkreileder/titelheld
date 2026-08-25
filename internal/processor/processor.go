@@ -78,6 +78,20 @@ type Deps struct {
 	// refusal on every ride.
 	WritesEnabled bool
 
+	// LogPrompt logs the complete prompt for every naming.
+	//
+	// The counters on the "named" line say how many places, achievements,
+	// examples and recent titles the prompt carried; they cannot say what any
+	// of them were. During the observation window the judgement being made is
+	// about the material the model actually received, so an inference from
+	// counts is the wrong evidence.
+	//
+	// Verbosity is what this gates, not privacy. A prompt carries no
+	// coordinates by construction — the geo layer produces names and has
+	// nowhere to put a position — and every other value in it is either the
+	// athlete's own text or already on a public feed.
+	LogPrompt bool
+
 	Logger *slog.Logger
 	Now    func() time.Time
 }

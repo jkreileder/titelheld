@@ -69,6 +69,18 @@ type Config struct {
 	// WritesEnabled permits Strava writes. False — the zero value — is dry run.
 	WritesEnabled bool
 
+	// LogPrompt logs the complete prompt sent for each naming.
+	//
+	// On by default while writes are off, because that is the observation
+	// window and its whole purpose is judging what the model was given rather
+	// than inferring it from counters. LOG_PROMPT forces it either way.
+	//
+	// It is verbosity that is being gated here, not privacy: a prompt carries
+	// no coordinates by construction — the geo layer hands the naming layer
+	// names and has nowhere to put a position — and everything else in it is
+	// already on a public feed.
+	LogPrompt bool
+
 	// StravaClientID and StravaClientSecret identify the Strava API
 	// application.
 	StravaClientID     string
@@ -173,6 +185,7 @@ const (
 	EnvSweepAudience       = "SWEEP_AUDIENCE"
 	EnvSweepServiceAccount = "SWEEP_SERVICE_ACCOUNT"
 	EnvMaxInstances        = "MAX_INSTANCES"
+	EnvLogPrompt           = "LOG_PROMPT"
 )
 
 // RequiredMaxInstances is the only value this service will start with.
@@ -418,6 +431,21 @@ func load(getenv func(string) string, serving bool) (Config, error) {
 
 	cfg.WritesEnabled = writesEnabled
 
+	// Defaults to the dry-run state — after WritesEnabled is known, because it
+	// is derived from it. The observation window then logs prompts without
+	// anyone remembering to ask for it, and a service with writes on does not
+	// unless somebody says so.
+	cfg.LogPrompt = !cfg.WritesEnabled
+
+	if raw := strings.TrimSpace(getenv(EnvLogPrompt)); raw != "" {
+		logPrompt, err := parseLogPrompt(raw)
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			cfg.LogPrompt = logPrompt
+		}
+	}
+
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
 	}
@@ -445,6 +473,24 @@ func parseWritesEnabled(raw string) (bool, error) {
 	default:
 		return false, fmt.Errorf(
 			"config: "+EnvDryRun+" must be a boolean, got %q (staying in dry run)", raw)
+	}
+}
+
+// parseLogPrompt reads LOG_PROMPT.
+//
+// Spelled out rather than reusing parseWritesEnabled, which inverts its input:
+// DRY_RUN=1 means writes are off, and reusing it here would make LOG_PROMPT=1
+// mean "do not log". Two settings that read the same way in the environment
+// must not mean opposite things.
+func parseLogPrompt(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "t", "true", "y", "yes", "on":
+		return true, nil
+	case "0", "f", "false", "n", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf(
+			"config: "+EnvLogPrompt+" must be a boolean, got %q", raw)
 	}
 }
 

@@ -105,3 +105,65 @@ func TestStringNeutralizesNonCcCategories(t *testing.T) {
 		})
 	}
 }
+
+// Block keeps the structure that String is right to destroy.
+func TestBlock(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "plain", in: "RIDE\n- Sport: Ride", want: "RIDE\n- Sport: Ride"},
+		{name: "tabs survive", in: "a\tb", want: "a\tb"},
+		{name: "carriage return goes", in: "a\r\nb", want: "a \nb"},
+
+		// The reasons this exists: an escape sequence that moves a terminal
+		// cursor, and the override that reverses everything after it.
+		{name: "escape sequence", in: "a\x1b[31mred", want: "a [31mred"},
+		{name: "bidi override", in: "a\u202eb", want: "a b"},
+		{name: "line separator", in: "a\u2028b", want: "a b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := Block(tc.in); got != tc.want {
+				t.Errorf("Block(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// A prompt is a few kilobytes; a runaway is not the log's problem to carry.
+func TestBlockIsBounded(t *testing.T) {
+	t.Parallel()
+
+	got := Block(strings.Repeat("x", MaxBlockLen*2))
+
+	if len([]rune(got)) != MaxBlockLen+1 {
+		t.Errorf("Block of an oversized value is %d runes, want %d plus a marker",
+			len([]rune(got)), MaxBlockLen)
+	}
+
+	if !strings.HasSuffix(got, "…") {
+		t.Error("a truncated block does not say it was truncated")
+	}
+}
+
+// String and Block disagree about newlines on purpose, and that is the whole
+// distinction between them.
+func TestBlockAndStringDifferOnNewlines(t *testing.T) {
+	t.Parallel()
+
+	const multi = "first\nsecond"
+
+	if strings.Contains(String(multi), "\n") {
+		t.Error("String kept a newline; a one-line value must not be able to forge two")
+	}
+
+	if !strings.Contains(Block(multi), "\n") {
+		t.Error("Block flattened a newline; the structure is what it exists to preserve")
+	}
+}

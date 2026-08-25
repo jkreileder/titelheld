@@ -60,6 +60,60 @@ func String(s string) string {
 	return b.String()
 }
 
+// MaxBlockLen bounds a sanitized multi-line value.
+//
+// Sixteen kilobytes: a naming prompt is a few, and this is a ceiling against a
+// runaway rather than a budget. Far larger than [MaxLen] because a value logged
+// through [Block] is one whose whole content is the point.
+const MaxBlockLen = 16 << 10
+
+// Block sanitizes a value whose line structure carries meaning.
+//
+// [String] is right for a title or a sport type: it flattens newlines, because
+// a value that should be one line forging several is exactly the attack. A
+// prompt is the opposite — it is a newline-delimited format with named blocks,
+// and flattening it would destroy the thing being logged.
+//
+// So newlines and tabs survive, and everything else that can move a cursor,
+// reorder rendering or end a line for a JavaScript-based viewer does not.
+//
+// This does not make the content trustworthy. It makes it unable to forge
+// structure in the log that carries it.
+func Block(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	var b strings.Builder
+
+	b.Grow(len(s))
+
+	count := 0
+
+	for _, r := range s {
+		if count >= MaxBlockLen {
+			b.WriteString(truncationMarker)
+
+			break
+		}
+
+		switch {
+		case r == utf8.RuneError:
+			continue
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp):
+			b.WriteRune(' ')
+		default:
+			b.WriteRune(r)
+		}
+
+		count++
+	}
+
+	return b.String()
+}
+
 // Strings sanitizes every element of a slice.
 func Strings(values []string) []string {
 	if values == nil {

@@ -129,6 +129,7 @@ func (p *Processor) llmTitle(
 		"title", logsafe.String(title.Text),
 		"language", string(title.Language),
 		"places", len(ride.Places),
+		"achievements", len(ride.Achievements),
 		"facts", len(ride.Facts),
 		"recent_titles", len(gathered.Context.RecentTitles),
 		"examples", len(gathered.Context.Examples),
@@ -177,7 +178,7 @@ const maxFranchiseOffers = 2
 func (p *Processor) complete(
 	ctx context.Context, ride naming.Ride, gathered gathered, logger *slog.Logger,
 ) (naming.Title, bool, error) {
-	title, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context))
+	title, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), logger)
 	if err != nil {
 		return naming.Title{}, false, err
 	}
@@ -201,7 +202,7 @@ func (p *Processor) complete(
 			"entry", logsafe.String(entry),
 			"title", logsafe.String(title.Text))
 
-		retry, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context))
+		retry, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), logger)
 		if err != nil {
 			// The title in hand is a good one that simply ignored the series.
 			// Losing it because a second call failed would leave the ride at
@@ -224,7 +225,7 @@ func (p *Processor) complete(
 	plain := gathered.Context
 	plain.FranchiseNext = ""
 
-	plainTitle, err := p.ask(ctx, naming.BuildPrompt(ride, plain))
+	plainTitle, err := p.ask(ctx, naming.BuildPrompt(ride, plain), logger)
 	if err != nil {
 		logger.Warn("naming without the series failed; keeping the title that ignored it",
 			"error", err)
@@ -236,7 +237,11 @@ func (p *Processor) complete(
 }
 
 // ask makes one provider call and validates what comes back.
-func (p *Processor) ask(ctx context.Context, prompt naming.Prompt) (naming.Title, error) {
+func (p *Processor) ask(
+	ctx context.Context, prompt naming.Prompt, logger *slog.Logger,
+) (naming.Title, error) {
+	p.logPrompt(prompt, logger)
+
 	raw, err := p.deps.Provider.Complete(ctx, prompt)
 	if err != nil {
 		return naming.Title{}, fmt.Errorf("llm %s: %w", p.deps.Provider.Name(), err)
@@ -310,6 +315,26 @@ func achievementsOf(activity *strava.Activity) []string {
 // notableEffort reports whether an effort is worth a line in the prompt.
 func notableEffort(effort strava.SegmentEffort) bool {
 	return (effort.PRRank >= 1 && effort.PRRank <= 3) || len(effort.Achievements) > 0
+}
+
+// logPrompt writes the whole prompt, when asked to.
+//
+// Every attempt, not just the first: a ride that declines a franchise entry is
+// named from up to three different prompts, and "what did the model receive"
+// has three answers.
+//
+// Logged as two fields rather than one blob so a log viewer can fold them, and
+// through logsafe like every other value that did not originate here — the
+// prompt contains a gear name the athlete typed, ride notes other tools wrote
+// and segment names a stranger chose.
+func (p *Processor) logPrompt(prompt naming.Prompt, logger *slog.Logger) {
+	if !p.deps.LogPrompt {
+		return
+	}
+
+	logger.Info("prompt",
+		"system", logsafe.Block(prompt.System),
+		"user", logsafe.Block(prompt.User))
 }
 
 // gearName resolves a gear ID to the name a franchise matches on.
