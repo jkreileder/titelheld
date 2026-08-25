@@ -98,18 +98,14 @@ func (p *Processor) write(
 
 // reconcileTitle records what Strava kept, when that is not what was sent.
 //
-// Strava rewrites a title it thinks contains a link: a hand-written
-// "Über Ruhstorf a.d.Rott nach Pocking" came back as "Über Ruhstorf  nach
-// Pocking" on 2026-08-24, the token excised and both spaces left behind.
-// Place names are normalized before they reach the prompt so this should not
-// arise, but "should not" is not a guarantee about somebody else's server.
+// The named log is written before the PUT so that a crash cannot rename an
+// activity twice; the cost is that the row holds what was sent. Strava
+// rewrites a title it reads as containing a link, so the two can differ —
+// place names are normalized upstream to avoid it, but that is not a
+// guarantee about somebody else's server. Left uncorrected, RECENT would
+// forbid repeating a title that does not exist.
 //
-// The named log is written before the PUT, deliberately, so that a crash
-// cannot rename an activity twice. The cost is that the row holds what was
-// sent. Left uncorrected, RECENT would forbid repeating a title that does not
-// exist and a few-shot example could teach a form that never survives a write.
-//
-// Never fatal. The title is already on Strava; a failure to correct the record
+// Never fatal. The title is already on Strava; failing to correct the record
 // is worth a log line and nothing more.
 func (p *Processor) reconcileTitle(
 	ctx context.Context, athleteID, activityID int64,

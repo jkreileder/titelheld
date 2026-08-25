@@ -86,23 +86,15 @@ var dottedAbbreviation = regexp.MustCompile(`(\p{L})\.(\p{L})`)
 
 // NormalizePlaceName spaces out dotted abbreviations in a place name.
 //
-// Strava deletes tokens from a title that look like a hostname. Observed live
-// on 2026-08-24: "Über Ruhstorf a.d.Rott nach Pocking" was stored as
-// "Über Ruhstorf  nach Pocking" — the token excised, both spaces left behind.
-// `a.d.Rott` is label.label.label, which is what a naive link filter matches.
+// Strava deletes hostname-shaped tokens from a title, and Nominatim returns
+// the compact official form: "Ruhstorf a.d.Rott" is label.label.label, so a
+// title carrying it comes back with the town removed. Spacing the periods is
+// also the correct German typography.
 //
-// Nominatim returns the official compact form and Bavaria is full of it —
-// Ruhstorf a.d.Rott, Neustadt a.d.Donau, Rothenburg o.d.Tauber — so a title
-// built from these names would be mangled routinely. Spacing the periods is
-// also the correct German typography, and it stops the token looking like a
-// host.
-//
-// Applied to every resolved place rather than to a list of German
-// abbreviations: the shape is the problem, and anything genuinely URL-like has
-// no business in a title either.
-//
-// Repeated until stable because the matches overlap: "a.d.Rott" needs two
-// passes, the second seeing the "d" the first consumed.
+// Matched on the shape rather than on a list of German abbreviations —
+// anything genuinely URL-like has no business in a title either — and
+// repeated until stable, because "a.d.Rott" needs a second pass over the "d"
+// the first one consumed.
 func NormalizePlaceName(name string) string {
 	for {
 		spaced := dottedAbbreviation.ReplaceAllString(name, "$1. $2")
