@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jkreileder/titelheld/internal/naming"
@@ -435,12 +436,69 @@ func TestTheNamedLogRecordsWhatStravaKept(t *testing.T) {
 	}
 }
 
+// The correction is a second write, and only when there is something to
+// correct — the counterpart to the assertion above.
+func TestAMangledTitleCostsOneCorrection(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	h.provider.response = title("Über Ruhstorf a.d.Rott nach Pocking")
+	h.strava.mangle = func(string) string { return "Über Ruhstorf  nach Pocking" }
+
+	counting := &countingStore{Store: h.store}
+	h.proc.deps.Store = counting
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if got := counting.count(); got != 2 {
+		t.Errorf("the named log was written %d times, want 2: the record, then the correction", got)
+	}
+}
+
+// countingStore records how often the named log is written.
+//
+// Reading the final title cannot tell one write from two: both store the same
+// string, and the harness runs on a fixed clock so even the timestamp matches.
+// The question here is whether a second write happens at all.
+type countingStore struct {
+	store.Store
+
+	mu    sync.Mutex
+	marks int
+}
+
+func (c *countingStore) MarkNamed(ctx context.Context, naming store.Naming) error {
+	c.mu.Lock()
+	c.marks++
+	c.mu.Unlock()
+
+	return c.Store.MarkNamed(ctx, naming)
+}
+
+func (c *countingStore) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.marks
+}
+
 // A title Strava stores unchanged leaves the record alone.
+//
+// Not merely "the row is right afterwards" — a reconciliation that fired
+// anyway would rewrite it to the same value and look identical. This asserts
+// the write did not happen.
 func TestAnUnchangedTitleIsNotRewritten(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t, true, nil)
 	h.provider.response = title("Musterrunde am Musterbach")
+
+	counting := &countingStore{Store: h.store}
+	h.proc.deps.Store = counting
 
 	h.enqueue(t, "create")
 
@@ -455,5 +513,9 @@ func TestAnUnchangedTitleIsNotRewritten(t *testing.T) {
 
 	if stored != "Musterrunde am Musterbach" {
 		t.Errorf("named log holds %q", stored)
+	}
+
+	if got := counting.count(); got != 1 {
+		t.Errorf("the named log was written %d times, want 1: nothing was mangled, so nothing needed correcting", got)
 	}
 }

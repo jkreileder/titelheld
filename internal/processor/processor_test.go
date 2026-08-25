@@ -99,18 +99,26 @@ func (f *fakeStrava) UpdateActivityName(_ context.Context, id int64, name string
 		stored = f.mangle(name)
 	}
 
+	// The activity that was updated, not whichever one this fake happens to
+	// hold. The writer reads the returned name back to see what Strava kept,
+	// so returning a different activity would reconcile against the wrong
+	// title.
 	if activity, ok := f.byID[id]; ok {
 		activity.Name = stored
 		f.byID[id] = activity
-	} else {
-		f.activity.Name = stored
+
+		updated := activity
+
+		return &updated, nil
 	}
+
+	f.activity.Name = stored
 
 	return &f.activity, nil
 }
 
 func (f *fakeStrava) UpdateActivityNameAndDescription(
-	_ context.Context, _ int64, name, description string,
+	_ context.Context, id int64, name, description string,
 ) (*strava.Activity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -121,10 +129,22 @@ func (f *fakeStrava) UpdateActivityNameAndDescription(
 
 	f.puts = append(f.puts, put{name: name, description: description, hadDesc: true})
 
-	f.activity.Name = name
+	stored := name
 	if f.mangle != nil {
-		f.activity.Name = f.mangle(name)
+		stored = f.mangle(name)
 	}
+
+	if activity, ok := f.byID[id]; ok {
+		activity.Name = stored
+		activity.Description = description
+		f.byID[id] = activity
+
+		updated := activity
+
+		return &updated, nil
+	}
+
+	f.activity.Name = stored
 	f.activity.Description = description
 
 	return &f.activity, nil

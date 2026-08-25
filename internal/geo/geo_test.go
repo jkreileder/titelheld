@@ -881,9 +881,15 @@ func TestDescribeNormalizesResolvedNames(t *testing.T) {
 		t.Errorf("start name = %q, want the spaced form", names[0])
 	}
 
-	// The region travels to the prompt too, on its own field.
+	// The region and the country travel to the prompt too, on their own
+	// fields. All three are asserted, so removing any one of the three
+	// normalization calls fails this.
 	if summary.Region != "Nieder. Bayern" {
 		t.Errorf("Region = %q, want the spaced form", summary.Region)
+	}
+
+	if summary.Country != "Test. Land" {
+		t.Errorf("Country = %q, want the spaced form", summary.Country)
 	}
 }
 
@@ -894,6 +900,6 @@ type dottedReverser struct{}
 func (dottedReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
 	return store.Place{
 		Name: "Ruhstorf a.d.Rott", Kind: "village",
-		Region: "Nieder.Bayern", Country: "Testland",
+		Region: "Nieder.Bayern", Country: "Test.Land",
 	}, nil
 }
