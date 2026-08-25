@@ -86,29 +86,35 @@ func Block(s string) string {
 
 	var b strings.Builder
 
-	b.Grow(len(s))
+	// Bounded by the cap, not by the input: a caller handing this a megabyte
+	// should not make it reserve a megabyte to emit sixteen kilobytes.
+	b.Grow(min(len(s), MaxBlockLen))
 
-	count := 0
+	// Counted in bytes, because MaxBlockLen is a size. Counting runes would let
+	// sixteen thousand four-byte characters produce sixty-four kilobytes from a
+	// limit that says sixteen.
+	size := 0
 
 	for _, r := range s {
-		if count >= MaxBlockLen {
+		if r == utf8.RuneError {
+			continue
+		}
+
+		kept := r
+		if r != '\n' && r != '\t' &&
+			(unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)) {
+			kept = ' '
+		}
+
+		if size+utf8.RuneLen(kept) > MaxBlockLen {
 			b.WriteString(truncationMarker)
 
 			break
 		}
 
-		switch {
-		case r == utf8.RuneError:
-			continue
-		case r == '\n' || r == '\t':
-			b.WriteRune(r)
-		case unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp):
-			b.WriteRune(' ')
-		default:
-			b.WriteRune(r)
-		}
+		b.WriteRune(kept)
 
-		count++
+		size += utf8.RuneLen(kept)
 	}
 
 	return b.String()

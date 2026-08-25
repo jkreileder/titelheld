@@ -125,6 +125,10 @@ func TestBlock(t *testing.T) {
 		{name: "escape sequence", in: "a\x1b[31mred", want: "a [31mred"},
 		{name: "bidi override", in: "a\u202eb", want: "a b"},
 		{name: "line separator", in: "a\u2028b", want: "a b"},
+
+		// Invalid UTF-8 is dropped rather than passed through as the
+		// replacement character, the same as String does.
+		{name: "invalid utf-8", in: "a\xffb", want: "ab"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -137,18 +141,58 @@ func TestBlock(t *testing.T) {
 }
 
 // A prompt is a few kilobytes; a runaway is not the log's problem to carry.
+//
+// The bound is a size in bytes, so a multi-byte value has to be measured the
+// same way: counting runes would let sixteen thousand four-byte characters
+// produce sixty-four kilobytes from a limit that says sixteen.
 func TestBlockIsBounded(t *testing.T) {
 	t.Parallel()
 
-	got := Block(strings.Repeat("x", MaxBlockLen*2))
+	for _, tc := range []struct {
+		name string
+		fill string
+	}{
+		{name: "single-byte runes", fill: "x"},
+		{name: "two-byte runes", fill: "ü"},
+		{name: "three-byte runes", fill: "€"},
+		{name: "four-byte runes", fill: "𝄞"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if len([]rune(got)) != MaxBlockLen+1 {
-		t.Errorf("Block of an oversized value is %d runes, want %d plus a marker",
-			len([]rune(got)), MaxBlockLen)
+			// Twice the cap in bytes, whatever the rune width.
+			repeats := (MaxBlockLen * 2) / len(tc.fill)
+
+			got := Block(strings.Repeat(tc.fill, repeats))
+
+			if !strings.HasSuffix(got, truncationMarker) {
+				t.Fatal("a truncated block does not say it was truncated")
+			}
+
+			body := strings.TrimSuffix(got, truncationMarker)
+			if len(body) > MaxBlockLen {
+				t.Errorf("block body is %d bytes, over the %d-byte cap", len(body), MaxBlockLen)
+			}
+
+			// And it does not stop far short: a rune that would cross the cap
+			// is dropped, so at most one rune's worth is missing.
+			if len(body) < MaxBlockLen-len(tc.fill) {
+				t.Errorf("block body is %d bytes, well under the %d-byte cap",
+					len(body), MaxBlockLen)
+			}
+		})
 	}
+}
 
-	if !strings.HasSuffix(got, "…") {
-		t.Error("a truncated block does not say it was truncated")
+// A value that fits is returned whole, marker and all absent.
+func TestBlockKeepsAValueThatFits(t *testing.T) {
+	t.Parallel()
+
+	in := strings.Repeat("ü", MaxBlockLen/2)
+
+	if got := Block(in); got != in {
+		t.Errorf("a value exactly at the cap was altered: %d bytes in, %d out",
+			len(in), len(got))
 	}
 }
 
