@@ -1143,13 +1143,8 @@ No `exit` and no `set -e`: this is meant to be pasted into the shell you are sit
 job firing every five minutes, which is the one outcome worth writing the block around. Everything
 after the `resume` runs, and each step says what went wrong.
 
-**Verified in `bash`, `zsh`, `dash` and `sh`.** An earlier version put the flags in a variable and
-expanded it unquoted, relying on the shell to split them into three arguments. bash and dash do;
-**zsh does not** — it passed the whole string as one argument and `gcloud` refused with
-`Please use the location flag to manually specify a location`. It had been tested in bash and was
-being run in zsh, which is the same failure as a pre-commit hook that pulls an image CI cannot
-reach: verified in the wrong environment. A function takes no position on word splitting, so it
-behaves identically in all four.
+A function rather than a variable of flags, because zsh does not word-split an unquoted expansion
+and bash does. Verified in `bash`, `zsh`, `dash` and `sh`.
 
 Run the lines one at a time if you prefer; only the order matters, and that the `pause` runs
 whatever the `run` did.
