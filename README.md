@@ -1138,10 +1138,10 @@ fi
 job describe --format='value(state)'    # want PAUSED
 ```
 
-No `exit` and no `set -e`: this is meant to be pasted into the shell you are sitting in, where
-`exit` closes the terminal and an errexit would skip the `pause` on a failed `run` — leaving the
-job firing every five minutes, which is the one outcome worth writing the block around. Everything
-after the `resume` runs, and each step says what went wrong.
+No `exit`, because this is meant to be pasted into the shell you are sitting in, where `exit`
+closes the terminal. The `pause` runs whatever the `run` did — a failed dispatch must not leave
+the job firing every five minutes — and it survives an `errexit` shell too: a failing command in
+an `&&`/`||` list does not trigger it.
 
 A function rather than a variable of flags, because zsh does not word-split an unquoted expansion
 and bash does. Verified in `bash`, `zsh`, `dash` and `sh`.
