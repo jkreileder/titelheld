@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -785,4 +786,120 @@ type fixedReverser struct{ place store.Place }
 
 func (f fixedReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
 	return f.place, nil
+}
+
+// Strava deletes tokens from a title that look like a hostname, so a place
+// name must not arrive at the prompt looking like one.
+//
+// Observed live on 2026-08-24: "Über Ruhstorf a.d.Rott nach Pocking" was
+// stored by Strava as "Über Ruhstorf  nach Pocking" — the token excised and
+// both spaces left behind. Nominatim returns the compact official form, and
+// this region is full of it.
+func TestNormalizePlaceName(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "the observed case", in: "Ruhstorf a.d.Rott", want: "Ruhstorf a. d. Rott"},
+		{name: "another river", in: "Neustadt a.d.Donau", want: "Neustadt a. d. Donau"},
+		{name: "ob der", in: "Rothenburg o.d.Tauber", want: "Rothenburg o. d. Tauber"},
+		{name: "a single abbreviation", in: "St.Wolfgang", want: "St. Wolfgang"},
+
+		// Already spaced, or nothing to do.
+		{name: "already correct", in: "Ruhstorf a. d. Rott", want: "Ruhstorf a. d. Rott"},
+		{name: "an ordinary name", in: "Pocking", want: "Pocking"},
+		{name: "a hyphenated name", in: "Bad Griesbach-Therme", want: "Bad Griesbach-Therme"},
+		{name: "empty", in: "", want: ""},
+
+		// A trailing period ends a sentence rather than joining two letters.
+		{name: "trailing period", in: "Sankt Wolfgang i.", want: "Sankt Wolfgang i."},
+
+		// Digits are left alone: a decimal is not an abbreviation.
+		{name: "a decimal", in: "Kilometer 12.5", want: "Kilometer 12.5"},
+		// Left alone: the rule needs a letter on both sides, so a run
+		// containing digits is untouched even though it has the shape. A
+		// decimal in a name is likelier than a numeric hostname, and the
+		// consequence of splitting one is worse.
+		{name: "digits in the run", in: "B.12.3", want: "B.12.3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := NormalizePlaceName(tc.in); got != tc.want {
+				t.Errorf("NormalizePlaceName(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// The normalized form is what a title would carry, so it must not look like a
+// host to the filter that mangled the original.
+func TestNormalizedNamesCarryNoHostnameShape(t *testing.T) {
+	t.Parallel()
+
+	hostLike := regexp.MustCompile(`\p{L}+\.\p{L}+\.\p{L}+`)
+
+	for _, raw := range []string{
+		"Ruhstorf a.d.Rott", "Neustadt a.d.Donau", "Rothenburg o.d.Tauber",
+	} {
+		if !hostLike.MatchString(raw) {
+			t.Errorf("%q does not have the shape this is about; the test proves nothing", raw)
+		}
+
+		if got := NormalizePlaceName(raw); hostLike.MatchString(got) {
+			t.Errorf("NormalizePlaceName(%q) = %q, still hostname-shaped", raw, got)
+		}
+	}
+}
+
+// Describe normalizes the names it hands back, not just the helper.
+//
+// The unit test above proves the rewrite; this proves the pipeline applies it.
+// Without this, deleting the call from Describe leaves every test green while
+// the prompt goes back to receiving names Strava will mangle.
+func TestDescribeNormalizesResolvedNames(t *testing.T) {
+	t.Parallel()
+
+	// Every sample resolves to the same dotted name, so the assertion does not
+	// depend on which point the sampler happens to pick first.
+	describer, _ := newDescriber(t, dottedReverser{})
+
+	summary, err := describer.Describe(t.Context(), "_p~iF~ps|U_ulLnnqC_mqNvxq`@")
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+
+	names := summary.Names()
+	if len(names) == 0 {
+		t.Fatal("Names() is empty")
+	}
+
+	if names[0] != "Ruhstorf a. d. Rott" {
+		t.Errorf("start name = %q, want the spaced form", names[0])
+	}
+
+	// The region and the country travel to the prompt too, on their own
+	// fields. All three are asserted, so removing any one of the three
+	// normalization calls fails this.
+	if summary.Region != "Nieder. Bayern" {
+		t.Errorf("Region = %q, want the spaced form", summary.Region)
+	}
+
+	if summary.Country != "Test. Land" {
+		t.Errorf("Country = %q, want the spaced form", summary.Country)
+	}
+}
+
+// dottedReverser answers every point with a name in the compact official form
+// Nominatim returns for these places.
+type dottedReverser struct{}
+
+func (dottedReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
+	return store.Place{
+		Name: "Ruhstorf a.d.Rott", Kind: "village",
+		Region: "Nieder.Bayern", Country: "Test.Land",
+	}, nil
 }

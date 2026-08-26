@@ -65,6 +65,11 @@ type titled struct {
 	// for the writer to record.
 	Franchise string
 
+	// FranchiseEntry is the entry itself, carried so the writer can check that
+	// what Strava stored still contains it. Only meaningful when Franchise is
+	// set.
+	FranchiseEntry string
+
 	// FranchiseIndex is where in that series the used entry sat. Only
 	// meaningful when Franchise is set.
 	FranchiseIndex int
@@ -141,6 +146,7 @@ func (p *Processor) llmTitle(
 	// here — and only when the title that came back actually used the entry.
 	if used {
 		named.Franchise = gathered.Franchise
+		named.FranchiseEntry = gathered.Context.FranchiseNext
 		named.FranchiseIndex = gathered.FranchiseIndex
 	}
 

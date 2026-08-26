@@ -72,12 +72,16 @@ func (p *Processor) write(
 	// prevent.
 	p.recordFranchise(ctx, athleteID, title, logger)
 
-	var err error
+	var (
+		written *strava.Activity
+		err     error
+	)
+
 	if attribute {
-		_, err = p.deps.Activities.UpdateActivityNameAndDescription(
+		written, err = p.deps.Activities.UpdateActivityNameAndDescription(
 			ctx, activity.ID, title.Text, description)
 	} else {
-		_, err = p.deps.Activities.UpdateActivityName(ctx, activity.ID, title.Text)
+		written, err = p.deps.Activities.UpdateActivityName(ctx, activity.ID, title.Text)
 	}
 
 	if err != nil {
@@ -87,7 +91,58 @@ func (p *Processor) write(
 	logger.Info("wrote the title",
 		"title", logsafe.String(title.Text), "attributed", attribute)
 
+	p.reconcileTitle(ctx, athleteID, activity.ID, title, written, logger)
+
 	return true, nil
+}
+
+// reconcileTitle records what Strava kept, when that is not what was sent.
+//
+// The named log is written before the PUT so that a crash cannot rename an
+// activity twice; the cost is that the row holds what was sent. Strava
+// rewrites a title it reads as containing a link, so the two can differ —
+// place names are normalized upstream to avoid it, but that is not a
+// guarantee about somebody else's server. Left uncorrected, RECENT would
+// forbid repeating a title that does not exist.
+//
+// Never fatal. The title is already on Strava; failing to correct the record
+// is worth a log line and nothing more.
+func (p *Processor) reconcileTitle(
+	ctx context.Context, athleteID, activityID int64,
+	title titled, written *strava.Activity, logger *slog.Logger,
+) {
+	if written == nil || written.Name == "" || written.Name == title.Text {
+		return
+	}
+
+	logger.Warn("strava stored a different title than the one sent; correcting the record",
+		"sent", logsafe.String(title.Text),
+		"stored", logsafe.String(written.Name))
+
+	// A franchise entry is spent before the write and the advance is
+	// monotonic, so it cannot be taken back here. But an entry is inserted
+	// into the prompt verbatim and never normalized — a series whose titles
+	// carry initials, "S.W.A.T.", has exactly the shape Strava removes — and
+	// the entry can therefore be spent on a title that no longer contains it.
+	// That is the failure the advance-on-use rule exists to prevent, so it is
+	// said out loud and the athlete can reserve the entry again by hand.
+	if title.Franchise != "" && !naming.UsesEntry(written.Name, title.FranchiseEntry) {
+		logger.Warn("the franchise entry was spent on a title strava then rewrote; reserve it again by hand",
+			"franchise", logsafe.String(title.Franchise),
+			"stored", logsafe.String(written.Name))
+	}
+
+	if err := p.deps.Store.MarkNamed(ctx, store.Naming{
+		AthleteID:  athleteID,
+		ActivityID: activityID,
+		Title:      written.Name,
+		Language:   string(title.Language),
+		Source:     title.Source,
+		At:         p.deps.Now(),
+	}); err != nil {
+		logger.Error("could not correct the named log; it holds the title that was sent",
+			"error", err)
+	}
 }
 
 // wouldAttribute reports what a real write would have done about the

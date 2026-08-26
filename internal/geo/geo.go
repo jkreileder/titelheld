@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"regexp"
 	"strconv"
 
 	"github.com/jkreileder/titelheld/internal/logsafe"
@@ -76,6 +77,33 @@ func (s Summary) Names() []string {
 	}
 
 	return names
+}
+
+// dottedAbbreviation matches a period sitting directly between two letters.
+//
+// Digits are excluded so a name carrying a decimal is left alone.
+var dottedAbbreviation = regexp.MustCompile(`(\p{L})\.(\p{L})`)
+
+// NormalizePlaceName spaces out dotted abbreviations in a place name.
+//
+// Strava deletes hostname-shaped tokens from a title, and Nominatim returns
+// the compact official form: "Ruhstorf a.d.Rott" is label.label.label, so a
+// title carrying it comes back with the town removed. Spacing the periods is
+// also the correct German typography.
+//
+// Matched on the shape rather than on a list of German abbreviations —
+// anything genuinely URL-like has no business in a title either — and
+// repeated until stable, because "a.d.Rott" needs a second pass over the "d"
+// the first one consumed.
+func NormalizePlaceName(name string) string {
+	for {
+		spaced := dottedAbbreviation.ReplaceAllString(name, "$1. $2")
+		if spaced == name {
+			return name
+		}
+
+		name = spaced
+	}
 }
 
 // Reverser resolves one coordinate into a place. [Nominatim] implements it;
@@ -148,6 +176,13 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 		if err != nil {
 			return Summary{}, err
 		}
+
+		// Normalized here, once, so everything downstream — the names, the
+		// region, the country, and the deduplication below — works on the
+		// form a title can actually carry.
+		place.Name = NormalizePlaceName(place.Name)
+		place.Region = NormalizePlaceName(place.Region)
+		place.Country = NormalizePlaceName(place.Country)
 
 		if place.Empty() {
 			continue
