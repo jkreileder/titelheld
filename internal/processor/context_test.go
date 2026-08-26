@@ -461,6 +461,12 @@ func TestDerivedExamplesAreBounded(t *testing.T) {
 			Title:      "Runde " + string(rune('A'+index)),
 			Language:   "de",
 			At:         h.now.Add(-time.Duration(index+1) * time.Hour),
+
+			// Admitted as examples, or nothing is derived at all and the
+			// count below is the synthetic set's — which happened to equal
+			// exampleCount for as long as the set had six entries, so this
+			// test passed without deriving anything.
+			Source: store.SourceService,
 		}); err != nil {
 			t.Fatalf("MarkNamed: %v", err)
 		}
@@ -1778,7 +1784,7 @@ func TestHumanWrittenTitlesDoTeachStyle(t *testing.T) {
 	h := newHarness(t, true, nil)
 	capture := withCapture(h)
 
-	const written = "Acht auf einen Streich"
+	const written = "Sechs auf einen Streich"
 
 	for _, example := range naming.SyntheticExamples() {
 		if strings.Contains(example.Title, written) {

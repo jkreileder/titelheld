@@ -171,8 +171,15 @@ are never touched.
 Beyond the ride itself, four things — all of them derived, none of them committed to this
 repository.
 
-**The last 25 titles worth not repeating.** The prompt forbids repeating any of them and
-invites referring back. They come from the named log with one kind dropped: a commute or errand
+**The last 25 titles worth not repeating.** The prompt forbids repeating any of them and offers
+them as material: continue a series, answer an earlier title, escalate a number when this ride's
+figures support it — after *Fünf auf einen Streich*, a ride with eight records is *Acht auf einen
+Streich* — and prefer a callback that fits to a fresh idea. The same prompt puts a route
+description last among the candidate angles, behind what the ride did and what it continues; an
+effort under `ACHIEVEMENTS` is offered on equal footing with geography rather than "if it fits".
+Strength and salience are the levers here: a prompt that carried the records and the callback
+material still produced route descriptions while the invitation was mild.
+They come from the named log with one kind dropped: a commute or errand
 template is meant to repeat, so listing it both forbids the right answer for the next commute and
 crowds the real titles out of a list of twenty-five. Everything else stays, imported titles
 included — a title the athlete gave a ride years ago is one to avoid repeating, whoever wrote it.
