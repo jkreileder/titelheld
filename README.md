@@ -376,9 +376,9 @@ put a coordinate.
 
 The prompt asks a model not to repeat a recent title, and the `RECENT` list it reads that from
 is the named log — which starts empty, so a fresh deployment has nothing to avoid repeating until
-the history is seeded from Strava. (The examples are a separate matter: they come only from titles
-this service wrote, so seeding does not affect them — see
-[What the prompt carries](#what-the-prompt-carries).)
+the history is seeded from Strava. (The examples are a separate matter: they come from titles
+this service wrote or the athlete has written by hand since, never from an import, so seeding does
+not affect them — see [What the prompt carries](#what-the-prompt-carries).)
 
 `cmd/titelheld-import` does that. It is a one-shot run by hand, not a route on the service: every
 endpoint added to a service `allUsers` can invoke is another thing that has to authenticate
