@@ -463,9 +463,7 @@ func TestDerivedExamplesAreBounded(t *testing.T) {
 			At:         h.now.Add(-time.Duration(index+1) * time.Hour),
 
 			// Admitted as examples, or nothing is derived at all and the
-			// count below is the synthetic set's — which happened to equal
-			// exampleCount for as long as the set had six entries, so this
-			// test passed without deriving anything.
+			// count below is the synthetic set's rather than the bound's.
 			Source: store.SourceService,
 		}); err != nil {
 			t.Fatalf("MarkNamed: %v", err)
@@ -1940,5 +1938,31 @@ func TestDerivedExampleShowsItsCause(t *testing.T) {
 
 	if strings.Contains(examples, "Musterhöhe") {
 		t.Errorf("a segment name leaked into an example:\n%s", examples)
+	}
+}
+
+// The ride under naming carries its effort counts, from the same rule that
+// counts them for an example's situation.
+func TestTheRideCarriesItsEffortCounts(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+	h.strava.activity.SegmentEfforts = []strava.SegmentEffort{
+		{Name: "Musterhöhe", PRRank: 1},
+		{Name: "Musterbach", PRRank: 1},
+		{Name: "Musterwald", PRRank: 3,
+			Achievements: []strava.SegmentAchievement{{Type: "year_pr", Rank: 1}}},
+	}
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	for _, want := range []string{"- Personal records: 2\n", "- Other achievements: 1\n"} {
+		if !strings.Contains(capture.prompt.User, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, capture.prompt.User)
+		}
 	}
 }
