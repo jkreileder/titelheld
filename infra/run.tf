@@ -9,6 +9,9 @@ resource "random_password" "sweep_path" {
 }
 
 locals {
+  # Whether the selected naming provider authenticates with llm-api-key.
+  llm_keyed = contains(["anthropic", "openrouter"], var.llm_provider)
+
   # The image Cloud Run starts with. CI replaces it on the first deploy and
   # owns it from then on, which is what the ignore_changes below is for.
   placeholder_image = "us-docker.pkg.dev/cloudrun/container/hello"
@@ -157,14 +160,20 @@ resource "google_cloud_run_v2_service" "this" {
         }
       }
 
+      # The key is mounted only for a provider that reads it. A mounted secret
+      # must have a version or the revision cannot start, and the keyless
+      # default has no key to give it — so a Vertex deployment mounts nothing
+      # and llm-api-key may sit without a version until an A/B is wanted.
       dynamic "env" {
-        for_each = {
-          STRAVA_CLIENT_ID     = "strava-client-id"
-          STRAVA_CLIENT_SECRET = "strava-client-secret"
-          STRAVA_VERIFY_TOKEN  = "strava-verify-token"
-          WEBHOOK_PATH_SECRET  = "webhook-path-secret"
-          LLM_API_KEY          = "llm-api-key"
-        }
+        for_each = merge(
+          {
+            STRAVA_CLIENT_ID     = "strava-client-id"
+            STRAVA_CLIENT_SECRET = "strava-client-secret"
+            STRAVA_VERIFY_TOKEN  = "strava-verify-token"
+            WEBHOOK_PATH_SECRET  = "webhook-path-secret"
+          },
+          local.llm_keyed ? { LLM_API_KEY = "llm-api-key" } : {},
+        )
 
         content {
           name = env.key
