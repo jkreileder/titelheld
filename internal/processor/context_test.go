@@ -1871,8 +1871,14 @@ func TestSituationAdmitsOnlyADifficultyShapedDifficulty(t *testing.T) {
 
 		got := situationOf(&activity)
 
+		// Admitted whole, or omitted entirely: a rejected value must not
+		// come through stripped of its delimiters as some other difficulty.
 		if strings.Contains(got, "difficulty "+value) != want {
 			t.Errorf("difficulty %q: situation %q, want admitted=%v", value, got, want)
+		}
+
+		if !want && strings.Contains(got, "difficulty ") {
+			t.Errorf("a rejected difficulty %q still produced a difficulty: %q", value, got)
 		}
 
 		if strings.Contains(got, "->") || strings.Contains(got, "(") {
