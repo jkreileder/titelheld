@@ -182,17 +182,22 @@ func (o *OpenRouter) Complete(ctx context.Context, prompt Prompt) (string, error
 		return "", fmt.Errorf("naming: openrouter: decode response: %w", err)
 	}
 
-	if len(decoded.Choices) == 0 || decoded.Choices[0].Message.Content == "" {
+	if len(decoded.Choices) == 0 {
 		return "", ErrNoTitle
 	}
 
 	choice := decoded.Choices[0]
 
-	// A truncated response holds half an object, and the parser would report
-	// "response is not JSON" — the wrong cause. Say what happened.
+	// Before the content is looked at: a truncated response may hold half an
+	// object or nothing at all, and either way the cause is the ceiling, not
+	// the parser or an empty model.
 	if choice.FinishReason == finishReasonLength {
 		return "", fmt.Errorf("naming: openrouter: response truncated at max_tokens (%d); the title did not fit",
 			maxOutputTokens)
+	}
+
+	if choice.Message.Content == "" {
+		return "", ErrNoTitle
 	}
 
 	return choice.Message.Content, nil

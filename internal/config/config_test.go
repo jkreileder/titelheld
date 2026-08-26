@@ -691,7 +691,21 @@ func TestABadLogPromptIsAStartupError(t *testing.T) {
 func TestLLMDormancyWithTheProviderUnset(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := Load(env(map[string]string{"LLM_PROVIDER": "", "LLM_API_KEY": "", "LLM_BASE_URL": "http://plain.example"}))
+	// Sentinel values that would fail the load if they were consulted: a
+	// key that must not be read, and a base URL the openrouter rule rejects.
+	// The lookups are counted, so the assertion is on the loader's behavior
+	// and not on an environment that happened to hold nothing.
+	lookups := map[string]int{}
+	tracking := env(map[string]string{
+		"LLM_PROVIDER": "", "LLM_API_KEY": "sentinel-key-never-read", "LLM_BASE_URL": "http://plain.example",
+	})
+	getenv := func(name string) string {
+		lookups[name]++
+
+		return tracking(name)
+	}
+
+	cfg, err := Load(getenv)
 	if err != nil {
 		t.Fatalf("Load with the provider unset: %v", err)
 	}
@@ -700,8 +714,13 @@ func TestLLMDormancyWithTheProviderUnset(t *testing.T) {
 		t.Errorf("provider = %q, want the keyless %q", cfg.LLM.Provider, ProviderVertex)
 	}
 
-	if cfg.LLM.APIKey != "" {
-		t.Errorf("a key was read for the keyless provider: %q", cfg.LLM.APIKey)
+	if cfg.LLM.APIKey != "" || cfg.LLM.BaseURL != "" {
+		t.Errorf("keyed settings were loaded for the keyless provider: %+v", cfg.LLM)
+	}
+
+	if lookups[EnvLLMAPIKey] != 0 || lookups[EnvLLMBaseURL] != 0 {
+		t.Errorf("the keyless provider looked up %s %d times and %s %d times; want none",
+			EnvLLMAPIKey, lookups[EnvLLMAPIKey], EnvLLMBaseURL, lookups[EnvLLMBaseURL])
 	}
 
 	// The control: the same environment with openrouter selected is refused

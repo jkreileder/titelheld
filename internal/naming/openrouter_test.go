@@ -127,16 +127,24 @@ func TestOpenRouterErrorHidesTheBody(t *testing.T) {
 func TestOpenRouterReportsTruncation(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"{\"title\":\"Mus"},"finish_reason":"length"}]}`)
-	}))
-	defer server.Close()
+	// With half an object, and with nothing at all: the second is the case
+	// where an empty-content check first would report "no title" instead.
+	for _, body := range []string{
+		`{"choices":[{"message":{"content":"{\"title\":\"Mus"},"finish_reason":"length"}]}`,
+		`{"choices":[{"message":{"content":""},"finish_reason":"length"}]}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
 
-	provider := &OpenRouter{Client: server.Client(), APIKey: "k", BaseURL: server.URL}
+		provider := &OpenRouter{Client: server.Client(), APIKey: "k", BaseURL: server.URL}
 
-	_, err := provider.Complete(t.Context(), Prompt{})
-	if err == nil || !strings.Contains(err.Error(), "truncated") {
-		t.Errorf("err = %v, want the truncation named", err)
+		_, err := provider.Complete(t.Context(), Prompt{})
+		server.Close()
+
+		if err == nil || !strings.Contains(err.Error(), "truncated") {
+			t.Errorf("body %s: err = %v, want the truncation named", body, err)
+		}
 	}
 }
 

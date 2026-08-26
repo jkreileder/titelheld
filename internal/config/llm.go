@@ -86,14 +86,13 @@ type LLM struct {
 	// documentation reference it was verified against.
 	Model string
 
-	// APIKey authenticates Anthropic or OpenRouter. Empty for Vertex, and
-	// never read there.
+	// APIKey authenticates Anthropic or OpenRouter. Empty for Vertex, where
+	// the variable is not even looked up.
 	APIKey string
 
 	// BaseURL is the API root the OpenRouter provider calls. Empty means
-	// OpenRouter's own; the naming package holds the default. Only the
-	// OpenRouter provider reads it, and it is validated only when that
-	// provider is selected.
+	// OpenRouter's own; the naming package holds the default. Read and
+	// validated only when that provider is selected.
 	BaseURL string
 
 	// VertexProject and VertexLocation address the Vertex endpoint.
@@ -120,8 +119,6 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 	llm := LLM{
 		Provider:       ProviderVertex,
 		Model:          strings.TrimSpace(getenv(EnvLLMModel)),
-		APIKey:         strings.TrimSpace(getenv(EnvLLMAPIKey)),
-		BaseURL:        strings.TrimRight(strings.TrimSpace(getenv(EnvLLMBaseURL)), "/"),
 		VertexProject:  strings.TrimSpace(getenv(EnvVertexProject)),
 		VertexLocation: strings.TrimSpace(getenv(EnvVertexLocation)),
 	}
@@ -141,19 +138,31 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 	llm.VertexProject = cmp.Or(llm.VertexProject, firestoreProject)
 	llm.VertexLocation = cmp.Or(llm.VertexLocation, DefaultVertexLocation)
 
-	// Fail closed, and fail at startup. A key missing here would otherwise
-	// surface as an authentication error on the first ride worth naming.
-	if llm.Provider.Keyed() && llm.APIKey == "" {
-		*errs = append(*errs, fmt.Errorf(
-			"config: %s is required when %s=%s, and it is unset",
-			EnvLLMAPIKey, EnvLLMProvider, llm.Provider))
+	// The key and the base URL are read only for a provider that uses them.
+	// "The keyless default reads no key" is then a property of the loader
+	// rather than of whatever the environment happened to hold, and a test
+	// can count the lookups.
+	if llm.Provider.Keyed() {
+		llm.APIKey = strings.TrimSpace(getenv(EnvLLMAPIKey))
+
+		// Fail closed, and fail at startup. A key missing here would
+		// otherwise surface as an authentication error on the first ride
+		// worth naming.
+		if llm.APIKey == "" {
+			*errs = append(*errs, fmt.Errorf(
+				"config: %s is required when %s=%s, and it is unset",
+				EnvLLMAPIKey, EnvLLMProvider, llm.Provider))
+		}
 	}
 
-	if llm.Provider == ProviderOpenRouter && llm.BaseURL != "" &&
-		!openRouterBaseURLPattern.MatchString(llm.BaseURL) {
-		*errs = append(*errs, fmt.Errorf(
-			"config: %s must be an https origin such as https://openrouter.ai/api/v1, got %q",
-			EnvLLMBaseURL, llm.BaseURL))
+	if llm.Provider == ProviderOpenRouter {
+		llm.BaseURL = strings.TrimRight(strings.TrimSpace(getenv(EnvLLMBaseURL)), "/")
+
+		if llm.BaseURL != "" && !openRouterBaseURLPattern.MatchString(llm.BaseURL) {
+			*errs = append(*errs, fmt.Errorf(
+				"config: %s must be an https origin such as https://openrouter.ai/api/v1, got %q",
+				EnvLLMBaseURL, llm.BaseURL))
+		}
 	}
 
 	// No startup error for a missing Vertex project. With FIRESTORE_PROJECT
