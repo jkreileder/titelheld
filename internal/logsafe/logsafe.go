@@ -13,8 +13,9 @@ import (
 	"unicode/utf8"
 )
 
-// MaxLen bounds a sanitized value. Long enough for a Strava title or sport
-// type, short enough that a large field cannot flood the log.
+// MaxLen bounds the content [String] keeps, in runes. Long enough for a Strava
+// title or sport type, short enough that a large field cannot flood the log.
+// A truncated value carries the marker beyond it.
 const MaxLen = 256
 
 // truncationMarker is appended when a value is cut short.
@@ -60,11 +61,15 @@ func String(s string) string {
 	return b.String()
 }
 
-// MaxBlockLen bounds a sanitized multi-line value.
+// MaxBlockLen bounds the content [Block] keeps, in bytes.
 //
 // Sixteen kilobytes: a naming prompt is a few, and this is a ceiling against a
 // runaway rather than a budget. Far larger than [MaxLen] because a value logged
 // through [Block] is one whose whole content is the point.
+//
+// A truncated value carries the marker beyond this, so the returned string can
+// be three bytes longer — the same arrangement [MaxLen] has with [String]. The
+// cap is on what is retained; the marker says that retaining stopped.
 const MaxBlockLen = 16 << 10
 
 // Block sanitizes a value whose line structure carries meaning.
