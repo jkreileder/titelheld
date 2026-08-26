@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -172,5 +173,34 @@ func TestSeedConfigReportsABadConfiguration(t *testing.T) {
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "configuration") {
 		t.Fatalf("err = %v, want a configuration error", err)
+	}
+}
+
+// Against the emulator, the wiring above seedConfigWith is exercised: the
+// configuration is read, Firestore is opened, and the athlete is resolved —
+// and with no athlete bound the command says so rather than seeding nobody.
+func TestSeedConfigAgainstTheEmulator(t *testing.T) {
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set; start the Firestore emulator to run this")
+	}
+
+	getenv := func(name string) string {
+		switch name {
+		case "FIRESTORE_PROJECT":
+			return "titelheld-seed-test"
+		case "FIRESTORE_DATABASE":
+			return "(default)"
+		default:
+			return ""
+		}
+	}
+
+	err := SeedConfig(t.Context(), quietLogger(), getenv, []string{"Son of the Pink Panther"})
+	if err == nil {
+		t.Fatal("the seed ran with no athlete bound")
+	}
+
+	if !strings.Contains(err.Error(), "authorization flow") {
+		t.Errorf("error %q does not say what to do about it", err)
 	}
 }

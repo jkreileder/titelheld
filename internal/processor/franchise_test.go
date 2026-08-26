@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -595,5 +596,37 @@ func TestAnIntactFranchiseEntryIsNotReported(t *testing.T) {
 
 	if strings.Contains(logged.String(), "reserve it again by hand") {
 		t.Error("an intact franchise title was reported as lost")
+	}
+}
+
+// The stored shape and the one with behavior convert both ways without loss,
+// so a profile the seeder writes is the profile a sweep reads back.
+func TestFranchisesRoundTripThroughTheStoredShape(t *testing.T) {
+	t.Parallel()
+
+	profile := naming.DefaultProfile()
+
+	back := FranchisesFromStored(FranchisesToStored(profile))
+
+	if len(back) != len(profile) {
+		t.Fatalf("%d franchises came back, want %d", len(back), len(profile))
+	}
+
+	for index := range profile {
+		want, got := profile[index], back[index]
+
+		if got.Name != want.Name || got.GearName != want.GearName ||
+			!slices.Equal(got.SportTypes, want.SportTypes) ||
+			!slices.Equal(got.Titles, want.Titles) ||
+			!slices.Equal(got.Reserved, want.Reserved) {
+			t.Errorf("franchise %d changed in transit:\n got %+v\nwant %+v", index, got, want)
+		}
+	}
+
+	// And the stored side is a copy of the data, not a rename of the type:
+	// a reserved entry survives as a field the document can hold.
+	stored := FranchisesToStored(profile)
+	if len(stored[0].Reserved) == 0 {
+		t.Error("the stored shape lost the reserved entries")
 	}
 }
