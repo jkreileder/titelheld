@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/jkreileder/titelheld/internal/logsafe"
@@ -498,17 +499,26 @@ func countEfforts(efforts []strava.SegmentEffort) (records, achievements int) {
 // difficultyOf reads the difficulty a tool wrote into the description.
 //
 // Through the same parser the prompt uses for the ride being named, so the
-// example and the ride describe the fact the same way and the value is bounded
-// the same way. Empty when no tool wrote one.
+// example and the ride describe the fact the same way. Empty when no tool
+// wrote one — and empty when what it wrote is not a difficulty. An example
+// line is "situation -> title (language)", so a value carrying an arrow or a
+// parenthesis would read as a second mapping inside the first; the value is
+// admitted by shape rather than stripped of delimiters, because a difficulty
+// is a word or two, or a number, and anything else is not one.
 func difficultyOf(description string) string {
 	for _, fact := range naming.ParseFacts(description) {
-		if fact.Label == naming.LabelDifficulty {
+		if fact.Label == naming.LabelDifficulty && difficultyShape.MatchString(fact.Value) {
 			return fact.Value
 		}
 	}
 
 	return ""
 }
+
+// difficultyShape is what a difficulty looks like: up to three words of
+// letters, or a number. "Tough", "Very Difficult", "112" and "3.5" pass;
+// "x -> Sieg (de)" does not.
+var difficultyShape = regexp.MustCompile(`^(\p{L}+( \p{L}+){0,2}|[0-9]+([.,][0-9]+)?)$`)
 
 func plural(count int, singular, plural string) string {
 	if count == 1 {

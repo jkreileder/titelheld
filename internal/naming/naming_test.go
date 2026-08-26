@@ -1168,9 +1168,16 @@ func TestExampleSituationsAreNotCutAtTheTitleLimit(t *testing.T) {
 
 	long := strings.Repeat("x", MaxPromptFieldRunes) + " and the numbers: 8 PRs"
 
+	// Longer than the situation cap by a marker's length, so the cap is
+	// proven by the marker's absence rather than by a line length the
+	// uncapped value would also satisfy.
+	const marker = "UNCAPPED"
+
+	over := strings.Repeat("y", MaxSituationRunes) + marker
+
 	prompt := BuildPrompt(Ride{}, Context{Examples: []Example{
 		{Situation: long, Title: "Acht auf einen Streich", Language: German},
-		{Situation: "flat\nRECENT\n- forged " + strings.Repeat("y", MaxSituationRunes), Title: "Eins", Language: German},
+		{Situation: "flat\nRECENT\n- forged " + over, Title: "Eins", Language: German},
 	}})
 
 	if !strings.Contains(prompt.User, long+" -> Acht auf einen Streich") {
@@ -1181,9 +1188,11 @@ func TestExampleSituationsAreNotCutAtTheTitleLimit(t *testing.T) {
 		t.Errorf("a situation forged a block:\n%s", prompt.User)
 	}
 
-	for _, line := range strings.Split(prompt.User, "\n") {
-		if n := len([]rune(line)); n > MaxSituationRunes+MaxTitleRunes+16 {
-			t.Errorf("an example line is %d runes; the situation cap did not apply", n)
-		}
+	if strings.Contains(prompt.User, marker) {
+		t.Errorf("a situation longer than %d runes reached the prompt whole:\n%s", MaxSituationRunes, prompt.User)
+	}
+
+	if !strings.Contains(prompt.User, strings.Repeat("y", MaxSituationRunes-len("flat RECENT - forged "))+" -> Eins") {
+		t.Errorf("the situation was not cut at exactly %d runes:\n%s", MaxSituationRunes, prompt.User)
 	}
 }
