@@ -177,15 +177,18 @@ template is meant to repeat, so listing it both forbids the right answer for the
 crowds the real titles out of a list of twenty-five. Everything else stays, imported titles
 included — a title the athlete gave a ride years ago is one to avoid repeating, whoever wrote it.
 
-**Few-shot examples, from titles this service wrote and no others.** Six of them, rebuilt at
-prompt time: the named log keeps each title and the language it was written in, and the ride that
-produced it is re-read from Strava to describe the situation. Only rows marked `service` qualify
-— not a filter over titles that look unsuitable, but a source an imported row cannot carry, so a
+**Few-shot examples, from titles this service wrote and titles the athlete has written since.**
+Six of them, rebuilt at prompt time: the named log keeps each title and the language it was
+written in, and the ride that produced it is re-read from Strava to describe the situation. Two
+sources qualify — `service`, and `human`, the title of a sport ride the skip gate left alone. The
+athlete's current hand-namings are the best style data there will ever be, and admitting only the
+service's own titles would have closed the style loop on itself. An `imported` row never
+qualifies — not a filter over titles that look unsuitable, but a source the row carries, so a
 decade of the athlete's own shorthand is *structurally* unable to teach style, rather than
 pattern-matched out of it. That shorthand is bare place names, private jokes and whatever a tool
-left behind; six of them would teach a model to answer with a bare town name. Until this service
-has named
-something, the synthetic set is what the prompt carries — that is its purpose, not a stopgap.
+left behind; six of them would teach a model to answer with a bare town name. Until a title from
+either source exists, the synthetic set is what the prompt carries — that is its purpose, not a
+stopgap.
 Deriving an example costs a Strava read, so each is cached against the activity it describes: the
 history only changes when something is named, so a sweep repeating every five minutes pays once.
 

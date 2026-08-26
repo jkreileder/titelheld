@@ -274,11 +274,11 @@ type Naming struct {
 
 // How a recorded title was produced.
 const (
-	// SourceService is a title this service's naming pipeline produced — the
-	// only source a few-shot example may come from. A template is written by
-	// this service too and is deliberately not this: it is a fixed string
-	// chosen from a list, and teaching a model to reproduce it would teach it
-	// to call a Saturday gravel ride "Zur Arbeit".
+	// SourceService is a title this service's naming pipeline produced — with
+	// [SourceHuman], one of the two sources a few-shot example may come from.
+	// A template is written by this service too and is deliberately not this:
+	// it is a fixed string chosen from a list, and teaching a model to
+	// reproduce it would teach it to call a Saturday gravel ride "Zur Arbeit".
 	SourceService  = "service"
 	SourceTemplate = "template"
 
