@@ -54,7 +54,11 @@
   a default that never reaches production, which is how the banned-word list
   shipped empty.
 - `internal/logsafe/` neutralizes untrusted text before it reaches a log. Use it
-  for anything from a webhook body, Strava, a geocoder or an LLM.
+  for anything from a webhook body, Strava, a geocoder or an LLM. `String`
+  flattens newlines and caps at 256 - right for a title, which must not forge a
+  second line. `Block` keeps newlines and tabs and caps at 16 KB, for a value
+  whose line structure *is* the content: the naming prompt, logged whole while
+  `LOG_PROMPT` (defaulting to the dry-run state) is on.
 - `cmd/titelheld/` is a shim with no behavior, and is excluded from coverage.
 - `infra/` is the GCP deployment in Terraform. `make tf-check` runs exactly what
   CI runs. CI never applies: applies are by hand. Secret Manager *values* never

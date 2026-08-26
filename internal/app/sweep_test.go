@@ -300,6 +300,13 @@ func TestTheDefaultPostureOfADeployedRevision(t *testing.T) {
 		t.Error("attribution was disabled by default")
 	}
 
+	// Prompt logging follows the dry run: the observation window is exactly
+	// when the whole prompt is the evidence being judged, and nobody should
+	// have to remember to ask for it.
+	if !deps.LogPrompt {
+		t.Error("prompts are not logged in a dry-run deployment")
+	}
+
 	// Franchises unset means "read the athlete's document, falling back to the
 	// shipped profile" — an empty non-nil slice would mean "this athlete has
 	// none" and silently turn the feature off.
@@ -344,5 +351,41 @@ func TestTheDefaultPostureOfADeployedRevision(t *testing.T) {
 	if deps.Store == nil || deps.Activities == nil || deps.Geo == nil || deps.Provider == nil {
 		t.Errorf("an incomplete pipeline: store=%v activities=%v geo=%v provider=%v",
 			deps.Store != nil, deps.Activities != nil, deps.Geo != nil, deps.Provider != nil)
+	}
+}
+
+// Prompt logging follows the writes flag, and LOG_PROMPT overrides either way.
+//
+// Asserted through config.Load and sweepDeps rather than on a hand-built
+// config: the question is what a deployment gets, and the setting is derived
+// from another one, which is the kind of wiring that silently stops working.
+func TestPromptLoggingFollowsTheDryRunAndItsOverride(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{name: "dry run, the deployed default", env: nil, want: true},
+		{name: "writes enabled", env: map[string]string{"DRY_RUN": "0"}, want: false},
+		{
+			name: "writes enabled, logging asked for",
+			env:  map[string]string{"DRY_RUN": "0", "LOG_PROMPT": "1"},
+			want: true,
+		},
+		{
+			name: "dry run, logging refused",
+			env:  map[string]string{"LOG_PROMPT": "0"},
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := depsFromEnv(t, tc.env).LogPrompt; got != tc.want {
+				t.Errorf("LogPrompt = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

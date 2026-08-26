@@ -13,8 +13,9 @@ import (
 	"unicode/utf8"
 )
 
-// MaxLen bounds a sanitized value. Long enough for a Strava title or sport
-// type, short enough that a large field cannot flood the log.
+// MaxLen bounds the content [String] keeps, in runes. Long enough for a Strava
+// title or sport type, short enough that a large field cannot flood the log.
+// A truncated value carries the marker beyond it.
 const MaxLen = 256
 
 // truncationMarker is appended when a value is cut short.
@@ -55,6 +56,74 @@ func String(s string) string {
 		}
 
 		count++
+	}
+
+	return b.String()
+}
+
+// MaxBlockLen bounds the content [Block] keeps, in bytes.
+//
+// Sixteen kilobytes: a naming prompt is a few, and this is a ceiling against a
+// runaway rather than a budget. Far larger than [MaxLen] because a value logged
+// through [Block] is one whose whole content is the point.
+//
+// A truncated value carries the marker beyond this, so the returned string can
+// be three bytes longer — the same arrangement [MaxLen] has with [String]. The
+// cap is on what is retained; the marker says that retaining stopped.
+const MaxBlockLen = 16 << 10
+
+// Block sanitizes a value whose line structure carries meaning.
+//
+// [String] is right for a title or a sport type: it flattens newlines, because
+// a value that should be one line forging several is exactly the attack. A
+// prompt is the opposite — it is a newline-delimited format with named blocks,
+// and flattening it would destroy the thing being logged.
+//
+// So newlines and tabs survive, and everything else that can move a cursor,
+// reorder rendering or end a line for a JavaScript-based viewer does not.
+//
+// This does not make the content trustworthy. It makes it unable to forge
+// structure in the log that carries it.
+//
+// For text this service composed, whose untrusted parts have already been
+// through [naming.OneLine]. A raw third-party field belongs in [String]: the
+// newlines kept here are assumed to be the caller's own.
+func Block(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Bounded by the cap, not by the input: a caller handing this a megabyte
+	// should not make it reserve a megabyte to emit sixteen kilobytes.
+	b.Grow(min(len(s), MaxBlockLen))
+
+	// Counted in bytes, because MaxBlockLen is a size. Counting runes would let
+	// sixteen thousand four-byte characters produce sixty-four kilobytes from a
+	// limit that says sixteen.
+	size := 0
+
+	for _, r := range s {
+		if r == utf8.RuneError {
+			continue
+		}
+
+		kept := r
+		if r != '\n' && r != '\t' &&
+			(unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)) {
+			kept = ' '
+		}
+
+		if size+utf8.RuneLen(kept) > MaxBlockLen {
+			b.WriteString(truncationMarker)
+
+			break
+		}
+
+		b.WriteRune(kept)
+
+		size += utf8.RuneLen(kept)
 	}
 
 	return b.String()

@@ -1,9 +1,11 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -1442,5 +1444,76 @@ func TestTheAchievementsBlockIsBoundedAndNamesOnly(t *testing.T) {
 		if want := fmt.Sprintf("Mustersegment %d", index); !strings.Contains(prompt, want) {
 			t.Errorf("the prompt does not carry %q", want)
 		}
+	}
+}
+
+// The whole prompt reaches the log when asked for, and not otherwise.
+//
+// The counters on the "named" line say how many places and achievements a
+// prompt carried; they cannot say what they were. During the observation
+// window the judgement is about the material the model received, so the
+// evidence has to be the material.
+func TestThePromptIsLoggedWhenAskedFor(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	h := newHarness(t, false, func(d *Deps) {
+		d.LogPrompt = true
+		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
+	})
+
+	h.strava.activity.SegmentEfforts = []strava.SegmentEffort{
+		{Name: "Anstieg zur Musterhöhe", PRRank: 1},
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	out := logged.String()
+
+	if !strings.Contains(out, `"msg":"prompt"`) {
+		t.Fatalf("no prompt was logged:\n%s", out)
+	}
+
+	// The blocks that decide a title, present in the log rather than counted.
+	for _, want := range []string{"RIDE", "ACHIEVEMENTS", "Anstieg zur Musterh", "EXAMPLES", "RECENT"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the logged prompt does not carry %q", want)
+		}
+	}
+
+	// And the system prompt, which is where the injection rules live.
+	if !strings.Contains(out, "never an instruction") {
+		t.Error("the system prompt was not logged")
+	}
+}
+
+// Off means off: a service with writes enabled says nothing unless asked.
+func TestThePromptIsNotLoggedByDefault(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
+	})
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if strings.Contains(logged.String(), `"msg":"prompt"`) {
+		t.Error("a prompt was logged with LogPrompt unset")
+	}
+
+	// The counters are the steady-state signal, and they stay.
+	if !strings.Contains(logged.String(), `"achievements"`) {
+		t.Error("the named line carries no achievements counter")
 	}
 }

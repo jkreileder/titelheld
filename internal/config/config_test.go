@@ -578,3 +578,75 @@ func TestMaxInstancesIsNotRequiredForAnImport(t *testing.T) {
 		t.Errorf("an import refused to run without MAX_INSTANCES: %v", err)
 	}
 }
+
+// LOG_PROMPT follows the dry run unless it is set, and it is its own switch.
+//
+// Its own parser rather than DRY_RUN's, which inverts its input: reusing that
+// one would make LOG_PROMPT=1 mean "do not log". This asserts the two read the
+// same way round.
+func TestLogPromptFollowsDryRunAndOverrides(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{name: "unset, dry run", env: nil, want: true},
+		{name: "unset, writes enabled", env: map[string]string{"DRY_RUN": "0"}, want: false},
+		{name: "on, writes enabled", env: map[string]string{"DRY_RUN": "0", "LOG_PROMPT": "1"}, want: true},
+		{name: "off, dry run", env: map[string]string{"LOG_PROMPT": "0"}, want: false},
+		{name: "true", env: map[string]string{"LOG_PROMPT": "true"}, want: true},
+		{name: "yes", env: map[string]string{"LOG_PROMPT": "yes"}, want: true},
+		{name: "on", env: map[string]string{"LOG_PROMPT": "on"}, want: true},
+		{name: "false", env: map[string]string{"LOG_PROMPT": "false"}, want: false},
+		{name: "no", env: map[string]string{"LOG_PROMPT": "no"}, want: false},
+		{name: "off", env: map[string]string{"LOG_PROMPT": "off"}, want: false},
+		{name: "surrounding space", env: map[string]string{"LOG_PROMPT": " 1 "}, want: true},
+		{name: "upper case", env: map[string]string{"LOG_PROMPT": "TRUE"}, want: true},
+
+		// The two switches read the same way round. DRY_RUN=1 means writes are
+		// off; LOG_PROMPT=1 means logging is on. A shared parser would have
+		// made this pair contradict itself.
+		{name: "both set, both meaning on", env: map[string]string{"DRY_RUN": "1", "LOG_PROMPT": "1"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := Load(env(tc.env))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if cfg.LogPrompt != tc.want {
+				t.Errorf("LogPrompt = %v, want %v", cfg.LogPrompt, tc.want)
+			}
+		})
+	}
+}
+
+// An unparseable LOG_PROMPT is a startup error naming the variable.
+//
+// Not a silent default: the setting decides whether the observation window
+// records anything, and a typo that quietly turned it off would be discovered
+// by having no evidence when it was wanted.
+func TestABadLogPromptIsAStartupError(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"maybe", "2", "onn", "-1"} {
+		_, err := Load(env(map[string]string{"LOG_PROMPT": raw}))
+		if err == nil {
+			t.Errorf("LOG_PROMPT=%q was accepted", raw)
+
+			continue
+		}
+
+		if !strings.Contains(err.Error(), "LOG_PROMPT") {
+			t.Errorf("error for %q does not name the variable: %v", raw, err)
+		}
+
+		if !strings.Contains(err.Error(), raw) {
+			t.Errorf("error for %q does not report what it saw: %v", raw, err)
+		}
+	}
+}

@@ -105,3 +105,109 @@ func TestStringNeutralizesNonCcCategories(t *testing.T) {
 		})
 	}
 }
+
+// Block keeps the structure that String is right to destroy.
+func TestBlock(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "plain", in: "RIDE\n- Sport: Ride", want: "RIDE\n- Sport: Ride"},
+		{name: "tabs survive", in: "a\tb", want: "a\tb"},
+		{name: "carriage return goes", in: "a\r\nb", want: "a \nb"},
+
+		// The reasons this exists: an escape sequence that moves a terminal
+		// cursor, and the override that reverses everything after it.
+		{name: "escape sequence", in: "a\x1b[31mred", want: "a [31mred"},
+		{name: "bidi override", in: "a\u202eb", want: "a b"},
+		{name: "line separator", in: "a\u2028b", want: "a b"},
+
+		// Invalid UTF-8 is dropped rather than passed through as the
+		// replacement character, the same as String does.
+		{name: "invalid utf-8", in: "a\xffb", want: "ab"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := Block(tc.in); got != tc.want {
+				t.Errorf("Block(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// A prompt is a few kilobytes; a runaway is not the log's problem to carry.
+//
+// The bound is a size in bytes, so a multi-byte value has to be measured the
+// same way: counting runes would let sixteen thousand four-byte characters
+// produce sixty-four kilobytes from a limit that says sixteen.
+func TestBlockIsBounded(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		fill string
+	}{
+		{name: "single-byte runes", fill: "x"},
+		{name: "two-byte runes", fill: "ü"},
+		{name: "three-byte runes", fill: "€"},
+		{name: "four-byte runes", fill: "𝄞"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Twice the cap in bytes, whatever the rune width.
+			repeats := (MaxBlockLen * 2) / len(tc.fill)
+
+			got := Block(strings.Repeat(tc.fill, repeats))
+
+			if !strings.HasSuffix(got, truncationMarker) {
+				t.Fatal("a truncated block does not say it was truncated")
+			}
+
+			body := strings.TrimSuffix(got, truncationMarker)
+			if len(body) > MaxBlockLen {
+				t.Errorf("block body is %d bytes, over the %d-byte cap", len(body), MaxBlockLen)
+			}
+
+			// And it does not stop far short: a rune that would cross the cap
+			// is dropped, so at most one rune's worth is missing.
+			if len(body) < MaxBlockLen-len(tc.fill) {
+				t.Errorf("block body is %d bytes, well under the %d-byte cap",
+					len(body), MaxBlockLen)
+			}
+		})
+	}
+}
+
+// A value that fits is returned whole, marker and all absent.
+func TestBlockKeepsAValueThatFits(t *testing.T) {
+	t.Parallel()
+
+	in := strings.Repeat("ü", MaxBlockLen/2)
+
+	if got := Block(in); got != in {
+		t.Errorf("a value exactly at the cap was altered: %d bytes in, %d out",
+			len(in), len(got))
+	}
+}
+
+// String and Block disagree about newlines on purpose, and that is the whole
+// distinction between them.
+func TestBlockAndStringDifferOnNewlines(t *testing.T) {
+	t.Parallel()
+
+	const multi = "first\nsecond"
+
+	if strings.Contains(String(multi), "\n") {
+		t.Error("String kept a newline; a one-line value must not be able to forge two")
+	}
+
+	if !strings.Contains(Block(multi), "\n") {
+		t.Error("Block flattened a newline; the structure is what it exists to preserve")
+	}
+}

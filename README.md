@@ -242,6 +242,7 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `STRAVA_ATHLETE_ID`    | no       | any     | Restrict processing to one athlete           |
 | `PROCESS_DELAY`        | no       | `10m`   | How long to wait before naming               |
 | `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
+| `LOG_PROMPT`           | no       | dry run | Log the whole prompt for each naming         |
 | `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
 
 ### One instance, and the binary knows it
@@ -289,6 +290,20 @@ deployed one.
 The import (`cmd/titelheld-import`) does not require it. It is a deliberate second process that
 serves no HTTP, completes no authorization flow and runs no sweep, so none of the four
 assumptions apply to it.
+
+`LOG_PROMPT` defaults to whatever `DRY_RUN` says: prompts are logged while writes are off, which
+is the observation window and the time when what the model received is the thing being judged.
+The counters on the `named` line — places, achievements, facts, examples, recent titles — remain
+the steady-state signal; they say how much the prompt carried and never what it was.
+
+What is gated here is verbosity. A prompt is the athlete's own material — the ride, the gear name,
+titles already used, and place names the geo layer resolved, which produces names and has nowhere
+to hold a coordinate.
+
+One value is not this service's to vouch for: a `NOTES` fact has an allow-listed *label* and a
+free-text *value*, taken from a description another tool wrote. A tool that writes a coordinate
+into one of those fields puts it in the prompt, and with logging on, in Cloud Logging. Allow-listing
+fact values by shape would close that; it is not built.
 
 The sweep that drains the delay queue is configured by three variables. Terraform sets all
 three; nothing else does, and none of them is written by hand.

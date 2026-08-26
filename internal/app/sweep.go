@@ -91,7 +91,8 @@ func buildSweep(
 	logger.Info("sweep route mounted",
 		"llm", deps.Provider.Name(),
 		"writes_enabled", cfg.WritesEnabled,
-		"banned_words", len(bannedWords(cfg)))
+		"banned_words", len(bannedWords(cfg)),
+		"log_prompt", cfg.LogPrompt)
 
 	return handler, nil
 }
@@ -177,6 +178,7 @@ func sweepDeps(
 		Classifier:    rules,
 		Validator:     naming.NewValidator(bannedWords(cfg)),
 		WritesEnabled: cfg.WritesEnabled,
+		LogPrompt:     cfg.LogPrompt,
 		Logger:        logger,
 	}, nil
 }
