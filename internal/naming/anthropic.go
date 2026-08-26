@@ -30,8 +30,8 @@ import (
 //
 // The official Go SDK is deliberately not used: adding it would be a new
 // dependency, which the build spec requires asking about first, and the Vertex
-// path needs raw HTTP regardless. Both providers therefore speak HTTP directly
-// and no module was added to go.mod for either.
+// path needs raw HTTP regardless. All three providers therefore speak HTTP
+// directly and no module was added to go.mod for any of them.
 
 // DefaultAnthropicModel is the Haiku-class model this service ships with.
 const DefaultAnthropicModel = "claude-haiku-4-5-20251001"
@@ -132,7 +132,7 @@ func (a *Anthropic) Complete(ctx context.Context, prompt Prompt) (string, error)
 		MaxTokens:   maxOutputTokens,
 		Temperature: a.temperature(),
 		System:      prompt.System,
-		Messages:    []anthropicMessage{{Role: "user", Content: prompt.User}},
+		Messages:    []anthropicMessage{{Role: roleUser, Content: prompt.User}},
 	}
 
 	body, err := json.Marshal(payload)
@@ -174,17 +174,15 @@ func (a *Anthropic) Complete(ctx context.Context, prompt Prompt) (string, error)
 		}
 	}
 
-	if text.Len() == 0 {
-		return "", ErrNoTitle
+	// The stop reason before the text: a truncated response holds half an
+	// object or nothing, and "not JSON" or "no title" would name the wrong
+	// cause — the same house rule that applies to a blocked DNS request.
+	if decoded.StopReason == stopReasonMaxTokens {
+		return "", truncatedError("anthropic")
 	}
 
-	// A truncated response is valid JSON's problem only by accident: the text
-	// block holds half an object, and the parser then reports "response is not
-	// JSON", naming the wrong cause. Say what actually happened — the same
-	// house rule that applies to a blocked DNS request.
-	if decoded.StopReason == stopReasonMaxTokens {
-		return "", fmt.Errorf("naming: anthropic: response truncated at max_tokens (%d); the title did not fit",
-			maxOutputTokens)
+	if text.Len() == 0 {
+		return "", ErrNoTitle
 	}
 
 	return text.String(), nil

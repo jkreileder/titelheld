@@ -118,10 +118,21 @@ func buildGeographer(
 //
 // Vertex is the default and needs no key: the runtime service account's
 // ambient credentials are the authentication, which is why there is no sixth
-// secret for it.
+// secret for it. The two keyed providers share LLM_API_KEY; which of them the
+// key belongs to is whatever LLM_PROVIDER says.
 func buildProvider(ctx context.Context, cfg config.Config) (naming.Provider, error) {
-	if cfg.LLM.Provider == config.ProviderAnthropic {
+	switch cfg.LLM.Provider {
+	case config.ProviderAnthropic:
 		return &naming.Anthropic{APIKey: cfg.LLM.APIKey, Model: cfg.LLM.Model}, nil
+	case config.ProviderOpenRouter:
+		return &naming.OpenRouter{
+			APIKey:  cfg.LLM.APIKey,
+			Model:   cfg.LLM.Model,
+			BaseURL: cfg.LLM.BaseURL,
+		}, nil
+	case config.ProviderVertex:
+		// Below: the keyless default, and the only one that needs the
+		// ambient credentials.
 	}
 
 	client, _, err := htransport.NewClient(ctx, option.WithScopes(vertexScope))

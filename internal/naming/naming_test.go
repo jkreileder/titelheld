@@ -450,10 +450,11 @@ func TestProviderNames(t *testing.T) {
 	}
 }
 
-// Both providers satisfy the interface the naming layer defines.
+// Every provider satisfies the interface the naming layer defines.
 var (
 	_ Provider = (*Vertex)(nil)
 	_ Provider = (*Anthropic)(nil)
+	_ Provider = (*OpenRouter)(nil)
 )
 
 func TestContextCancellation(t *testing.T) {
@@ -1378,5 +1379,48 @@ func TestBuildPromptCarriesTheEffortCounts(t *testing.T) {
 	if plain := BuildPrompt(Ride{}, Context{}).User; strings.Contains(plain, "records") ||
 		strings.Contains(plain, "achievements: 0") {
 		t.Errorf("a ride with nothing notable claims a count:\n%s", plain)
+	}
+}
+
+// A response cut off at the ceiling is named as that by every provider, in the
+// same words, whether it holds half an object or nothing: the A/B's diagnostic
+// is the log line, and one failure must not read as three causes.
+func TestEveryProviderNamesTruncationBeforeAnythingElse(t *testing.T) {
+	t.Parallel()
+
+	bodies := map[string][]string{
+		"anthropic": {
+			`{"content":[{"type":"text","text":"{\"title\":\"Mus"}],"stop_reason":"max_tokens"}`,
+			`{"content":[],"stop_reason":"max_tokens"}`,
+		},
+		"vertex": {
+			`{"candidates":[{"content":{"parts":[{"text":"{\"title\":\"Mus"}]},"finishReason":"MAX_TOKENS"}]}`,
+			`{"candidates":[{"content":{"parts":[]},"finishReason":"MAX_TOKENS"}]}`,
+		},
+	}
+
+	for name, list := range bodies {
+		for _, body := range list {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+
+			var provider Provider
+
+			switch name {
+			case "anthropic":
+				provider = &Anthropic{Client: server.Client(), APIKey: "k", BaseURL: server.URL}
+			default:
+				provider = &Vertex{Client: server.Client(), ProjectID: "p", Location: "europe-west3", BaseURL: server.URL}
+			}
+
+			_, err := provider.Complete(t.Context(), Prompt{})
+			server.Close()
+
+			want := truncatedError(name).Error()
+			if err == nil || err.Error() != want {
+				t.Errorf("%s with %s: err = %v, want %q", name, body, err, want)
+			}
+		}
 	}
 }
