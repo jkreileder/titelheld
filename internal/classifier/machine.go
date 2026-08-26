@@ -3,6 +3,7 @@ package classifier
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -132,13 +133,9 @@ func (m MachineTitles) Matches(title string) bool {
 		return false
 	}
 
-	for _, pattern := range m.patterns {
-		if pattern.MatchString(trimmed) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(m.patterns, func(pattern *regexp.Regexp) bool {
+		return pattern.MatchString(trimmed)
+	})
 }
 
 // renamable reports whether the gate lets this title be replaced: either Strava

@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -543,7 +543,7 @@ func loadSweep(getenv func(string) string, errs *[]error) SweepConfig {
 	}
 
 	if len(unset) > 0 {
-		sort.Strings(unset)
+		slices.Sort(unset)
 		*errs = append(*errs, fmt.Errorf(
 			"config: the sweep is partly configured: %s set, %s missing"+
 				" (set all three or none)",
@@ -587,8 +587,5 @@ func loadSweep(getenv func(string) string, errs *[]error) SweepConfig {
 // that reorders itself between two runs of the same broken deployment is one
 // nobody can diff.
 func sortedCopy(values []string) []string {
-	sorted := append([]string(nil), values...)
-	sort.Strings(sorted)
-
-	return sorted
+	return slices.Sorted(slices.Values(values))
 }

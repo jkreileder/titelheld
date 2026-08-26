@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -418,10 +419,7 @@ func situationOf(activity *strava.Activity) string {
 		parts = append(parts, fmt.Sprintf("%.0f km", activity.Distance/1000))
 	}
 
-	sport := activity.SportType
-	if sport == "" {
-		sport = "ride"
-	}
+	sport := cmp.Or(activity.SportType, "ride")
 
 	parts = append(parts, sport)
 

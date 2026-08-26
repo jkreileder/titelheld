@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -168,7 +169,7 @@ func (f *fakeStrava) writes() []put {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return append([]put(nil), f.puts...)
+	return slices.Clone(f.puts)
 }
 
 // fakeProvider is the LLM. No live call ever happens in a test.

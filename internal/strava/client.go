@@ -1,6 +1,7 @@
 package strava
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -108,20 +109,14 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		userAgent:  cfg.UserAgent,
 	}
 
-	if client.baseURL == "" {
-		client.baseURL = DefaultAPIBaseURL
-	}
+	client.baseURL = cmp.Or(client.baseURL, DefaultAPIBaseURL)
+	client.maxRetries = cmp.Or(client.maxRetries, 3)
+	client.userAgent = cmp.Or(client.userAgent, "titelheld")
 	if client.httpClient == nil {
 		client.httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	if client.maxRetries == 0 {
-		client.maxRetries = 3
-	}
 	if client.sleep == nil {
 		client.sleep = sleepContext
-	}
-	if client.userAgent == "" {
-		client.userAgent = "titelheld"
 	}
 
 	return client, nil
@@ -167,8 +162,7 @@ func (c *Client) do(ctx context.Context, method, path string, body func() (*stri
 			// A token that cannot be obtained will not become obtainable by
 			// asking again, and each retry costs another /oauth/token round
 			// trip against a refresh token Strava has already rejected.
-			var tokenErr *tokenError
-			if errors.As(err, &tokenErr) {
+			if tokenErr, ok := errors.AsType[*tokenError](err); ok {
 				return nil, tokenErr.err
 			}
 

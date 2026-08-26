@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"regexp"
@@ -109,13 +110,8 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 			EnvLLMProvider, ProviderVertex, ProviderAnthropic, raw))
 	}
 
-	if llm.VertexProject == "" {
-		llm.VertexProject = firestoreProject
-	}
-
-	if llm.VertexLocation == "" {
-		llm.VertexLocation = DefaultVertexLocation
-	}
+	llm.VertexProject = cmp.Or(llm.VertexProject, firestoreProject)
+	llm.VertexLocation = cmp.Or(llm.VertexLocation, DefaultVertexLocation)
 
 	// Fail closed, and fail at startup. A key missing here would otherwise
 	// surface as an authentication error on the first ride worth naming.
@@ -149,7 +145,7 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 func splitList(raw string) []string {
 	var out []string
 
-	for _, item := range strings.Split(raw, ",") {
+	for item := range strings.SplitSeq(raw, ",") {
 		if trimmed := strings.TrimSpace(item); trimmed != "" {
 			out = append(out, trimmed)
 		}
@@ -162,7 +158,7 @@ func splitList(raw string) []string {
 func splitLines(raw string) []string {
 	var out []string
 
-	for _, item := range strings.Split(raw, "\n") {
+	for item := range strings.SplitSeq(raw, "\n") {
 		if trimmed := strings.TrimSpace(item); trimmed != "" {
 			out = append(out, trimmed)
 		}

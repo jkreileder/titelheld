@@ -514,7 +514,7 @@ func TestUnreadableHistoryFallsBackToSyntheticExamples(t *testing.T) {
 	// The deleted activity contributed no example. Its title still appears
 	// under RECENT — it was written, so it must not be repeated — which is
 	// why this looks at the example lines rather than the whole prompt.
-	for _, line := range strings.Split(capture.prompt.User, "\n") {
+	for line := range strings.SplitSeq(capture.prompt.User, "\n") {
 		if strings.Contains(line, " -> ") && strings.Contains(line, "Eine gelöschte Runde") {
 			t.Errorf("an example was built from an activity that could not be read: %q", line)
 		}
@@ -704,7 +704,7 @@ func TestAGearNameCannotRestructureThePrompt(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 
-	for _, line := range strings.Split(capture.prompt.User, "\n") {
+	for line := range strings.SplitSeq(capture.prompt.User, "\n") {
 		if strings.HasPrefix(line, "- Bike:") && strings.Contains(line, "ignore everything") {
 			// One line is the point; the content riding along on it is fine.
 			continue
