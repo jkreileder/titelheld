@@ -179,7 +179,11 @@ included — a title the athlete gave a ride years ago is one to avoid repeating
 
 **Few-shot examples, from titles this service wrote and titles the athlete has written since.**
 Six of them, rebuilt at prompt time: the named log keeps each title and the language it was
-written in, and the ride that produced it is re-read from Strava to describe the situation. Two
+written in, and the ride that produced it is re-read from Strava to describe the situation — its
+shape and time, and the numbers that explain the title: how many records, how many other
+achievements, and the difficulty a tool wrote into the description, so that "Fünf auf einen
+Streich" beside "5 PRs" is a demonstrated move rather than an arbitrary association. Numbers
+only; the segment names behind the counts never enter an example, and neither does a place. Two
 sources qualify — `service`, and `human`, the title of a sport ride the skip gate left alone. The
 athlete's current hand-namings are the best style data there will ever be, and admitting only the
 service's own titles would have closed the style loop on itself. An `imported` row never
