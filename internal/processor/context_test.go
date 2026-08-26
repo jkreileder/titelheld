@@ -461,6 +461,10 @@ func TestDerivedExamplesAreBounded(t *testing.T) {
 			Title:      "Runde " + string(rune('A'+index)),
 			Language:   "de",
 			At:         h.now.Add(-time.Duration(index+1) * time.Hour),
+
+			// Admitted as examples, or nothing is derived at all and the
+			// count below is the synthetic set's rather than the bound's.
+			Source: store.SourceService,
 		}); err != nil {
 			t.Fatalf("MarkNamed: %v", err)
 		}
@@ -1778,7 +1782,7 @@ func TestHumanWrittenTitlesDoTeachStyle(t *testing.T) {
 	h := newHarness(t, true, nil)
 	capture := withCapture(h)
 
-	const written = "Acht auf einen Streich"
+	const written = "Sechs auf einen Streich"
 
 	for _, example := range naming.SyntheticExamples() {
 		if strings.Contains(example.Title, written) {
@@ -1934,5 +1938,31 @@ func TestDerivedExampleShowsItsCause(t *testing.T) {
 
 	if strings.Contains(examples, "Musterhöhe") {
 		t.Errorf("a segment name leaked into an example:\n%s", examples)
+	}
+}
+
+// The ride under naming carries its effort counts, from the same rule that
+// counts them for an example's situation.
+func TestTheRideCarriesItsEffortCounts(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+	h.strava.activity.SegmentEfforts = []strava.SegmentEffort{
+		{Name: "Musterhöhe", PRRank: 1},
+		{Name: "Musterbach", PRRank: 1},
+		{Name: "Musterwald", PRRank: 3,
+			Achievements: []strava.SegmentAchievement{{Type: "year_pr", Rank: 1}}},
+	}
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	for _, want := range []string{"- Personal records: 2\n", "- Other achievements: 1\n"} {
+		if !strings.Contains(capture.prompt.User, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, capture.prompt.User)
+		}
 	}
 }

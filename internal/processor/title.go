@@ -101,6 +101,11 @@ func (p *Processor) llmTitle(
 	ride.GearName = p.gearName(ctx, activity.GearID, logger)
 	ride.Achievements = achievementsOf(activity)
 
+	// The counts beside the names, from the same rule a derived example's
+	// situation uses: a title that escalates a number must be escalating the
+	// number the examples taught, and the list of names is capped.
+	ride.Records, ride.OtherAchievements = countEfforts(activity.SegmentEfforts)
+
 	// An indoor ride is named from effort and season only. Watopia is not in
 	// the Solomon Islands, and geocoding a fictional coordinate would produce
 	// a confidently wrong place name.
