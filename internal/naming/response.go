@@ -15,7 +15,7 @@ type response struct {
 // ParseAndValidate turns a raw model response into a title, or explains why it
 // is not one.
 //
-// Both providers are asked for bare JSON, and both are capable of returning it
+// Every provider are asked for bare JSON, and both are capable of returning it
 // wrapped in a markdown fence anyway. Unwrapping that is not leniency about the
 // contract — it is recognizing the one deviation that is unambiguous. Anything
 // else fails, and the raw text travels in the error so a caller can log what

@@ -156,7 +156,8 @@ type vertexGenerConfig struct {
 
 type vertexResponse struct {
 	Candidates []struct {
-		Content vertexContent `json:"content"`
+		Content      vertexContent `json:"content"`
+		FinishReason string        `json:"finishReason"`
 	} `json:"candidates"`
 	PromptFeedback struct {
 		BlockReason string `json:"blockReason"`
@@ -220,6 +221,13 @@ func (v *Vertex) Complete(ctx context.Context, prompt Prompt) (string, error) {
 	// One candidate is requested and the first is used; a provider that
 	// returns more is not a reason to concatenate them into nonsense.
 	if len(decoded.Candidates) > 0 {
+		// The finish reason before the text: a candidate cut off at the
+		// ceiling may hold half an object or nothing, and "no title" or
+		// "not JSON" would name the wrong cause.
+		if decoded.Candidates[0].FinishReason == vertexFinishMaxTokens {
+			return "", truncatedError("vertex")
+		}
+
 		for _, part := range decoded.Candidates[0].Content.Parts {
 			text.WriteString(part.Text)
 		}
@@ -230,6 +238,18 @@ func (v *Vertex) Complete(ctx context.Context, prompt Prompt) (string, error) {
 	}
 
 	return text.String(), nil
+}
+
+// vertexFinishMaxTokens is Vertex's finish reason for a candidate cut off at
+// maxOutputTokens.
+const vertexFinishMaxTokens = "MAX_TOKENS"
+
+// truncatedError names a response cut off at the output ceiling, in the same
+// words for every provider: the A/B's diagnostic is the log line, and one
+// failure must not read as three causes across three narrators.
+func truncatedError(provider string) error {
+	return fmt.Errorf("naming: %s: response truncated at max_tokens (%d); the title did not fit",
+		provider, maxOutputTokens)
 }
 
 // Message roles every provider's dialect spells the same way.

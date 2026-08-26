@@ -766,9 +766,23 @@ func TestLLMOpenRouterWithAKey(t *testing.T) {
 func TestLLMOpenRouterBaseURLMustBeHTTPS(t *testing.T) {
 	t.Parallel()
 
-	for _, bad := range []string{"http://openrouter.ai/api/v1", "openrouter.ai/api/v1", "https://", "https://a b/v1", "https://x.example/v1?key=1"} {
+	for _, bad := range []string{
+		"http://openrouter.ai/api/v1", "openrouter.ai/api/v1", "https://", "https://a b/v1",
+		"https://x.example/v1?key=1", "https://x.example/v1#f", "https://user:pw@x.example/v1",
+		"https://openrouter.ai", "https://openrouter.ai/", "https://gateway.example//v1",
+		"https://gateway.example:0/v1", "https://gateway.example:65536/v1", "https://gateway.example:99999/v1",
+	} {
 		if _, err := Load(env(map[string]string{"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "k", "LLM_BASE_URL": bad})); err == nil {
 			t.Errorf("base URL %q was accepted", bad)
+		}
+	}
+
+	for _, good := range []string{
+		"https://Gateway.Example/v1", "https://[::1]:8443/v1", "https://gateway.example:65535/v1",
+		"https://gateway.example:1/api/v1/", "https://openrouter.ai/api/v1",
+	} {
+		if _, err := Load(env(map[string]string{"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "k", "LLM_BASE_URL": good})); err != nil {
+			t.Errorf("base URL %q was refused: %v", good, err)
 		}
 	}
 

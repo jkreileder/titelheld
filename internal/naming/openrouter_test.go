@@ -3,15 +3,13 @@ package naming
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
-
-// The OpenRouter provider satisfies the interface the naming layer defines.
-var _ Provider = (*OpenRouter)(nil)
 
 // A completion round trip in the chat-completions dialect: the key as a
 // bearer token, the attribution headers, the system and user roles, the
@@ -66,8 +64,20 @@ func TestOpenRouterComplete(t *testing.T) {
 		t.Errorf("model = %v, want the pinned %q", gotBody["model"], DefaultOpenRouterModel)
 	}
 
-	if _, ok := gotBody["max_tokens"]; !ok {
-		t.Errorf("request is missing max_tokens: %v", gotBody)
+	if gotBody["max_tokens"] != float64(maxOutputTokens) {
+		t.Errorf("max_tokens = %v, want %d", gotBody["max_tokens"], maxOutputTokens)
+	}
+
+	if gotBody["temperature"] != DefaultTemperature {
+		t.Errorf("temperature = %v, want the spec's %v", gotBody["temperature"], DefaultTemperature)
+	}
+
+	// Reasoning off, at the router level: reasoning tokens are output tokens
+	// and would spend max_tokens before the title on a narrator that reasons
+	// by default.
+	reasoning, _ := gotBody["reasoning"].(map[string]any)
+	if reasoning["effort"] != reasoningEffortNone {
+		t.Errorf("reasoning = %v, want effort %q", gotBody["reasoning"], reasoningEffortNone)
 	}
 
 	if _, ok := gotBody["response_format"]; ok {
@@ -148,11 +158,20 @@ func TestOpenRouterReportsTruncation(t *testing.T) {
 	}
 }
 
-// No choices, or an empty one, is no title rather than a decode error.
-func TestOpenRouterEmptyChoices(t *testing.T) {
+// A 200 that carries an upstream failure is reported as that failure, with
+// its code, whether it arrived before any choice or inside the first one —
+// and a content filter is named too. None of them is "no title".
+func TestOpenRouterNamesAnUpstreamFailureInsideA200(t *testing.T) {
 	t.Parallel()
 
-	for _, body := range []string{`{"choices":[]}`, `{"choices":[{"message":{"content":""}}]}`} {
+	cases := map[string]string{
+		`{"error":{"code":502,"message":"prompt was: SECRET"}}`:                                                          "upstream error 502 before any choice",
+		`{"choices":[{"message":{"content":""},"finish_reason":"error","error":{"code":502,"message":"SECRET"}}]}`:       "upstream error 502 mid-generation",
+		`{"choices":[{"message":{"content":"{\"tit"},"finish_reason":"error","error":{"code":504,"message":"SECRET"}}]}`: "upstream error 504 mid-generation",
+		`{"choices":[{"message":{"content":""},"finish_reason":"content_filter"}]}`:                                      "content filter",
+	}
+
+	for body, want := range cases {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, body)
 		}))
@@ -162,7 +181,36 @@ func TestOpenRouterEmptyChoices(t *testing.T) {
 		_, err := provider.Complete(t.Context(), Prompt{})
 		server.Close()
 
-		if err == nil || !strings.Contains(err.Error(), ErrNoTitle.Error()) {
+		if err == nil || !strings.Contains(err.Error(), want) || errors.Is(err, ErrNoTitle) {
+			t.Errorf("body %s: err = %v, want %q and not ErrNoTitle", body, err, want)
+		}
+
+		if strings.Contains(err.Error(), "SECRET") {
+			t.Errorf("the error echoed the upstream message: %v", err)
+		}
+	}
+}
+
+// No choices, or an empty one that finished normally, is no title rather than
+// a decode error — the control for the finish-reason cases above.
+func TestOpenRouterEmptyChoices(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{
+		`{"choices":[]}`,
+		`{"choices":[{"message":{"content":""}}]}`,
+		`{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+
+		provider := &OpenRouter{Client: server.Client(), APIKey: "k", BaseURL: server.URL}
+
+		_, err := provider.Complete(t.Context(), Prompt{})
+		server.Close()
+
+		if !errors.Is(err, ErrNoTitle) {
 			t.Errorf("body %s: err = %v, want ErrNoTitle", body, err)
 		}
 	}
@@ -198,7 +246,7 @@ func TestOpenRouterDefaults(t *testing.T) {
 	}
 }
 
-// A cancelled context stops the call.
+// A canceled context stops the call.
 func TestOpenRouterContextCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -213,6 +261,6 @@ func TestOpenRouterContextCancellation(t *testing.T) {
 	provider := &OpenRouter{Client: server.Client(), APIKey: "k", BaseURL: server.URL}
 
 	if _, err := provider.Complete(ctx, Prompt{}); err == nil {
-		t.Error("Complete with a cancelled context = nil error")
+		t.Error("Complete with a canceled context = nil error")
 	}
 }

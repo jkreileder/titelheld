@@ -3,7 +3,9 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -42,12 +44,38 @@ const (
 	ProviderOpenRouter Provider = "openrouter"
 )
 
-// openRouterBaseURLPattern bounds LLM_BASE_URL to an https origin with an
-// optional path, on the same reasoning as [vertexLocationPattern]: the value
-// names the host the API key is sent to in a header, so a plain-http or
-// malformed value would carry the key somewhere it was never meant to go —
-// and a startup error is cheaper than a leak on the first ride worth naming.
-var openRouterBaseURLPattern = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$`)
+// checkBaseURL bounds LLM_BASE_URL, on the same reasoning as
+// [vertexLocationPattern]: the value names the host the API key is sent to in
+// a header, so a plain-http or malformed value would carry the key somewhere
+// it was never meant to go — and a startup error is cheaper than a leak on
+// the first ride worth naming.
+//
+// An API root including its version path, not a bare origin: the provider
+// appends /chat/completions verbatim, so https://openrouter.ai would 404 on
+// every call and nothing at startup would say why.
+func checkBaseURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", EnvLLMBaseURL, err)
+	}
+
+	switch {
+	case parsed.Scheme != "https":
+		return fmt.Errorf("%s must use https, got %q", EnvLLMBaseURL, raw)
+	case parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "":
+		return fmt.Errorf("%s must be a plain https URL — host and path, nothing else — got %q", EnvLLMBaseURL, raw)
+	case parsed.Path == "" || parsed.Path == "/" || strings.Contains(parsed.Path, "//"):
+		return fmt.Errorf("%s must be the API root including its version path, such as https://openrouter.ai/api/v1, got %q", EnvLLMBaseURL, raw)
+	}
+
+	if port := parsed.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("%s has a port outside 1-65535: %q", EnvLLMBaseURL, raw)
+		}
+	}
+
+	return nil
+}
 
 // Keyed reports whether the provider authenticates with LLM_API_KEY.
 func (p Provider) Keyed() bool {
@@ -158,10 +186,10 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 	if llm.Provider == ProviderOpenRouter {
 		llm.BaseURL = strings.TrimRight(strings.TrimSpace(getenv(EnvLLMBaseURL)), "/")
 
-		if llm.BaseURL != "" && !openRouterBaseURLPattern.MatchString(llm.BaseURL) {
-			*errs = append(*errs, fmt.Errorf(
-				"config: %s must be an https origin such as https://openrouter.ai/api/v1, got %q",
-				EnvLLMBaseURL, llm.BaseURL))
+		if llm.BaseURL != "" {
+			if err := checkBaseURL(llm.BaseURL); err != nil {
+				*errs = append(*errs, fmt.Errorf("config: %w", err))
+			}
 		}
 	}
 

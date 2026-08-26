@@ -139,6 +139,24 @@ resource "google_cloud_run_v2_service" "this" {
         value = "titelheld/1.0 (+${var.base_url})"
       }
 
+      # The naming provider, only when one is chosen: an unset variable is
+      # not passed as an empty string, so the binary sees exactly what the
+      # loader's dormancy test sees — nothing — and resolves Vertex.
+      dynamic "env" {
+        for_each = {
+          for name, value in {
+            LLM_PROVIDER = var.llm_provider
+            LLM_MODEL    = var.llm_model
+            LLM_BASE_URL = var.llm_base_url
+          } : name => value if value != ""
+        }
+
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
       dynamic "env" {
         for_each = {
           STRAVA_CLIENT_ID     = "strava-client-id"

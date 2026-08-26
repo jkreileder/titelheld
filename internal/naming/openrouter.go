@@ -26,9 +26,16 @@ import (
 //	headers:  Authorization: Bearer <key>; HTTP-Referer and X-OpenRouter-Title
 //	          are optional attribution ("X-Title" is also accepted)
 //	response: choices[0].message.content; finish_reason is normalized to
-//	          stop, length, content_filter, error or tool_calls
+//	          stop, length, content_filter, error or tool_calls; an upstream
+//	          failure mid-stream arrives as HTTP 200 with finish_reason
+//	          "error" and choices[0].error, and a failure before any choice
+//	          as a top-level error object
+//	reasoning: {"effort": "none"} disables reasoning; reasoning tokens are
+//	          output tokens and would otherwise spend max_tokens before the
+//	          title — the router-normalized twin of Vertex's thinkingBudget 0
 //	https://openrouter.ai/docs/api-reference/overview
 //	https://openrouter.ai/docs/api-reference/chat-completion
+//	https://openrouter.ai/docs/use-cases/reasoning-tokens
 //
 // The model was verified against the live catalog, GET
 // https://openrouter.ai/api/v1/models, on the same day: anthropic/claude-haiku-4.5
@@ -48,9 +55,12 @@ const DefaultOpenRouterModel = "anthropic/claude-haiku-4.5"
 // DefaultOpenRouterBaseURL is OpenRouter's API root.
 const DefaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
 
-// finishReasonLength is the normalized finish reason for a completion cut off
-// by max_tokens rather than finished.
-const finishReasonLength = "length"
+// Normalized finish reasons this provider names when it sees them.
+const (
+	finishReasonLength        = "length"
+	finishReasonError         = "error"
+	finishReasonContentFilter = "content_filter"
+)
 
 // maxOpenRouterResponseBytes caps what a decode reads from a response.
 const maxOpenRouterResponseBytes = 1 << 20
@@ -117,7 +127,16 @@ type chatRequest struct {
 	MaxTokens   int           `json:"max_tokens"`
 	Temperature float64       `json:"temperature"`
 	Messages    []chatMessage `json:"messages"`
+	Reasoning   chatReasoning `json:"reasoning"`
 }
+
+// chatReasoning is OpenRouter's router-level reasoning control.
+type chatReasoning struct {
+	Effort string `json:"effort"`
+}
+
+// reasoningEffortNone disables reasoning on every narrator that has it.
+const reasoningEffortNone = "none"
 
 type chatMessage struct {
 	Role    string `json:"role"`
@@ -129,8 +148,18 @@ type chatResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
+		FinishReason string     `json:"finish_reason"`
+		Error        *chatError `json:"error"`
 	} `json:"choices"`
+
+	// Error is set on a 200 that carries no choice at all.
+	Error *chatError `json:"error"`
+}
+
+// chatError is the router's account of an upstream failure. The code is
+// reported; the message is not, for the same reason a non-200 body is not.
+type chatError struct {
+	Code int `json:"code"`
 }
 
 // Complete sends the prompt as a system and a user message and returns the
@@ -148,6 +177,7 @@ func (o *OpenRouter) Complete(ctx context.Context, prompt Prompt) (string, error
 			{Role: roleSystem, Content: prompt.System},
 			{Role: roleUser, Content: prompt.User},
 		},
+		Reasoning: chatReasoning{Effort: reasoningEffortNone},
 	}
 
 	body, err := json.Marshal(payload)
@@ -182,18 +212,34 @@ func (o *OpenRouter) Complete(ctx context.Context, prompt Prompt) (string, error
 		return "", fmt.Errorf("naming: openrouter: decode response: %w", err)
 	}
 
+	// A 200 is not a success until the body says so: the router reports an
+	// upstream failure inside the response, before any choice or in the
+	// first one, and reporting either as "no title" would hide the cause.
+	if decoded.Error != nil {
+		return "", fmt.Errorf("naming: openrouter: upstream error %d before any choice", decoded.Error.Code)
+	}
+
 	if len(decoded.Choices) == 0 {
 		return "", ErrNoTitle
 	}
 
 	choice := decoded.Choices[0]
 
-	// Before the content is looked at: a truncated response may hold half an
-	// object or nothing at all, and either way the cause is the ceiling, not
-	// the parser or an empty model.
-	if choice.FinishReason == finishReasonLength {
-		return "", fmt.Errorf("naming: openrouter: response truncated at max_tokens (%d); the title did not fit",
-			maxOutputTokens)
+	// The finish reason before the content: a response cut off or refused
+	// may hold half an object or nothing at all, and either way the cause is
+	// what the reason says, not the parser or an empty model.
+	switch choice.FinishReason {
+	case finishReasonLength:
+		return "", truncatedError("openrouter")
+	case finishReasonError:
+		code := 0
+		if choice.Error != nil {
+			code = choice.Error.Code
+		}
+
+		return "", fmt.Errorf("naming: openrouter: upstream error %d mid-generation", code)
+	case finishReasonContentFilter:
+		return "", errors.New("naming: openrouter: the response was withheld by a content filter")
 	}
 
 	if choice.Message.Content == "" {

@@ -72,3 +72,30 @@ variable "sweep_schedule" {
   type        = string
   default     = "*/5 * * * *"
 }
+
+# The naming provider. Unset means the keyless Vertex default, and none of
+# these reach the container then. Switching narrators for an A/B is a change
+# to these three and an apply — plus a new version of the llm-api-key secret
+# holding the selected provider's key, which Terraform never touches.
+variable "llm_provider" {
+  description = "LLM_PROVIDER: empty (Vertex, keyless), \"anthropic\" or \"openrouter\"."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "gemini", "anthropic", "openrouter"], var.llm_provider)
+    error_message = "llm_provider must be empty, \"gemini\", \"anthropic\" or \"openrouter\"."
+  }
+}
+
+variable "llm_model" {
+  description = "LLM_MODEL: overrides the provider's shipped, pinned model ID. Empty means the provider default."
+  type        = string
+  default     = ""
+}
+
+variable "llm_base_url" {
+  description = "LLM_BASE_URL: the https API root the openrouter provider calls, including its version path. Empty means OpenRouter's own."
+  type        = string
+  default     = ""
+}

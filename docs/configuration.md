@@ -140,9 +140,20 @@ default, https required because the key travels in a header to whatever host it 
 `https://openrouter.ai/api/v1/models` is the list). The prompt, the title contract and the
 validator are the ones every provider works under, and no provider-side JSON mode is sent: a
 parameter one narrator rejects would make an A/B of models into an A/B of parameter support.
-Switching is a Terraform variable change and an apply, not a release; a re-sweep of the queued
-ride under the new narrator is then the diagnostic. While `LLM_PROVIDER` is unset none of this
-is read — the resolution is Vertex, and no key is required or looked at.
+Switching narrators is three acts and no release. First a new **version of the `llm-api-key`
+secret** holding the selected provider's key — the two keyed providers share the one secret, and
+the startup check only sees that a key exists, so a key left over from the other provider passes
+it and fails with a 401 on the first ride. Then the Terraform variables `llm_provider`,
+`llm_model` and `llm_base_url` (see [Infrastructure](infrastructure.md)) and an apply; the
+variables reach the container only when set, so an empty one is the same as an unset one. Then a
+manual sweep of the queued ride under the new narrator, which is the diagnostic. While
+`LLM_PROVIDER` is unset none of this is read — the resolution is Vertex, and no key is required
+or looked at.
+
+`LLM_BASE_URL` is the API root *including its version path*: the provider appends
+`/chat/completions` to it verbatim, so `https://openrouter.ai` would answer 404 on every call and
+is refused at startup, as are a plain-http scheme, credentials, a query, a fragment, and a port
+outside 1–65535.
 
 ## Choosing the Vertex model and region
 
