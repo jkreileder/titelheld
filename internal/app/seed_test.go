@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -294,10 +295,15 @@ func TestSeedConfigWritesTheDocumentAgainstTheEmulator(t *testing.T) {
 		t.Skip("FIRESTORE_EMULATOR_HOST is not set; start the Firestore emulator to run this")
 	}
 
+	// A project of this run's own: the emulator keeps documents for as long
+	// as it runs, and a fixed name would make the second invocation meet the
+	// document the first one wrote and refuse.
+	project := fmt.Sprintf("titelheld-seed-bound-%d", time.Now().UnixNano())
+
 	getenv := func(name string) string {
 		switch name {
 		case "FIRESTORE_PROJECT":
-			return "titelheld-seed-bound-test"
+			return project
 		case "FIRESTORE_DATABASE":
 			return "(default)"
 		default:

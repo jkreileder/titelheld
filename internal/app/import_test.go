@@ -220,3 +220,40 @@ func TestImportAgainstTheEmulator(t *testing.T) {
 		t.Errorf("error %q does not say what to do about it", err)
 	}
 }
+
+// The bound-store prologue tells a store failure from a missing athlete: only
+// "none or several tokens" means the authorization flow is what is missing,
+// and anything else is reported in the store's own words.
+func TestBoundAthleteErrorsAreToldApart(t *testing.T) {
+	t.Parallel()
+
+	empty := store.NewMemory()
+
+	if _, err := empty.AnyToken(t.Context()); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("an empty store's AnyToken = %v, want ErrNotFound", err)
+	}
+
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"no athlete", store.ErrNotFound, "run the authorization flow first"},
+		{"store failure", errors.New("firestore: list tokens: unavailable"), "resolve the bound athlete: firestore: list tokens: unavailable"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := boundAthleteError(tc.err)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("boundAthleteError(%v) = %v, want %q", tc.err, err, tc.want)
+			}
+
+			if tc.name == "store failure" && strings.Contains(err.Error(), "authorization flow") {
+				t.Errorf("a store failure was blamed on the authorization flow: %v", err)
+			}
+		})
+	}
+}

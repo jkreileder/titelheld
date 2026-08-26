@@ -8,6 +8,7 @@ import (
 
 	"github.com/jkreileder/titelheld/internal/config"
 	"github.com/jkreileder/titelheld/internal/importer"
+	"github.com/jkreileder/titelheld/internal/store"
 	"github.com/jkreileder/titelheld/internal/strava"
 )
 
@@ -71,11 +72,22 @@ func openBoundStore(
 	if err != nil {
 		closeStore()
 
-		return nil, nil, 0, fmt.Errorf(
-			"no single bound athlete; run the authorization flow first: %w", err)
+		return nil, nil, 0, boundAthleteError(err)
 	}
 
 	return dataStore, closeStore, token.AthleteID, nil
+}
+
+// boundAthleteError says what a failed athlete resolution means. Only "none
+// or several tokens" means the authorization flow is what is missing; a
+// listing or a decode that failed is the store's own problem and is reported
+// in the store's own words.
+func boundAthleteError(err error) error {
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("no single bound athlete; run the authorization flow first: %w", err)
+	}
+
+	return fmt.Errorf("resolve the bound athlete: %w", err)
 }
 
 // importWith runs the import against an already-open store.

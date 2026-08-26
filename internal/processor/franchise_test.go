@@ -604,7 +604,16 @@ func TestAnIntactFranchiseEntryIsNotReported(t *testing.T) {
 func TestFranchisesRoundTripThroughTheStoredShape(t *testing.T) {
 	t.Parallel()
 
-	profile := naming.DefaultProfile()
+	// Not the shipped profile: a converter that returned DefaultProfile()
+	// whatever it was given would round-trip that one perfectly.
+	profile := []naming.Franchise{
+		{
+			Name: "silver-surfer", SportTypes: []string{"Ride"}, GearName: "Silver Surfer",
+			Titles:   []string{"Herald of Galactus", "The Power Cosmic", "Rise of the Silver Surfer"},
+			Reserved: []string{"Rise of the Silver Surfer"},
+		},
+		{Name: "second", Titles: []string{"Eins", "Zwei"}},
+	}
 
 	back := FranchisesFromStored(FranchisesToStored(profile))
 
@@ -626,7 +635,7 @@ func TestFranchisesRoundTripThroughTheStoredShape(t *testing.T) {
 	// And the stored side is a copy of the data, not a rename of the type:
 	// a reserved entry survives as a field the document can hold.
 	stored := FranchisesToStored(profile)
-	if len(stored[0].Reserved) == 0 {
-		t.Error("the stored shape lost the reserved entries")
+	if len(stored[0].Reserved) != 1 || stored[0].Reserved[0] != "Rise of the Silver Surfer" {
+		t.Errorf("the stored shape lost the reserved entries: %v", stored[0].Reserved)
 	}
 }
