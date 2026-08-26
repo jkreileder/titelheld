@@ -161,8 +161,7 @@ func TestRequiredVariables(t *testing.T) {
 				t.Fatalf("Load without %s = nil error, want error", name)
 			}
 
-			var missing *ErrMissing
-			if !errors.As(err, &missing) || missing.Name != name {
+			if missing, ok := errors.AsType[*ErrMissing](err); !ok || missing.Name != name {
 				t.Errorf("error = %v, want an ErrMissing for %s", err, name)
 			}
 		})

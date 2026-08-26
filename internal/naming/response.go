@@ -50,8 +50,8 @@ func unfence(body string) string {
 		}
 	}
 
-	if end := strings.LastIndex(body, "```"); end >= 0 {
-		body = body[:end]
+	if before, _, ok := strings.CutLast(body, "```"); ok {
+		body = before
 	}
 
 	return strings.TrimSpace(body)

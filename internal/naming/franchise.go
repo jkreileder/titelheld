@@ -1,6 +1,7 @@
 package naming
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -69,13 +70,11 @@ func (f Franchise) Next(position int) (title string, index int, ok bool) {
 
 // reserved reports whether an entry is the athlete's to spend by hand.
 func (f Franchise) reserved(title string) bool {
-	for _, entry := range f.Reserved {
-		if strings.EqualFold(strings.TrimSpace(entry), strings.TrimSpace(title)) {
-			return true
-		}
-	}
+	want := strings.TrimSpace(title)
 
-	return false
+	return slices.ContainsFunc(f.Reserved, func(entry string) bool {
+		return strings.EqualFold(strings.TrimSpace(entry), want)
+	})
 }
 
 // Applies reports whether a ride belongs to this franchise.
@@ -92,13 +91,9 @@ func (f Franchise) Applies(sportType, gearName string) bool {
 		return true
 	}
 
-	for _, want := range f.SportTypes {
-		if strings.EqualFold(sportType, want) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(f.SportTypes, func(want string) bool {
+		return strings.EqualFold(sportType, want)
+	})
 }
 
 // DefaultProfile is the franchise set a deployment starts with.
