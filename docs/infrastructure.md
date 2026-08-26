@@ -258,7 +258,7 @@ A successful response is `{"id": <subscription id>}`. The handshake shows up in 
 Listing and deleting take the client credentials, not a token:
 
 ```sh
-curl -s -G https://www.strava.com/api/v3/push_subscriptions \
+curl -sf -G https://www.strava.com/api/v3/push_subscriptions \
   --data-urlencode "client_id=$(sec strava-client-id)" \
   --data-urlencode "client_secret=$(sec strava-client-secret)"
 ```
@@ -315,6 +315,21 @@ job:
 ```text
 FAILED_PRECONDITION: Job.state must be ENABLED for RunJob
 ```
+
+First read what the service will do with what it names, because the sequence below resumes the
+recurring job and a tick can fire while it is resumed:
+
+```sh
+gcloud run services describe titelheld --project="$PROJECT" --region="$REGION" \
+  --format='value(spec.template.spec.containers[0].env.filter("name:DRY_RUN").extract("value"))'
+```
+
+`1` is the precondition for the rest of this section: a tick that lands mid-sequence then costs
+duplicated work and nothing else. Anything else — `0`, or an empty line, which means the read did
+not find the variable rather than that writes are off — and this is not the procedure to run.
+Writes are enabled by hand, and a sweep under them needs a sequence that cannot overlap the
+schedule; there is no such sequence here yet. The same read gates a release, in
+`.github/scripts/writes-gate.sh`.
 
 So the job is resumed, run, and paused again — and the pause happens whatever the run did, or a
 failed dispatch leaves the job firing every five minutes:
@@ -379,5 +394,5 @@ second one; one that lands after it is a second full sweep — the queue read ag
 fetched and classified again, the model called again for each one still due. Under `DRY_RUN=1`
 none of that reaches Strava and every named activity stays queued, so what it costs is duplicated
 work and a duplicated log line. It stops being free the day writes are enabled: a tick between
-`resume` and `pause` would then rename activities, and the sequence needs reconsidering rather
-than repeating.
+`resume` and `pause` would then rename activities, which is what the `DRY_RUN` precondition
+above refuses.

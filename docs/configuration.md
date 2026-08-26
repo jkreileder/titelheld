@@ -110,7 +110,7 @@ and is required only when that is selected.
 | ------------------------ | ------------ | -------------------- | --------------------------------------------- |
 | `LLM_PROVIDER`           | no           | `gemini`             | `gemini` (Vertex, keyless) or `anthropic`     |
 | `LLM_MODEL`              | no           | provider default     | Overrides the shipped, pinned model ID        |
-| `LLM_API_KEY`            | for Anthropic| —                    | Never read when the provider is `gemini`      |
+| `LLM_API_KEY`            | for Anthropic| —                    | Anthropic only; Vertex is keyless             |
 | `VERTEX_PROJECT`         | no           | `FIRESTORE_PROJECT`  | Project the Vertex call bills to              |
 | `VERTEX_LOCATION`        | no           | `europe-west3`       | Vertex region, or `global` — see below        |
 | `BANNED_WORDS`           | no           | shipped list         | Comma-separated; rejected in a title          |
@@ -167,7 +167,9 @@ call, so it costs nothing and generates no tokens:
 PROJECT=titelheld-XXXXXX
 MODEL=gemini-3.5-flash
 
-for host in aiplatform.googleapis.com europe-west3-aiplatform.googleapis.com; do
+for host in aiplatform.googleapis.com \
+  europe-west3-aiplatform.googleapis.com \
+  europe-west4-aiplatform.googleapis.com; do
   printf '%s: ' "$host"
   curl -s -o /dev/null -w '%{http_code}\n' \
     -H "Authorization: Bearer $(gcloud auth print-access-token)" \
