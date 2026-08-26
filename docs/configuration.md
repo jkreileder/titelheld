@@ -65,7 +65,9 @@ deployed one.
 
 The import (`cmd/titelheld-import`) does not require it. It is a deliberate second process that
 serves no HTTP, completes no authorization flow and runs no sweep, so none of the four
-assumptions apply to it.
+assumptions apply to it. The same goes for `cmd/titelheld-config`, which seeds the athlete's
+configuration document and reads only `FIRESTORE_PROJECT` and `FIRESTORE_DATABASE` — it talks to
+nothing but Firestore, so even the Strava credentials would be invented values.
 
 `LOG_PROMPT` defaults to whatever `DRY_RUN` says: prompts are logged while writes are off, which
 is the observation window and the time when what the model received is the thing being judged.

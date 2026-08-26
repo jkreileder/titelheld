@@ -573,7 +573,30 @@ failed read is not remembered, so the next ride tries again — otherwise one tr
 error would pin the defaults for the life of the process, and a series you had removed would go
 on being offered and its position go on advancing.
 
-To add one:
+**The first document is seeded, not typed.** The shipped default profile applies only while no
+document exists, so the first curation change — reserving an entry, adding a series — is made by
+creating the document from that profile, and the document is authoritative from then on.
+`cmd/titelheld-config` does exactly that and nothing else: it writes the default profile under
+the bound athlete, reserving on top of it every entry named with `-reserve`, reads the document
+back through the same conversion the sweep uses, and logs what each series would offer next. It
+refuses if a document already exists — after the first write you edit the document, and a
+re-run that replaced it would undo every edit since. Like any edit to the document, it takes
+effect at the service's next **cold start**: a warm instance keeps the profile it already read,
+which is the shipped default and still offers what you just reserved — check with the log query
+below before relying on it.
+
+```sh
+FIRESTORE_PROJECT=titelheld-… FIRESTORE_DATABASE=titelheld \
+go run ./cmd/titelheld-config \
+  -reserve "Trail of the Pink Panther" -reserve "Son of the Pink Panther"
+```
+
+Two variables, and no Strava credentials: it talks to nothing but Firestore, with your own
+application-default credentials, and resolves the athlete from the single stored token the way
+the import does. A `-reserve` that names no entry, or more than one, is refused rather than
+written as an inert reservation, which would look in the document exactly like a working one.
+
+To add one, or to change what is there:
 
 1. Pick a `name` that will not change. It keys the stored position, so renaming it sends the
    athlete back to the first title.

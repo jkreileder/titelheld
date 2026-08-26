@@ -578,6 +578,40 @@ func TestMaxInstancesIsNotRequiredForAnImport(t *testing.T) {
 	}
 }
 
+// A store-only process reads where Firestore is and nothing else, and still
+// fails closed on a database named without a project.
+func TestLoadStoreReadsOnlyFirestore(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadStore(func(name string) string {
+		switch name {
+		case "FIRESTORE_PROJECT":
+			return "titelheld-test"
+		case "FIRESTORE_DATABASE":
+			return "titelheld"
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatalf("LoadStore with only Firestore set: %v", err)
+	}
+
+	if !cfg.PersistentStore() || cfg.FirestoreDatabase != "titelheld" {
+		t.Errorf("cfg = %+v, want the Firestore settings", cfg)
+	}
+
+	if _, err := LoadStore(func(name string) string {
+		if name == "FIRESTORE_DATABASE" {
+			return "titelheld"
+		}
+
+		return ""
+	}); err == nil {
+		t.Error("a database without a project loaded; it should refuse the in-memory fallback")
+	}
+}
+
 // LOG_PROMPT follows the dry run unless it is set, and it is its own switch.
 //
 // Its own parser rather than DRY_RUN's, which inverts its input: reusing that

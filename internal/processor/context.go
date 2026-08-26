@@ -210,7 +210,7 @@ func (p *Processor) franchises(
 	resolved := naming.DefaultProfile()
 
 	if ok {
-		resolved = fromStored(config.Franchises)
+		resolved = FranchisesFromStored(config.Franchises)
 
 		logger.Info("loaded the athlete configuration", "franchises", len(resolved))
 	} else {
@@ -222,12 +222,17 @@ func (p *Processor) franchises(
 	return resolved
 }
 
-// fromStored converts the persisted shape into the one with behavior.
+// FranchisesFromStored converts the persisted shape into the one with
+// behavior.
 //
 // The two are deliberately separate types: a franchise has methods here and a
 // schema on disk, and letting one type be both means a refactor in this
 // package silently rewrites what Firestore expects.
-func fromStored(stored []store.Franchise) []naming.Franchise {
+//
+// Exported for the one other reader of the document, the seeding command,
+// which reads back what it wrote through the same conversion the sweep uses
+// — so what it reports as the next offer is what a sweep would compute.
+func FranchisesFromStored(stored []store.Franchise) []naming.Franchise {
 	franchises := make([]naming.Franchise, 0, len(stored))
 
 	for _, entry := range stored {
@@ -251,6 +256,24 @@ func fromStored(stored []store.Franchise) []naming.Franchise {
 	}
 
 	return franchises
+}
+
+// FranchisesToStored is the inverse of [FranchisesFromStored], for writing a
+// profile the code ships into the document the athlete curates from then on.
+func FranchisesToStored(franchises []naming.Franchise) []store.Franchise {
+	stored := make([]store.Franchise, 0, len(franchises))
+
+	for _, franchise := range franchises {
+		stored = append(stored, store.Franchise{
+			Name:       franchise.Name,
+			SportTypes: franchise.SportTypes,
+			GearName:   franchise.GearName,
+			Titles:     franchise.Titles,
+			Reserved:   franchise.Reserved,
+		})
+	}
+
+	return stored
 }
 
 // examplesFrom derives few-shot examples from the title history.
