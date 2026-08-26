@@ -228,8 +228,8 @@ callback until it does.
 **The history has to be seeded once.** Nothing has been named yet, so the recent-titles list is
 empty until the athlete's existing Strava activities are imported — see
 [Seeding the title history](#seeding-the-title-history). The examples are unaffected either way:
-they come only from titles this service wrote, so the synthetic set stands in until it has
-written one.
+they come from titles this service wrote or the athlete has written by hand since, so the
+synthetic set stands in until either exists.
 
 ## HTTP surface
 
