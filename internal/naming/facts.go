@@ -62,6 +62,10 @@ const (
 	sourceMybiketraffic = "mybiketraffic"
 )
 
+// LabelDifficulty is the label Xert's difficulty is forwarded under. Named
+// because a caller reads it back out of the parsed facts.
+const LabelDifficulty = "Difficulty"
+
 // knownFacts is what gets extracted, and nothing else.
 //
 // An allow-list rather than "every Key: Value line", because a description is
@@ -72,7 +76,7 @@ var knownFacts = []factPattern{
 	// Xert.
 	{match: "relative power", label: "Relative power", source: sourceXert},
 	{match: "xss", label: "Strain (XSS)", source: sourceXert},
-	{match: "difficulty", label: "Difficulty", source: sourceXert},
+	{match: "difficulty", label: LabelDifficulty, source: sourceXert},
 	{match: "focus", label: "Focus", source: sourceXert},
 
 	// myWindsock.

@@ -249,7 +249,7 @@ func BuildPrompt(ride Ride, ctx Context) Prompt {
 			}
 
 			fmt.Fprintf(section, "- %s -> %s (%s)\n",
-				OneLine(example.Situation), title, example.Language)
+				oneLineWithin(example.Situation, MaxSituationRunes), title, example.Language)
 		}
 	})
 
@@ -260,6 +260,14 @@ func BuildPrompt(ride Ride, ctx Context) Prompt {
 //
 // Sixty is the title limit, which is what every value bounded here is or was.
 const MaxPromptFieldRunes = 60
+
+// MaxSituationRunes bounds an example's situation, which is not a title and
+// is longer than one on purpose: it carries the shape of a ride and the
+// numbers that explain its title, and a cap at the title limit cut those
+// numbers off the end. The situation is built by this service from figures
+// and one parsed fact, so it is bounded for the prompt's sake rather than as
+// a defense, and still flattened to one line like everything else.
+const MaxSituationRunes = 200
 
 // OneLine reduces untrusted text to a single bounded line.
 //
@@ -273,6 +281,11 @@ const MaxPromptFieldRunes = 60
 // titles the athlete wrote, imported verbatim from Strava, and the name they
 // typed onto a bike.
 func OneLine(value string) string {
+	return oneLineWithin(value, MaxPromptFieldRunes)
+}
+
+// oneLineWithin is [OneLine] with a caller-chosen cap.
+func oneLineWithin(value string, limit int) string {
 	value = strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' || r == '\t' || unicode.IsControl(r) {
 			return ' '
@@ -283,8 +296,8 @@ func OneLine(value string) string {
 
 	value = strings.Join(strings.Fields(value), " ")
 
-	if runes := []rune(value); len(runes) > MaxPromptFieldRunes {
-		value = string(runes[:MaxPromptFieldRunes])
+	if runes := []rune(value); len(runes) > limit {
+		value = string(runes[:limit])
 	}
 
 	return value

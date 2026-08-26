@@ -1859,6 +1859,7 @@ func TestDerivedExampleShowsItsCause(t *testing.T) {
 
 	past := sportRide()
 	past.ID = 901
+	past.Description = "Xert Summary\nDifficulty: Tough\n"
 	past.SegmentEfforts = []strava.SegmentEffort{
 		{Name: "Musterhöhe", PRRank: 1}, {Name: "Musterbach", PRRank: 1},
 		{Name: "Musterwald", PRRank: 1}, {Name: "Musterfeld", PRRank: 1},
@@ -1883,8 +1884,14 @@ func TestDerivedExampleShowsItsCause(t *testing.T) {
 
 	examples := section(t, capture.prompt.User, "EXAMPLES")
 
-	if !strings.Contains(examples, "5 PRs -> Fünf auf einen Streich") {
-		t.Errorf("the example does not show its cause:\n%s", examples)
+	// The whole situation, as rendered: shape, the counts, the difficulty and
+	// the time, and then the title. This fixture is longer than a title, so
+	// it also proves the situation is not cut at the title limit on its way
+	// into the prompt — which is where the numbers used to be lost.
+	want := "68 km, GravelRide, 540 m climbing, 5 PRs, difficulty Tough, Saturday 14:00" +
+		" -> Fünf auf einen Streich (de)"
+	if !strings.Contains(examples, want) {
+		t.Errorf("the rendered example is not %q:\n%s", want, examples)
 	}
 
 	if strings.Contains(examples, "Musterhöhe") {

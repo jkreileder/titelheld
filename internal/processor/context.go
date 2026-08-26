@@ -450,11 +450,8 @@ func situationOf(activity *strava.Activity) string {
 		parts = append(parts, fmt.Sprintf("%.0f m climbing", activity.TotalElevGain))
 	}
 
-	if !activity.StartDateLocal.IsZero() {
-		parts = append(parts, fmt.Sprintf("%s %02d:00",
-			activity.StartDateLocal.Weekday(), activity.StartDateLocal.Hour()))
-	}
-
+	// The numbers before the time: they are the part that explains the
+	// title, so if anything is ever cut it is the weekday.
 	records, achievements := countEfforts(activity.SegmentEfforts)
 
 	if records > 0 {
@@ -467,6 +464,11 @@ func situationOf(activity *strava.Activity) string {
 
 	if difficulty := difficultyOf(activity.Description); difficulty != "" {
 		parts = append(parts, "difficulty "+difficulty)
+	}
+
+	if !activity.StartDateLocal.IsZero() {
+		parts = append(parts, fmt.Sprintf("%s %02d:00",
+			activity.StartDateLocal.Weekday(), activity.StartDateLocal.Hour()))
 	}
 
 	return strings.Join(parts, ", ")
@@ -500,16 +502,13 @@ func countEfforts(efforts []strava.SegmentEffort) (records, achievements int) {
 // the same way. Empty when no tool wrote one.
 func difficultyOf(description string) string {
 	for _, fact := range naming.ParseFacts(description) {
-		if fact.Label == difficultyLabel {
+		if fact.Label == naming.LabelDifficulty {
 			return fact.Value
 		}
 	}
 
 	return ""
 }
-
-// difficultyLabel is the label [naming.ParseFacts] gives Xert's difficulty.
-const difficultyLabel = "Difficulty"
 
 func plural(count int, singular, plural string) string {
 	if count == 1 {
