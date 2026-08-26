@@ -280,11 +280,12 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 
 	// Already named is the self-caused-event case: this service renamed the
 	// activity, Strava emitted an update event for that rename, and the event
-	// came back round. It is not an error and not work.
+	// came back round. It is not an error and not work. A ride recorded under
+	// a human title is in the same log and is equally finished.
 	if title, named, err := p.deps.Store.Named(ctx, pending.AthleteID, pending.ActivityID); err != nil {
 		return outcomeSkipped, fmt.Errorf("read the named log: %w", err)
 	} else if named {
-		logger.Info("already named; dropping a self-caused event",
+		logger.Info("already in the named log; dropping the event",
 			"title", logsafe.String(title))
 
 		return outcomeSkipped, nil
@@ -300,6 +301,10 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 	logger = logger.With("tier", decision.Tier.String(), "action", decision.Action.String())
 
 	if decision.Action == classifier.ActionSkip {
+		if err := p.recordHumanTitle(ctx, pending.AthleteID, activity, decision, logger); err != nil {
+			return outcomeSkipped, err
+		}
+
 		logger.Info("skipping", "reason", decision.Reason)
 
 		return outcomeSkipped, nil
@@ -323,6 +328,61 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 	}
 
 	return outcomeNamed, nil
+}
+
+// recordHumanTitle remembers a title the athlete wrote, when that is why a
+// sport ride was skipped.
+//
+// The skip gate declines any title it does not recognize, and until now it
+// declined without a trace: a title the athlete typed onto a ride was invisible
+// to RECENT, so the model could invent it a second time. Recorded under
+// [store.SourceHuman] it joins the no-repeat list and the few-shot examples.
+//
+// Sport rides only. A commute titled by ActivityFix arrives commute-tagged and
+// classifies as an errand, and a ride below the sport thresholds is one this
+// service would never name — neither title is a repeat to avoid on a sport
+// ride, and a working week of "Zur Arbeit" would crowd the list. The tier is
+// what keeps them out; no title pattern has to be maintained.
+//
+// The row is the dedup record, so a ride recorded here is final: this service
+// is the last writer and never overwrites a person, and a title later reverted
+// to a Strava default is not reconsidered. Nothing is sent to Strava — this
+// runs on the skip path, which never reaches the writer, so neither the title
+// nor the attribution line can follow.
+//
+// Dated by the ride rather than the sweep, as an import is: with the scheduler
+// paused a sweep runs days late, and RECENT is ordered by this date.
+//
+// A store failure fails the activity, which leaves it queued for the next
+// sweep — the same trade the named log makes on a write.
+func (p *Processor) recordHumanTitle(
+	ctx context.Context, athleteID int64, activity *strava.Activity,
+	decision classifier.Decision, logger *slog.Logger,
+) error {
+	if !decision.HumanTitled || decision.Tier != classifier.TierSportRide {
+		return nil
+	}
+
+	at := activity.StartDate
+	if at.IsZero() {
+		at = p.deps.Now()
+	}
+
+	if err := p.deps.Store.MarkNamed(ctx, store.Naming{
+		AthleteID:  athleteID,
+		ActivityID: activity.ID,
+		Title:      activity.Name,
+		Language:   string(naming.GuessLanguage(activity.Name)),
+		Source:     store.SourceHuman,
+		At:         at,
+	}); err != nil {
+		return fmt.Errorf("record the athlete's own title: %w", err)
+	}
+
+	logger.Info("recorded the athlete's own title; it joins the title history",
+		"title", logsafe.String(activity.Name))
+
+	return nil
 }
 
 // toClassifierActivity converts what Strava returned into what the classifier

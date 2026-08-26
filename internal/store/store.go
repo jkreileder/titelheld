@@ -261,9 +261,10 @@ type Naming struct {
 	// Source says how the title was produced: [SourceService] for one this
 	// service's naming pipeline wrote, [SourceTemplate] for a commute or errand
 	// name that came from configuration, [SourceImported] for one seeded from
-	// the athlete's Strava past.
+	// the athlete's Strava past, [SourceHuman] for one the athlete wrote on a
+	// ride this service would otherwise have named.
 	//
-	// Recorded because the two are not interchangeable to a reader of the
+	// Recorded because the sources are not interchangeable to a reader of the
 	// history. This athlete commutes, so a working week fills the newest
 	// entries with two repeated strings — which would crowd the real titles
 	// out of "never repeat these" and teach a model that a Saturday gravel
@@ -290,6 +291,21 @@ const (
 	// teaches a model to answer with the name of a town. That the athlete wrote
 	// it makes it theirs; it does not make it what this service should imitate.
 	SourceImported = "imported"
+
+	// SourceHuman is a title the athlete wrote on a sport ride, recorded when
+	// the skip gate declined to name the ride. Not a title this service wrote
+	// and not one it may ever write: the row is the dedup record, so the ride
+	// is final, and it was recorded from the skip path, which cannot reach
+	// Strava.
+	//
+	// It feeds the no-repeat list, because a title live on the athlete's feed
+	// is exactly what must not be invented again, and it teaches style: the
+	// athlete's current hand-namings are the best style data there will ever
+	// be. An imported row is barred from the examples, this one is not, and
+	// the difference is what the two sources are for — a decade of shorthand
+	// says what not to repeat, a title written last week says what a title
+	// should sound like.
+	SourceHuman = "human"
 )
 
 // NamedTitle is one entry of the title history.

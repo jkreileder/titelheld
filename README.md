@@ -138,7 +138,10 @@ by doing nothing:
 Two things, and only on an activity this service titled.
 
 **The title.** Only where the classifier cleared it: a Strava default, or a machine title
-another tool wrote. A human's title is never overwritten.
+another tool wrote. A human's title is never overwritten — on a sport ride it is *remembered*
+instead, recorded in the named log as source `human` so the prompt can neither repeat it nor
+miss the style it shows. That record is also what makes the ride final: it is never
+reconsidered, and nothing about it — not the title, not the description — is ever written.
 
 **One line at the front of the description**, from pipeline step 7:
 
@@ -427,8 +430,13 @@ A title this service wrote is never relabelled as imported.
 
 Entries are dated by the ride rather than the import, so the history keeps meaning "the most
 recent rides"; each carries a language guessed from the title and a source marker distinguishing
-imported from service-written. The language is a heuristic and applies to imported titles only —
-a title this service writes carries the language the model reported.
+imported from service-written. The language is a heuristic, applied to titles this service did
+not write — imported ones, and the ones the skip gate records as the athlete's — while a title
+this service writes carries the language the model reported.
+
+Run an import *after* the first sweep that reaches a hand-titled ride, not before: the sweep
+records such a title as `human`, which may teach style, and an import that gets there first
+files it as `imported`, which may not.
 
 ## Franchises
 

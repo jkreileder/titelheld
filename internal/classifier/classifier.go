@@ -247,6 +247,14 @@ type Decision struct {
 
 	// Reason is a short, stable explanation for logs.
 	Reason string
+
+	// HumanTitled reports that the default-title gate declined the activity:
+	// its title is neither a Strava default nor a recognized machine title,
+	// so a person wrote it. Set only with [ActionSkip]. A caller records such
+	// a title rather than inventing it again; the classifier itself only
+	// says which skip this was, because [Reason] is prose for a log and not
+	// something to compare against.
+	HumanTitled bool
 }
 
 // Strava sport_type values the tier rules reason about.
@@ -325,10 +333,11 @@ func Classify(activity Activity, cfg Config) Decision {
 	// ever having named it. Those are renamable — see [MachineTitles].
 	if !cfg.MachineTitles.renamable(activity.Name) {
 		return Decision{
-			Tier:      tier,
-			Action:    ActionSkip,
-			Direction: direction,
-			Reason:    reasonNotDefaultTitle,
+			Tier:        tier,
+			Action:      ActionSkip,
+			Direction:   direction,
+			Reason:      reasonNotDefaultTitle,
+			HumanTitled: true,
 		}
 	}
 
