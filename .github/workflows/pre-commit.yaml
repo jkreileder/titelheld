@@ -30,6 +30,14 @@ jobs:
           # GitHub, and the Go toolchain itself (go.dev redirect -> dl.google.com
           # tarball) — actionlint is built from source against a newer Go than
           # the runner preinstalls.
+          # releases.astral.sh serves the uv binary prek installs before running
+          # the Python-based hooks. It has three sources and no way to choose
+          # one: blocked, it falls back to PyPI and succeeds, so the hooks pass
+          # either way — but the blocked attempt is reported as an unexpected
+          # network call, and only on a run that misses the tool cache, which
+          # is every run that edits .pre-commit-config.yaml. A security check
+          # that goes red on a change to the file it guards is one people learn
+          # to wave through.
           allowed-endpoints: >
             dl.google.com:443
             files.pythonhosted.org:443
@@ -39,6 +47,7 @@ jobs:
             proxy.golang.org:443
             pypi.org:443
             raw.githubusercontent.com:443
+            releases.astral.sh:443
             registry.npmjs.org:443
             release-assets.githubusercontent.com:443
             storage.googleapis.com:443
