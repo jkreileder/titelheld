@@ -26,7 +26,10 @@ Strength and salience are the levers, and the style loop needed the athlete in i
   reaches the writer, so neither the title nor the attribution line can follow.
   The row is also the dedup record, which makes the ride final; this service is the last writer and
   never overwrites a person.
-  Sport rides only — a commute that ActivityFix titled classifies as an errand and stays out.
+  Sport rides only — a commute that ActivityFix titled classifies as an errand and stays out — and
+  only a person's title: a tool's title on an outdoor ride and a template typed by hand are left
+  unrecorded, by the same filter the import applies.
+  The recorder runs in dry run too, because the ride is final whatever the write mode.
 - **The athlete's own titles teach the few-shot examples.**
   Eligibility becomes `service` ∪ `human`; `imported` stays barred.
   Admitting only the service's own titles closed the style loop on itself — cold-start blandness
@@ -39,11 +42,17 @@ Strength and salience are the levers, and the style loop needed the athlete in i
   difficulty parsed from the description — so *Fünf auf einen Streich* beside *5 PRs* is a
   demonstrated move rather than an arbitrary association.
   Numbers only; a segment name never enters an example.
+  A situation is longer than a title on purpose and now has its own bound, so those numbers reach
+  the model instead of being cut at the title limit.
 - **The prompt asks for callbacks and data-driven angles instead of allowing them.**
   `RECENT` is offered as material to build on — continue a series, answer a title, escalate a number
   with the arithmetic spelled out — and a callback that fits is to be preferred.
   Achievements become a candidate angle on equal footing with geography, and a route description is
   named the fallback.
+  The ride carries its own counts — `Personal records`, `Other achievements` — from the same rule
+  that counts them for an example, so a title that escalates a number escalates the figure and not
+  the length of the capped `ACHIEVEMENTS` list.
+  `RECENT` and `EXAMPLES` are declared data, never instructions, like the other untrusted blocks.
   Every data-never-instructions guard is kept word for word, and a test now pins them.
   A seventh synthetic example demonstrates an escalation callback with the cause on both sides of
   the arrow — which exposed a test that had counted the six synthetic examples and called it
