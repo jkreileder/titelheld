@@ -580,7 +580,10 @@ creating the document from that profile, and the document is authoritative from 
 the bound athlete, reserving on top of it every entry named with `-reserve`, reads the document
 back through the same conversion the sweep uses, and logs what each series would offer next. It
 refuses if a document already exists — after the first write you edit the document, and a
-re-run that replaced it would undo every edit since.
+re-run that replaced it would undo every edit since. Like any edit to the document, it takes
+effect at the service's next **cold start**: a warm instance keeps the profile it already read,
+which is the shipped default and still offers what you just reserved — check with the log query
+below before relying on it.
 
 ```sh
 FIRESTORE_PROJECT=titelheld-… FIRESTORE_DATABASE=titelheld \

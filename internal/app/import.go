@@ -16,10 +16,8 @@ import (
 // Wired here rather than in the command for the same reason Run is: the
 // command is a shim, and everything with behavior stays testable.
 //
-// It resolves the athlete the way the OAuth callback binds one — the single
-// stored token, refusing on none or several — rather than taking an ID from a
-// flag. An athlete ID is a number nobody can check by eye, and the wrong one
-// would write a stranger's history into this athlete's log.
+// It resolves the athlete the way the OAuth callback binds one — see
+// [openBoundStore] — rather than taking an ID from a flag.
 //
 // Safe to run only while nothing else is naming, which is the normal state:
 // the service scales to zero and the scheduler is paused. It shares the token
@@ -31,31 +29,53 @@ func Import(ctx context.Context, logger *slog.Logger, getenv func(string) string
 		return fmt.Errorf("load configuration: %w", err)
 	}
 
-	if !cfg.PersistentStore() {
-		return errors.New(
-			"import: no Firestore configured; an import against the in-memory store " +
-				"would write to a database that disappears when this process exits")
-	}
-
-	dataStore, closeStore, err := openStore(ctx, cfg, logger)
+	dataStore, closeStore, athleteID, err := openBoundStore(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
 
 	defer closeStore()
 
-	token, err := dataStore.AnyToken(ctx)
-	if err != nil {
-		return fmt.Errorf(
-			"import: no single bound athlete; run the authorization flow first: %w", err)
-	}
-
-	client, err := importClient(cfg, dataStore, token.AthleteID)
+	client, err := importClient(cfg, dataStore, athleteID)
 	if err != nil {
 		return err
 	}
 
-	return importWith(ctx, cfg, dataStore, client, token.AthleteID, logger)
+	return importWith(ctx, cfg, dataStore, client, athleteID, logger)
+}
+
+// openBoundStore opens the persistent store and resolves the one athlete
+// bound to it, for the one-shot commands that run by hand against it.
+//
+// It refuses the in-memory store: a job that writes history or configuration
+// into a database that disappears when the process exits has done nothing,
+// and would report success. The athlete is the single stored token's, the
+// way the OAuth callback binds one — refusing on none or several — because an
+// athlete ID is a number nobody can check by eye, and the wrong one would
+// write under a stranger's key.
+func openBoundStore(
+	ctx context.Context, cfg config.Config, logger *slog.Logger,
+) (boundStore, func(), int64, error) {
+	if !cfg.PersistentStore() {
+		return nil, nil, 0, errors.New(
+			"no Firestore configured; a run against the in-memory store would write " +
+				"to a database that disappears when this process exits")
+	}
+
+	dataStore, closeStore, err := openStore(ctx, cfg, logger)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	token, err := dataStore.AnyToken(ctx)
+	if err != nil {
+		closeStore()
+
+		return nil, nil, 0, fmt.Errorf(
+			"no single bound athlete; run the authorization flow first: %w", err)
+	}
+
+	return dataStore, closeStore, token.AthleteID, nil
 }
 
 // importWith runs the import against an already-open store.

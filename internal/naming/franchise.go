@@ -58,7 +58,7 @@ func (f Franchise) Next(position int) (title string, index int, ok bool) {
 	}
 
 	for at := position; at < len(f.Titles); at++ {
-		if f.reserved(f.Titles[at]) {
+		if f.IsReserved(f.Titles[at]) {
 			continue
 		}
 
@@ -68,13 +68,22 @@ func (f Franchise) Next(position int) (title string, index int, ok bool) {
 	return "", 0, false
 }
 
-// reserved reports whether an entry is the athlete's to spend by hand.
-func (f Franchise) reserved(title string) bool {
-	want := strings.TrimSpace(title)
-
+// IsReserved reports whether an entry is the athlete's to spend by hand.
+//
+// Exported so that whatever writes a reservation checks it with the predicate
+// the rotation will apply, rather than a copy of it.
+func (f Franchise) IsReserved(title string) bool {
 	return slices.ContainsFunc(f.Reserved, func(entry string) bool {
-		return strings.EqualFold(strings.TrimSpace(entry), want)
+		return SameEntry(entry, title)
 	})
+}
+
+// SameEntry reports whether two franchise entries name the same title:
+// trimmed and case-insensitive, because both are typed into the same document
+// by the same person. The one comparison the rotation, the reservation check
+// and the seeder all use.
+func SameEntry(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 // Applies reports whether a ride belongs to this franchise.

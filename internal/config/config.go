@@ -313,18 +313,33 @@ func LoadImport(getenv func(string) string) (Config, error) {
 // database named without a project is refused rather than silently answered
 // by the in-memory store.
 func LoadStore(getenv func(string) string) (Config, error) {
-	cfg := Config{
-		FirestoreProject:  strings.TrimSpace(getenv(EnvFirestoreProject)),
-		FirestoreDatabase: strings.TrimSpace(getenv(EnvFirestoreDatabase)),
+	var cfg Config
+
+	if err := loadFirestore(getenv, &cfg); err != nil {
+		return Config{}, err
 	}
 
+	return cfg, nil
+}
+
+// loadFirestore reads where Firestore is, for every loader.
+//
+// Failing closed: a database named without a project would otherwise start
+// cleanly on the in-memory store and drop the rotated refresh token at the
+// first restart — the one failure this package exists to prevent. One
+// function, so the command that seeds a document cannot accept a
+// configuration the service refuses.
+func loadFirestore(getenv func(string) string, cfg *Config) error {
+	cfg.FirestoreProject = strings.TrimSpace(getenv(EnvFirestoreProject))
+	cfg.FirestoreDatabase = strings.TrimSpace(getenv(EnvFirestoreDatabase))
+
 	if cfg.FirestoreDatabase != "" && cfg.FirestoreProject == "" {
-		return Config{}, errors.New(
+		return errors.New(
 			"config: " + EnvFirestoreDatabase + " is set but " + EnvFirestoreProject +
 				" is not; refusing to fall back to the in-memory store")
 	}
 
-	return cfg, nil
+	return nil
 }
 
 // load reads the environment. serving requires the settings only the running
@@ -337,11 +352,13 @@ func load(getenv func(string) string, serving bool) (Config, error) {
 		StravaClientSecret: getenv(EnvStravaClientSecret),
 		StravaVerifyToken:  getenv(EnvStravaVerifyToken),
 		BaseURL:            strings.TrimRight(strings.TrimSpace(getenv(EnvBaseURL)), "/"),
-		FirestoreProject:   strings.TrimSpace(getenv(EnvFirestoreProject)),
-		FirestoreDatabase:  strings.TrimSpace(getenv(EnvFirestoreDatabase)),
 	}
 
 	var errs []error
+
+	if err := loadFirestore(getenv, &cfg); err != nil {
+		errs = append(errs, err)
+	}
 
 	required := map[string]string{
 		EnvStravaClientID:     cfg.StravaClientID,
@@ -424,15 +441,6 @@ func load(getenv func(string) string, serving bool) (Config, error) {
 		} else {
 			cfg.ProcessDelay = delay
 		}
-	}
-
-	// Failing closed: a database named without a project would otherwise start
-	// cleanly on the in-memory store and drop the rotated refresh token at the
-	// first restart — the one failure this package exists to prevent.
-	if cfg.FirestoreDatabase != "" && cfg.FirestoreProject == "" {
-		errs = append(errs, errors.New(
-			"config: "+EnvFirestoreDatabase+" is set but "+EnvFirestoreProject+
-				" is not; refusing to fall back to the in-memory store"))
 	}
 
 	cfg.NominatimUserAgent = strings.TrimSpace(getenv(EnvNominatimUserAgent))

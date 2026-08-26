@@ -46,26 +46,14 @@ func SeedConfig(
 		return fmt.Errorf("load configuration: %w", err)
 	}
 
-	if !cfg.PersistentStore() {
-		return errors.New(
-			"seed: no Firestore configured; a document written to the in-memory store " +
-				"disappears when this process exits")
-	}
-
-	dataStore, closeStore, err := openStore(ctx, cfg, logger)
+	dataStore, closeStore, athleteID, err := openBoundStore(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
 
 	defer closeStore()
 
-	token, err := dataStore.AnyToken(ctx)
-	if err != nil {
-		return fmt.Errorf(
-			"seed: no single bound athlete; run the authorization flow first: %w", err)
-	}
-
-	return seedConfigWith(ctx, dataStore, token.AthleteID, reserve, logger)
+	return seedConfigWith(ctx, dataStore, athleteID, reserve, logger)
 }
 
 // seedConfigWith writes the document against an already-open store.
@@ -106,7 +94,11 @@ func seedConfigWith(
 
 	franchises := processor.FranchisesFromStored(written.Franchises)
 
-	logger.Info("wrote the athlete configuration", "athlete_id", athleteID,
+	// The service reads the document once per process. A warm instance keeps
+	// the profile it already read — the shipped default, which still offers
+	// what was just reserved — until it is replaced, so the line says so.
+	logger.Info("wrote the athlete configuration; the service reads it at its next cold start",
+		"athlete_id", athleteID,
 		"franchises", len(franchises))
 
 	for _, franchise := range franchises {
@@ -132,15 +124,15 @@ func seedConfigWith(
 
 // reserveEntries marks the named entries reserved.
 //
-// Each name must match exactly one title in exactly one series, trimmed and
-// case-insensitively — the same match the rotation applies. A name that
+// Each name must match exactly one title in exactly one series, by
+// [naming.SameEntry] — the comparison the rotation itself applies, so a
+// reservation written here is one [naming.Franchise.Next] will honor. A name that
 // matches nothing is refused rather than written as an inert reservation,
 // because an inert reservation looks in the document exactly like a working
 // one and the difference is a film handed out by mistake.
 func reserveEntries(profile []naming.Franchise, reserve []string) ([]naming.Franchise, error) {
 	for _, name := range reserve {
-		want := strings.TrimSpace(name)
-		if want == "" {
+		if strings.TrimSpace(name) == "" {
 			return nil, errors.New("seed: an empty entry cannot be reserved")
 		}
 
@@ -148,23 +140,22 @@ func reserveEntries(profile []naming.Franchise, reserve []string) ([]naming.Fran
 
 		for index := range profile {
 			if !slices.ContainsFunc(profile[index].Titles, func(title string) bool {
-				return strings.EqualFold(strings.TrimSpace(title), want)
+				return naming.SameEntry(title, name)
 			}) {
 				continue
 			}
 
 			matches++
 
-			if !slices.ContainsFunc(profile[index].Reserved, func(entry string) bool {
-				return strings.EqualFold(strings.TrimSpace(entry), want)
-			}) {
-				profile[index].Reserved = append(profile[index].Reserved, want)
+			if !profile[index].IsReserved(name) {
+				profile[index].Reserved = append(profile[index].Reserved, strings.TrimSpace(name))
 			}
 		}
 
 		if matches != 1 {
 			return nil, fmt.Errorf(
-				"seed: %q names %d entries in the default profile, want exactly one", want, matches)
+				"seed: %q names %d entries in the default profile, want exactly one",
+				strings.TrimSpace(name), matches)
 		}
 	}
 
