@@ -269,11 +269,12 @@ func fromStored(stored []store.Franchise) []naming.Franchise {
 func (p *Processor) examplesFrom(
 	ctx context.Context, history []store.NamedTitle, logger *slog.Logger,
 ) []naming.Example {
-	// Only what this service wrote itself. Not a filter over titles that might
-	// be unsuitable — a source no imported row can carry, so a decade of the
+	// Only what teaches: a title this service wrote, or one the athlete wrote
+	// by hand since. Not a filter over titles that might be unsuitable — an
+	// admitted source, which no imported row carries, so a decade of the
 	// athlete's own shorthand is structurally unable to become an example
 	// rather than pattern-matched out of one.
-	history = serviceWritten(history)
+	history = teachesStyle(history)
 
 	if len(history) == 0 {
 		// Nothing written yet. The synthetic set is what it is for, and it is
@@ -387,18 +388,33 @@ func worthNotRepeating(history []store.NamedTitle) []store.NamedTitle {
 	return kept
 }
 
-// serviceWritten keeps the titles this service's naming pipeline produced.
+// teachesStyle keeps the titles a few-shot example may be built from.
+//
+// Two sources and no other: [store.SourceService], a title this service's
+// pipeline wrote, and [store.SourceHuman], one the athlete wrote on a sport
+// ride since the recorder existed. The athlete's current hand-namings are the
+// best style data there will ever be, and admitting only the service's own
+// titles closed the style loop on itself — cold-start blandness would have
+// become its own teacher.
+//
+// [store.SourceImported] stays out. That rule's target was a decade of
+// shorthand — bare town names, private jokes, whatever a tool left behind —
+// and an example set built from it teaches a model to answer "Regensburg".
+// Which rows those are is decided by the source they carry, not by what the
+// title looks like: the same athlete wrote both kinds, and no pattern tells
+// last week's title from one from years ago.
 //
 // The opposite default to [worthNotRepeating], and deliberately so: this one
-// admits a source rather than excluding one, so a row whose source is unknown,
+// admits sources rather than excluding one, so a row whose source is unknown,
 // misspelled, or added later is not an example. An example teaches the model
 // what a title should sound like, and the cost of a wrong one is every title
 // afterwards.
-func serviceWritten(history []store.NamedTitle) []store.NamedTitle {
+func teachesStyle(history []store.NamedTitle) []store.NamedTitle {
 	kept := make([]store.NamedTitle, 0, len(history))
 
 	for _, entry := range history {
-		if entry.Source == store.SourceService {
+		switch entry.Source {
+		case store.SourceService, store.SourceHuman:
 			kept = append(kept, entry)
 		}
 	}

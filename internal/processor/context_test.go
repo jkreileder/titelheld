@@ -1764,3 +1764,44 @@ func TestHumanTitleIsRecordedInDryRun(t *testing.T) {
 		t.Errorf("%d entries queued; a recorded human title is final and leaves the queue", n)
 	}
 }
+
+// A title the athlete wrote by hand does become an example.
+//
+// The second admitted source. The athlete's current hand-namings are the best
+// style data there will ever be, and admitting only the service's own titles
+// would have made cold-start blandness its own teacher. The imported half of
+// the split — TestImportedTitlesNeverTeachStyle — is this test's negative
+// control: same log, different source, opposite outcome.
+func TestHumanWrittenTitlesDoTeachStyle(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	const written = "Acht auf einen Streich"
+
+	for _, example := range naming.SyntheticExamples() {
+		if strings.Contains(example.Title, written) {
+			t.Fatalf("%q is a synthetic example; this test cannot tell the two apart", written)
+		}
+	}
+
+	if err := h.store.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 4242, ActivityID: 901,
+		Title: written, Language: "de",
+		Source: store.SourceHuman, At: h.now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if examples := section(t, capture.prompt.User, "EXAMPLES"); !strings.Contains(
+		examples, written) {
+		t.Errorf("a human-written title did not become an example:\n%s", examples)
+	}
+}

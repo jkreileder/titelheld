@@ -177,15 +177,18 @@ template is meant to repeat, so listing it both forbids the right answer for the
 crowds the real titles out of a list of twenty-five. Everything else stays, imported titles
 included — a title the athlete gave a ride years ago is one to avoid repeating, whoever wrote it.
 
-**Few-shot examples, from titles this service wrote and no others.** Six of them, rebuilt at
-prompt time: the named log keeps each title and the language it was written in, and the ride that
-produced it is re-read from Strava to describe the situation. Only rows marked `service` qualify
-— not a filter over titles that look unsuitable, but a source an imported row cannot carry, so a
+**Few-shot examples, from titles this service wrote and titles the athlete has written since.**
+Six of them, rebuilt at prompt time: the named log keeps each title and the language it was
+written in, and the ride that produced it is re-read from Strava to describe the situation. Two
+sources qualify — `service`, and `human`, the title of a sport ride the skip gate left alone. The
+athlete's current hand-namings are the best style data there will ever be, and admitting only the
+service's own titles would have closed the style loop on itself. An `imported` row never
+qualifies — not a filter over titles that look unsuitable, but a source the row carries, so a
 decade of the athlete's own shorthand is *structurally* unable to teach style, rather than
 pattern-matched out of it. That shorthand is bare place names, private jokes and whatever a tool
-left behind; six of them would teach a model to answer with a bare town name. Until this service
-has named
-something, the synthetic set is what the prompt carries — that is its purpose, not a stopgap.
+left behind; six of them would teach a model to answer with a bare town name. Until a title from
+either source exists, the synthetic set is what the prompt carries — that is its purpose, not a
+stopgap.
 Deriving an example costs a Strava read, so each is cached against the activity it describes: the
 history only changes when something is named, so a sweep repeating every five minutes pays once.
 
@@ -225,8 +228,8 @@ callback until it does.
 **The history has to be seeded once.** Nothing has been named yet, so the recent-titles list is
 empty until the athlete's existing Strava activities are imported — see
 [Seeding the title history](#seeding-the-title-history). The examples are unaffected either way:
-they come only from titles this service wrote, so the synthetic set stands in until it has
-written one.
+they come from titles this service wrote or the athlete has written by hand since, so the
+synthetic set stands in until either exists.
 
 ## HTTP surface
 
@@ -373,9 +376,9 @@ put a coordinate.
 
 The prompt asks a model not to repeat a recent title, and the `RECENT` list it reads that from
 is the named log — which starts empty, so a fresh deployment has nothing to avoid repeating until
-the history is seeded from Strava. (The examples are a separate matter: they come only from titles
-this service wrote, so seeding does not affect them — see
-[What the prompt carries](#what-the-prompt-carries).)
+the history is seeded from Strava. (The examples are a separate matter: they come from titles
+this service wrote or the athlete has written by hand since, never from an import, so seeding does
+not affect them — see [What the prompt carries](#what-the-prompt-carries).)
 
 `cmd/titelheld-import` does that. It is a one-shot run by hand, not a route on the service: every
 endpoint added to a service `allUsers` can invoke is another thing that has to authenticate

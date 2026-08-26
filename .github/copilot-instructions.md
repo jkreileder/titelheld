@@ -123,13 +123,16 @@ three blocks carries the prohibition. The two lists are
 filtered differently, and that difference is the rule. RECENT drops only
 templates - a commute name is meant to repeat, so listing it forbids the right
 answer - and keeps imported titles, because repeating one is exactly what to
-avoid. EXAMPLES admits one source and no other, `SourceService`: a title this
-service's own pipeline wrote. An imported row is structurally unable to become
-an example, which is the point - a decade of the athlete's shorthand says what
-not to write twice and nothing about what a title should sound like, and no
-pattern has to be maintained to keep a bare town name out. Until this service has
-named something the synthetic set is what the prompt carries, which is its
-purpose rather than a cold-start stopgap. Only the title history is worth
+avoid. EXAMPLES admits two sources and no other: `SourceService`, a title this
+service's own pipeline wrote, and `SourceHuman`, a title the athlete wrote on a
+sport ride the skip gate declined - recorded by the processor on that skip,
+never written to Strava, and the best style data there will ever be. An
+imported row is structurally unable to become an example, which is the point -
+a decade of the athlete's shorthand says what not to write twice and nothing
+about what a title should sound like, and no pattern has to be maintained to
+keep a bare town name out. Until a title from either source exists the
+synthetic set is what the prompt carries, which is its purpose rather than a
+cold-start stopgap. Only the title history is worth
 failing an activity for - the realistic cause is the composite index missing.
 Everything else degrades rather than blocking a title.
 
