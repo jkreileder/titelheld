@@ -88,12 +88,22 @@
   `processor.FranchisesFromStored`, the sweep's own conversion.
 
 - `internal/naming/` builds the prompt, validates what comes back, and holds
-  the two LLM implementations behind one interface it defines itself. No HTTP
+  the three LLM implementations behind one interface it defines itself. No HTTP
   client of its own beyond the providers, no Firestore: a caller assembles a
   `Ride` and supplies a `Provider`. The prompt states constraints; the
   validator enforces them, because an instruction to a model is a request and
   the ride description is text this service did not write. Gemini goes through
   Vertex AI with the runtime SA's ambient credentials and has no key at all.
+  `anthropic` calls the Messages API with `LLM_API_KEY`. `openrouter` is an
+  OpenAI-compatible chat-completions client against `LLM_BASE_URL` (default
+  OpenRouter's, https required - the key travels in a header to that host),
+  model via `LLM_MODEL`, the same `LLM_API_KEY`: one key, many narrators, so a
+  voice miss is diagnosed by re-sweeping the same queued ride under another
+  model - a Terraform variable change, not a release. Same title contract,
+  same validator, no provider-side JSON mode - a parameter one narrator
+  rejects would contaminate an A/B. Dormancy is tested, not assumed: with
+  `LLM_PROVIDER` unset the real loader resolves Vertex and reads no key, and
+  `openrouter` without a key refuses at startup naming both variables.
   Model IDs are pinned and carry the doc URL and date they were verified
   against.
 

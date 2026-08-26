@@ -132,7 +132,7 @@ func (a *Anthropic) Complete(ctx context.Context, prompt Prompt) (string, error)
 		MaxTokens:   maxOutputTokens,
 		Temperature: a.temperature(),
 		System:      prompt.System,
-		Messages:    []anthropicMessage{{Role: "user", Content: prompt.User}},
+		Messages:    []anthropicMessage{{Role: roleUser, Content: prompt.User}},
 	}
 
 	body, err := json.Marshal(payload)

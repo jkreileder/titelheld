@@ -105,18 +105,20 @@ that never happens.
 | `SWEEP_SERVICE_ACCOUNT` | no       | —       | Email of the only identity allowed to sweep      |
 
 Naming. The default provider is keyless — Gemini is called through Vertex AI with the runtime
-service account's own credentials, so `LLM_API_KEY` exists only for the Anthropic alternative
-and is required only when that is selected.
+service account's own credentials, so `LLM_API_KEY` exists only for the two keyed alternatives,
+`anthropic` and `openrouter`, and is required only when one of them is selected. Selecting a
+keyed provider without the key refuses at startup, naming both variables.
 
-| Variable                 | Required     | Default              | Purpose                                       |
-| ------------------------ | ------------ | -------------------- | --------------------------------------------- |
-| `LLM_PROVIDER`           | no           | `gemini`             | `gemini` (Vertex, keyless) or `anthropic`     |
-| `LLM_MODEL`              | no           | provider default     | Overrides the shipped, pinned model ID        |
-| `LLM_API_KEY`            | for Anthropic| —                    | Anthropic only; Vertex is keyless             |
-| `VERTEX_PROJECT`         | no           | `FIRESTORE_PROJECT`  | Project the Vertex call bills to              |
-| `VERTEX_LOCATION`        | no           | `europe-west3`       | Vertex region, or `global` — see below        |
-| `BANNED_WORDS`           | no           | shipped list         | Comma-separated; rejected in a title          |
-| `MACHINE_TITLE_PATTERNS` | no           | Xert's pattern       | Newline-separated regexes; see below          |
+| Variable                 | Required        | Default             | Purpose                                               |
+| ------------------------ | --------------- | ------------------- | ----------------------------------------------------- |
+| `LLM_PROVIDER`           | no              | `gemini`            | `gemini` (Vertex, keyless), `anthropic`, `openrouter` |
+| `LLM_MODEL`              | no              | provider default    | Overrides the shipped, pinned model ID                |
+| `LLM_API_KEY`            | keyed providers | —                   | Anthropic or OpenRouter; Vertex is keyless            |
+| `LLM_BASE_URL`           | no              | OpenRouter's        | `openrouter` only: an https API root                  |
+| `VERTEX_PROJECT`         | no              | `FIRESTORE_PROJECT` | Project the Vertex call bills to                      |
+| `VERTEX_LOCATION`        | no              | `europe-west3`      | Vertex region, or `global` — see below                |
+| `BANNED_WORDS`           | no              | shipped list        | Comma-separated; rejected in a title                  |
+| `MACHINE_TITLE_PATTERNS` | no              | Xert's pattern      | Newline-separated regexes; see below                  |
 
 `BANNED_WORDS` **replaces** the shipped list rather than adding to it, so removing a word means
 naming the ones you keep. Unset means the shipped list — `Epic`, `Crushing`, `Beast` — which is
@@ -127,8 +129,20 @@ spelling for "ban nothing": set-but-empty and unset are the same string.
 are regular expressions, and a comma inside `{1,3}` is not a separator.
 
 The shipped model IDs are pinned, and each is recorded in the source next to the documentation
-URL it was verified against and the date — `internal/naming/vertex.go` and
-`internal/naming/anthropic.go`. They are not taken from a model's training data.
+URL it was verified against and the date — `internal/naming/vertex.go`,
+`internal/naming/anthropic.go` and `internal/naming/openrouter.go`. They are not taken from a
+model's training data.
+
+`openrouter` exists for one thing: an A/B of narrators on the same queued ride. It speaks the
+OpenAI-compatible chat-completions dialect against `LLM_BASE_URL` — OpenRouter's own root by
+default, https required because the key travels in a header to whatever host it names — with
+`LLM_MODEL` in the router's namespace (`anthropic/claude-haiku-4.5` shipped; the catalog at
+`https://openrouter.ai/api/v1/models` is the list). The prompt, the title contract and the
+validator are the ones every provider works under, and no provider-side JSON mode is sent: a
+parameter one narrator rejects would make an A/B of models into an A/B of parameter support.
+Switching is a Terraform variable change and an apply, not a release; a re-sweep of the queued
+ride under the new narrator is then the diagnostic. While `LLM_PROVIDER` is unset none of this
+is read — the resolution is Vertex, and no key is required or looked at.
 
 ## Choosing the Vertex model and region
 

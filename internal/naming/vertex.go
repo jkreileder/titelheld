@@ -17,7 +17,8 @@ import (
 // The runtime service account calls the regional Vertex endpoint with the
 // ambient credentials Cloud Run already gives it, so there is no Gemini API key
 // anywhere — not in Secret Manager, not in the environment, not in this
-// repository. LLM_API_KEY exists only for the Anthropic alternative.
+// repository. LLM_API_KEY exists only for the keyed alternatives, Anthropic
+// and OpenRouter.
 //
 // The endpoint was verified against Google's live documentation on 2026-08-20:
 //
@@ -174,7 +175,7 @@ func (v *Vertex) Complete(ctx context.Context, prompt Prompt) (string, error) {
 
 	payload := vertexRequest{
 		SystemInstruction: &vertexContent{Parts: []vertexPart{{Text: prompt.System}}},
-		Contents:          []vertexContent{{Role: "user", Parts: []vertexPart{{Text: prompt.User}}}},
+		Contents:          []vertexContent{{Role: roleUser, Parts: []vertexPart{{Text: prompt.User}}}},
 		GenerationConfig: vertexGenerConfig{
 			Temperature:      v.temperature(),
 			MaxOutputTokens:  maxOutputTokens,
@@ -230,6 +231,12 @@ func (v *Vertex) Complete(ctx context.Context, prompt Prompt) (string, error) {
 
 	return text.String(), nil
 }
+
+// Message roles every provider's dialect spells the same way.
+const (
+	roleSystem = "system"
+	roleUser   = "user"
+)
 
 // DefaultTemperature is the sampling temperature the spec asks for.
 const DefaultTemperature = 0.9

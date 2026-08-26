@@ -389,3 +389,68 @@ func TestPromptLoggingFollowsTheDryRunAndItsOverride(t *testing.T) {
 		})
 	}
 }
+
+// Provider dispatch, through the real loader and the real wiring.
+//
+// With LLM_PROVIDER unset the Vertex branch is taken. Reaching Vertex needs
+// ambient Google credentials, which a test machine may or may not have, so
+// two outcomes are accepted and both identify that branch uniquely: a
+// *naming.Vertex, or the "build Vertex credentials" error — neither of which
+// the Anthropic or OpenRouter constructors can produce. The control below is
+// what keeps this from passing either way: the same wiring with openrouter
+// named returns an *naming.OpenRouter carrying the configured key, model and
+// base URL.
+func TestProviderDispatchIsVertexUnlessAsked(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(deployedEnv(map[string]string{"LLM_PROVIDER": "", "LLM_API_KEY": ""}))
+	if err != nil {
+		t.Fatalf("config.Load with the provider unset: %v", err)
+	}
+
+	if cfg.LLM.Provider != config.ProviderVertex {
+		t.Fatalf("provider = %q, want %q", cfg.LLM.Provider, config.ProviderVertex)
+	}
+
+	provider, err := buildProvider(t.Context(), cfg)
+
+	switch {
+	case err != nil && strings.Contains(err.Error(), "build Vertex credentials"):
+		// No ambient credentials here; the Vertex branch was still the one
+		// taken, which is what this asserts.
+	case err != nil:
+		t.Fatalf("buildProvider: %v", err)
+	default:
+		if _, ok := provider.(*naming.Vertex); !ok {
+			t.Fatalf("provider = %T, want *naming.Vertex", provider)
+		}
+	}
+
+	// The control.
+	cfg, err = config.Load(deployedEnv(map[string]string{
+		"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key",
+		"LLM_MODEL": "google/gemini-3.7-flash", "LLM_BASE_URL": "https://gateway.example/v1",
+	}))
+	if err != nil {
+		t.Fatalf("config.Load with openrouter: %v", err)
+	}
+
+	provider, err = buildProvider(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("buildProvider with openrouter: %v", err)
+	}
+
+	openrouter, ok := provider.(*naming.OpenRouter)
+	if !ok {
+		t.Fatalf("provider = %T, want *naming.OpenRouter", provider)
+	}
+
+	if openrouter.APIKey != "test-key" || openrouter.Model != "google/gemini-3.7-flash" ||
+		openrouter.BaseURL != "https://gateway.example/v1" {
+		t.Errorf("openrouter = %+v", *openrouter)
+	}
+
+	if name := openrouter.Name(); name != "openrouter/google/gemini-3.7-flash" {
+		t.Errorf("Name() = %q", name)
+	}
+}

@@ -2,7 +2,6 @@ package config
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -13,11 +12,13 @@ import (
 // LLM_API_KEY is deliberately not among the required set. The default provider
 // is Gemini through Vertex AI, which authenticates with the runtime service
 // account's ambient credentials and has no key at all — the key exists only for
-// the Anthropic alternative, and is required only when that is selected.
+// the two keyed alternatives, Anthropic and OpenRouter, and is required only
+// when one of them is selected.
 const (
 	EnvLLMProvider    = "LLM_PROVIDER"
 	EnvLLMModel       = "LLM_MODEL"
 	EnvLLMAPIKey      = "LLM_API_KEY" //nolint:gosec // the name of a variable, not a value
+	EnvLLMBaseURL     = "LLM_BASE_URL"
 	EnvVertexProject  = "VERTEX_PROJECT"
 	EnvVertexLocation = "VERTEX_LOCATION"
 	EnvBannedWords    = "BANNED_WORDS"
@@ -34,7 +35,24 @@ const (
 
 	// ProviderAnthropic is the Haiku-class alternative, which needs a key.
 	ProviderAnthropic Provider = "anthropic"
+
+	// ProviderOpenRouter is an OpenAI-compatible chat-completions client
+	// against a configurable base URL: one key, many narrators, for an A/B
+	// of models on the same queued ride. Needs a key.
+	ProviderOpenRouter Provider = "openrouter"
 )
+
+// openRouterBaseURLPattern bounds LLM_BASE_URL to an https origin with an
+// optional path, on the same reasoning as [vertexLocationPattern]: the value
+// names the host the API key is sent to in a header, so a plain-http or
+// malformed value would carry the key somewhere it was never meant to go —
+// and a startup error is cheaper than a leak on the first ride worth naming.
+var openRouterBaseURLPattern = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$`)
+
+// Keyed reports whether the provider authenticates with LLM_API_KEY.
+func (p Provider) Keyed() bool {
+	return p == ProviderAnthropic || p == ProviderOpenRouter
+}
 
 // DefaultVertexLocation is where the Vertex call goes.
 //
@@ -68,8 +86,15 @@ type LLM struct {
 	// documentation reference it was verified against.
 	Model string
 
-	// APIKey authenticates Anthropic. Empty for Vertex, and never read there.
+	// APIKey authenticates Anthropic or OpenRouter. Empty for Vertex, and
+	// never read there.
 	APIKey string
+
+	// BaseURL is the API root the OpenRouter provider calls. Empty means
+	// OpenRouter's own; the naming package holds the default. Only the
+	// OpenRouter provider reads it, and it is validated only when that
+	// provider is selected.
+	BaseURL string
 
 	// VertexProject and VertexLocation address the Vertex endpoint.
 	// VertexProject falls back to the Firestore project, which is the same
@@ -96,6 +121,7 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 		Provider:       ProviderVertex,
 		Model:          strings.TrimSpace(getenv(EnvLLMModel)),
 		APIKey:         strings.TrimSpace(getenv(EnvLLMAPIKey)),
+		BaseURL:        strings.TrimRight(strings.TrimSpace(getenv(EnvLLMBaseURL)), "/"),
 		VertexProject:  strings.TrimSpace(getenv(EnvVertexProject)),
 		VertexLocation: strings.TrimSpace(getenv(EnvVertexLocation)),
 	}
@@ -105,9 +131,11 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 		llm.Provider = ProviderVertex
 	case string(ProviderAnthropic):
 		llm.Provider = ProviderAnthropic
+	case string(ProviderOpenRouter):
+		llm.Provider = ProviderOpenRouter
 	default:
-		*errs = append(*errs, fmt.Errorf("config: %s must be %q or %q, got %q",
-			EnvLLMProvider, ProviderVertex, ProviderAnthropic, raw))
+		*errs = append(*errs, fmt.Errorf("config: %s must be %q, %q or %q, got %q",
+			EnvLLMProvider, ProviderVertex, ProviderAnthropic, ProviderOpenRouter, raw))
 	}
 
 	llm.VertexProject = cmp.Or(llm.VertexProject, firestoreProject)
@@ -115,9 +143,17 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 
 	// Fail closed, and fail at startup. A key missing here would otherwise
 	// surface as an authentication error on the first ride worth naming.
-	if llm.Provider == ProviderAnthropic && llm.APIKey == "" {
-		*errs = append(*errs, errors.New(
-			"config: "+EnvLLMAPIKey+" is required when "+EnvLLMProvider+"=anthropic"))
+	if llm.Provider.Keyed() && llm.APIKey == "" {
+		*errs = append(*errs, fmt.Errorf(
+			"config: %s is required when %s=%s, and it is unset",
+			EnvLLMAPIKey, EnvLLMProvider, llm.Provider))
+	}
+
+	if llm.Provider == ProviderOpenRouter && llm.BaseURL != "" &&
+		!openRouterBaseURLPattern.MatchString(llm.BaseURL) {
+		*errs = append(*errs, fmt.Errorf(
+			"config: %s must be an https origin such as https://openrouter.ai/api/v1, got %q",
+			EnvLLMBaseURL, llm.BaseURL))
 	}
 
 	// No startup error for a missing Vertex project. With FIRESTORE_PROJECT

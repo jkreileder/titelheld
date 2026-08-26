@@ -683,3 +683,77 @@ func TestABadLogPromptIsAStartupError(t *testing.T) {
 		}
 	}
 }
+
+// With LLM_PROVIDER unset the resolution is Vertex, exactly as before the
+// third provider existed: no key is required, none is read, and the base URL
+// is not consulted. The control is the same environment with openrouter
+// named, which flips every one of those.
+func TestLLMDormancyWithTheProviderUnset(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(map[string]string{"LLM_PROVIDER": "", "LLM_API_KEY": "", "LLM_BASE_URL": "http://plain.example"}))
+	if err != nil {
+		t.Fatalf("Load with the provider unset: %v", err)
+	}
+
+	if cfg.LLM.Provider != ProviderVertex || cfg.LLM.Provider.Keyed() {
+		t.Errorf("provider = %q, want the keyless %q", cfg.LLM.Provider, ProviderVertex)
+	}
+
+	if cfg.LLM.APIKey != "" {
+		t.Errorf("a key was read for the keyless provider: %q", cfg.LLM.APIKey)
+	}
+
+	// The control: the same environment with openrouter selected is refused
+	// twice over — no key, and a base URL that is not https.
+	_, err = Load(env(map[string]string{"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "", "LLM_BASE_URL": "http://plain.example"}))
+	if err == nil {
+		t.Fatal("openrouter without a key and with a plain-http base URL loaded")
+	}
+
+	for _, want := range []string{EnvLLMAPIKey, EnvLLMProvider + "=openrouter", "unset", EnvLLMBaseURL, "https"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not carry %q: %v", want, err)
+		}
+	}
+}
+
+func TestLLMOpenRouterWithAKey(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(env(map[string]string{
+		"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "k",
+		"LLM_MODEL": "google/gemini-3.7-flash", "LLM_BASE_URL": "https://gateway.example:8443/v1/",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.LLM.Provider != ProviderOpenRouter || !cfg.LLM.Provider.Keyed() || cfg.LLM.APIKey != "k" ||
+		cfg.LLM.Model != "google/gemini-3.7-flash" || cfg.LLM.BaseURL != "https://gateway.example:8443/v1" {
+		t.Errorf("llm = %+v", cfg.LLM)
+	}
+
+	// Unset means the provider's own default, which lives in the naming
+	// package rather than here.
+	cfg, err = Load(env(map[string]string{"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "k"}))
+	if err != nil || cfg.LLM.BaseURL != "" {
+		t.Errorf("base URL = %q, %v; want empty for the provider default", cfg.LLM.BaseURL, err)
+	}
+}
+
+// The base URL names the host the key is sent to, so anything but an https
+// origin is refused at startup — and only when openrouter is selected.
+func TestLLMOpenRouterBaseURLMustBeHTTPS(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{"http://openrouter.ai/api/v1", "openrouter.ai/api/v1", "https://", "https://a b/v1", "https://x.example/v1?key=1"} {
+		if _, err := Load(env(map[string]string{"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "k", "LLM_BASE_URL": bad})); err == nil {
+			t.Errorf("base URL %q was accepted", bad)
+		}
+	}
+
+	if _, err := Load(env(map[string]string{"LLM_PROVIDER": "anthropic", "LLM_API_KEY": "k", "LLM_BASE_URL": "http://ignored.example"})); err != nil {
+		t.Errorf("a base URL was validated for a provider that never reads it: %v", err)
+	}
+}
