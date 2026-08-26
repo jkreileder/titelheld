@@ -1,0 +1,13 @@
+{
+    "enabledPlugins": {
+        "modern-go-guidelines@goland-claude-marketplace": true
+    },
+    "extraKnownMarketplaces": {
+        "goland-claude-marketplace": {
+            "source": {
+                "repo": "JetBrains/go-modern-guidelines",
+                "source": "github"
+            }
+        }
+    }
+}
