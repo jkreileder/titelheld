@@ -424,12 +424,19 @@ func teachesStyle(history []store.NamedTitle) []store.NamedTitle {
 
 // situationOf describes a ride in one line, for a few-shot example.
 //
-// Shape and time only. No place names: they would need geocoding every
-// example, and an example is there to show the style of a title, not to
-// supply geography the model may use — the PLACES list is the only geography
-// the prompt permits.
+// Shape, time, and the numbers that explain the title. An example is there to
+// demonstrate a move, not just a style: "Fünf auf einen Streich" beside a
+// situation that says only "77 km ride, Saturday 09:00" reads as an arbitrary
+// association, and beside "5 PRs" it reads as the arithmetic it was. So the
+// salient counts travel — records, achievements, and the difficulty another
+// tool wrote into the description when it is there to be parsed.
+//
+// Numbers only. Never a segment name: a name is somebody else's text and often
+// carries a place, and an example is not a route through the geography rule.
+// No place names for the same reason — they would need geocoding every
+// example, and the PLACES list is the only geography the prompt permits.
 func situationOf(activity *strava.Activity) string {
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 8)
 
 	if activity.Distance > 0 {
 		parts = append(parts, fmt.Sprintf("%.0f km", activity.Distance/1000))
@@ -448,5 +455,66 @@ func situationOf(activity *strava.Activity) string {
 			activity.StartDateLocal.Weekday(), activity.StartDateLocal.Hour()))
 	}
 
+	records, achievements := countEfforts(activity.SegmentEfforts)
+
+	if records > 0 {
+		parts = append(parts, plural(records, "PR", "PRs"))
+	}
+
+	if achievements > 0 {
+		parts = append(parts, plural(achievements, "achievement", "achievements"))
+	}
+
+	if difficulty := difficultyOf(activity.Description); difficulty != "" {
+		parts = append(parts, "difficulty "+difficulty)
+	}
+
 	return strings.Join(parts, ", ")
+}
+
+// countEfforts counts the personal records and the other achievements among a
+// ride's segment efforts, disjointly.
+//
+// A record is an effort ranked first among the athlete's own; Strava also
+// lists it under the effort's achievements as a "pr", so counting both would
+// report every record twice. An achievement here is any other effort Strava
+// awarded something — a year's best, a place on the overall board — and the
+// kind is not reported, only that there was one.
+func countEfforts(efforts []strava.SegmentEffort) (records, achievements int) {
+	for _, effort := range efforts {
+		switch {
+		case effort.PRRank == 1:
+			records++
+		case len(effort.Achievements) > 0:
+			achievements++
+		}
+	}
+
+	return records, achievements
+}
+
+// difficultyOf reads the difficulty a tool wrote into the description.
+//
+// Through the same parser the prompt uses for the ride being named, so the
+// example and the ride describe the fact the same way and the value is bounded
+// the same way. Empty when no tool wrote one.
+func difficultyOf(description string) string {
+	for _, fact := range naming.ParseFacts(description) {
+		if fact.Label == difficultyLabel {
+			return fact.Value
+		}
+	}
+
+	return ""
+}
+
+// difficultyLabel is the label [naming.ParseFacts] gives Xert's difficulty.
+const difficultyLabel = "Difficulty"
+
+func plural(count int, singular, plural string) string {
+	if count == 1 {
+		return "1 " + singular
+	}
+
+	return fmt.Sprintf("%d %s", count, plural)
 }

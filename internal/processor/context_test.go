@@ -1805,3 +1805,89 @@ func TestHumanWrittenTitlesDoTeachStyle(t *testing.T) {
 		t.Errorf("a human-written title did not become an example:\n%s", examples)
 	}
 }
+
+// A derived example's situation shows the cause of its title.
+//
+// Shape and time alone render "Fünf auf einen Streich" as an arbitrary
+// association; with the numbers beside it, the title is a demonstrated move.
+// Numbers only: the segment names that produced the counts stay out, because
+// a name is somebody else's text and usually carries a place.
+func TestSituationOfCarriesTheNumbersBehindATitle(t *testing.T) {
+	t.Parallel()
+
+	activity := sportRide()
+	activity.Description = "Xert Summary\nDifficulty: Tough\nFocus: Climber\n"
+	activity.SegmentEfforts = []strava.SegmentEffort{
+		{Name: "Musterhöhe Nordrampe", PRRank: 1,
+			Achievements: []strava.SegmentAchievement{{Type: "pr", Rank: 1}}},
+		{Name: "Musterbach Sprint", PRRank: 1},
+		{Name: "Musterwald Anstieg", PRRank: 2,
+			Achievements: []strava.SegmentAchievement{{Type: "year_pr", Rank: 1}}},
+		{Name: "Musterdorf Ortsdurchfahrt"},
+	}
+
+	got := situationOf(&activity)
+
+	for _, want := range []string{"68 km", "GravelRide", "540 m climbing", "Saturday 14:00",
+		"2 PRs", "1 achievement", "difficulty Tough"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("situation %q lacks %q", got, want)
+		}
+	}
+
+	for _, name := range []string{"Musterhöhe", "Musterbach", "Musterwald", "Musterdorf", "Climber"} {
+		if strings.Contains(got, name) {
+			t.Errorf("situation %q carries %q, which is not a number", got, name)
+		}
+	}
+
+	// And a ride with nothing notable says nothing about it, rather than "0 PRs".
+	plain := sportRide()
+	if got := situationOf(&plain); strings.Contains(got, "PR") ||
+		strings.Contains(got, "achievement") || strings.Contains(got, "difficulty") {
+		t.Errorf("an unremarkable ride claims something: %q", got)
+	}
+}
+
+// The derived situation reaches the prompt with its numbers, so the example
+// the model sees demonstrates cause and not just style.
+func TestDerivedExampleShowsItsCause(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	past := sportRide()
+	past.ID = 901
+	past.SegmentEfforts = []strava.SegmentEffort{
+		{Name: "Musterhöhe", PRRank: 1}, {Name: "Musterbach", PRRank: 1},
+		{Name: "Musterwald", PRRank: 1}, {Name: "Musterfeld", PRRank: 1},
+		{Name: "Musterberg", PRRank: 1},
+	}
+
+	h.strava.byID = map[int64]strava.Activity{901: past, 777: sportRide()}
+
+	if err := h.store.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 4242, ActivityID: 901,
+		Title: "Fünf auf einen Streich", Language: "de",
+		Source: store.SourceHuman, At: h.now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	examples := section(t, capture.prompt.User, "EXAMPLES")
+
+	if !strings.Contains(examples, "5 PRs -> Fünf auf einen Streich") {
+		t.Errorf("the example does not show its cause:\n%s", examples)
+	}
+
+	if strings.Contains(examples, "Musterhöhe") {
+		t.Errorf("a segment name leaked into an example:\n%s", examples)
+	}
+}
