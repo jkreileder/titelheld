@@ -60,6 +60,10 @@
   whose line structure *is* the content: the naming prompt, logged whole while
   `LOG_PROMPT` (defaulting to the dry-run state) is on.
 - `cmd/titelheld/` is a shim with no behavior, and is excluded from coverage.
+- `docs/` carries what a deployment needs and the README does not: every
+  setting in `configuration.md`, the GCP deployment in `infrastructure.md`,
+  the Firestore collections and their IAM in `firestore-iam.md`. The README is
+  about what the service does; those three are about running it.
 - `infra/` is the GCP deployment in Terraform. `make tf-check` runs exactly what
   CI runs. CI never applies: applies are by hand. Secret Manager *values* never
   appear in code, tfvars or state - only the secret resources are managed.
