@@ -1,4 +1,4 @@
-package importer
+package naming
 
 import "testing"
 
@@ -7,33 +7,33 @@ import "testing"
 // Synthetic titles in both languages — invented, as everything committed here
 // is. It is a guess and only ever applied to imported titles: a title this
 // service wrote carries the language the model reported.
-func TestLanguage(t *testing.T) {
+func TestGuessLanguage(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
 		title string
-		want  string
+		want  Language
 	}{
 		// Umlauts and ß settle it on their own.
-		{title: "Nach Hause über den Berg", want: "de"},
-		{title: "Große Runde bei Regen", want: "de"},
-		{title: "Müde nach der Arbeit", want: "de"},
+		{title: "Nach Hause über den Berg", want: German},
+		{title: "Große Runde bei Regen", want: German},
+		{title: "Müde nach der Arbeit", want: German},
 
 		// Function words carry the rest.
-		{title: "Gegenwind bis zum See", want: "de"},
-		{title: "Endlich wieder Sonne", want: "de"},
-		{title: "Zur Arbeit", want: "de"},
+		{title: "Gegenwind bis zum See", want: German},
+		{title: "Endlich wieder Sonne", want: German},
+		{title: "Zur Arbeit", want: German},
 
-		{title: "The long way home", want: "en"},
-		{title: "Into the hills with a headwind", want: "en"},
-		{title: "Every climb was a mistake", want: "en"},
-		{title: "Some laps in the rain", want: "en"},
+		{title: "The long way home", want: English},
+		{title: "Into the hills with a headwind", want: English},
+		{title: "Every climb was a mistake", want: English},
+		{title: "Some laps in the rain", want: English},
 	} {
 		t.Run(tc.title, func(t *testing.T) {
 			t.Parallel()
 
-			if got := Language(tc.title); got != tc.want {
-				t.Errorf("Language(%q) = %q, want %q", tc.title, got, tc.want)
+			if got := GuessLanguage(tc.title); got != tc.want {
+				t.Errorf("GuessLanguage(%q) = %q, want %q", tc.title, got, tc.want)
 			}
 		})
 	}
@@ -48,8 +48,8 @@ func TestLanguageDefaultsToGerman(t *testing.T) {
 	t.Parallel()
 
 	for _, title := range []string{"", "Watopia", "42", "🚴", "Musterbach"} {
-		if got := Language(title); got != "de" {
-			t.Errorf("Language(%q) = %q, want de", title, got)
+		if got := GuessLanguage(title); got != German {
+			t.Errorf("GuessLanguage(%q) = %q, want de", title, got)
 		}
 	}
 }
@@ -62,8 +62,8 @@ func TestLanguageIgnoresSharedWords(t *testing.T) {
 	// title carrying only those falls through to the default rather than
 	// being labelled by whichever list happened to list it.
 	for _, title := range []string{"Wind", "warm", "Wind und warm"} {
-		if got := Language(title); got != "de" {
-			t.Errorf("Language(%q) = %q; a shared word decided the answer", title, got)
+		if got := GuessLanguage(title); got != German {
+			t.Errorf("GuessLanguage(%q) = %q; a shared word decided the answer", title, got)
 		}
 	}
 }
@@ -89,8 +89,8 @@ func TestGermanIsDetectedRatherThanAssumed(t *testing.T) {
 		t.Run(tc.title, func(t *testing.T) {
 			t.Parallel()
 
-			if got := Language(tc.title); got != "de" {
-				t.Errorf("Language(%q) = %q, want de — %s", tc.title, got, tc.why)
+			if got := GuessLanguage(tc.title); got != German {
+				t.Errorf("GuessLanguage(%q) = %q, want de — %s", tc.title, got, tc.why)
 			}
 		})
 	}
@@ -107,8 +107,8 @@ func TestEnglishOutscoresTheDefault(t *testing.T) {
 		"The long way home",
 		"Every climb was a mistake",
 	} {
-		if got := Language(title); got != "en" {
-			t.Errorf("Language(%q) = %q, want en", title, got)
+		if got := GuessLanguage(title); got != English {
+			t.Errorf("GuessLanguage(%q) = %q, want en", title, got)
 		}
 	}
 }

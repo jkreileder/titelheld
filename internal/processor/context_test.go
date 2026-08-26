@@ -1517,3 +1517,250 @@ func TestThePromptIsNotLoggedByDefault(t *testing.T) {
 		t.Error("the named line carries no achievements counter")
 	}
 }
+
+// A title the athlete wrote is remembered, and the ride is left alone.
+//
+// A title live on the athlete's feed is one the model must not invent again,
+// so the skip records it under source human. The negative control is the whole
+// assertion: the human-titled ride is neither renamed nor prefixed, and its
+// title still reaches the next ride's RECENT. Remove the recorder and the
+// RECENT half fails.
+func TestHumanTitleIsRememberedAndNeverRenamed(t *testing.T) {
+	t.Parallel()
+
+	const (
+		humanTitle = "Fünf auf einen Streich"
+		humanID    = 701
+		nextID     = 702
+	)
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+	capture.response = `{"title":"Acht auf einen Streich","language":"de"}`
+
+	human := sportRide()
+	human.ID = humanID
+	human.Name = humanTitle
+	human.Description = "Xert Summary\nDifficulty: Tough\n"
+	human.StartDate = time.Date(2026, 8, 13, 14, 30, 0, 0, time.UTC)
+
+	next := sportRide()
+	next.ID = nextID
+
+	h.strava.byID = map[int64]strava.Activity{humanID: human, nextID: next}
+
+	// The human-titled ride is due first, so its title is in the history by
+	// the time the second ride's prompt is built.
+	for index, id := range []int64{humanID, nextID} {
+		if _, err := h.store.Enqueue(t.Context(), store.Pending{
+			AthleteID: 4242, ActivityID: id, Aspect: "create",
+			EnqueuedAt:   h.now.Add(-time.Hour),
+			ProcessAfter: h.now.Add(-time.Hour + time.Duration(index)*time.Minute),
+		}); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+	}
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Skipped != 1 || result.Named != 1 || result.Failed != 0 {
+		t.Errorf("result = %+v, want one skip and one naming", result)
+	}
+
+	// Never renamed, never prefixed: the only write is the other ride's.
+	writes := h.strava.writes()
+	if len(writes) != 1 || strings.Contains(writes[0].name, humanTitle) ||
+		strings.Contains(writes[0].description, humanTitle) {
+		t.Errorf("writes = %+v, want exactly one, for the default-titled ride", writes)
+	}
+
+	if got := h.strava.byID[humanID]; got.Name != humanTitle || got.Description != human.Description {
+		t.Errorf("the human-titled ride was touched: %+v", got)
+	}
+
+	// Remembered: in the named log as the athlete's, dated by the ride.
+	if title, named, err := h.store.Named(t.Context(), 4242, humanID); err != nil || !named || title != humanTitle {
+		t.Errorf("Named = %q, %v, %v; want the human title recorded", title, named, err)
+	}
+
+	history, err := h.store.RecentTitles(t.Context(), 4242, naming.RecentTitleLimit)
+	if err != nil {
+		t.Fatalf("RecentTitles: %v", err)
+	}
+
+	var row store.NamedTitle
+
+	for _, entry := range history {
+		if entry.ActivityID == humanID {
+			row = entry
+		}
+	}
+
+	if row.Source != store.SourceHuman || row.Language != string(naming.German) || !row.NamedAt.Equal(human.StartDate) {
+		t.Errorf("recorded row = %+v; want source human, language de, dated by the ride", row)
+	}
+
+	// And in RECENT for the ride that followed.
+	if recent := section(t, capture.prompt.User, "RECENT"); !strings.Contains(recent, humanTitle) {
+		t.Errorf("the athlete's own title did not reach RECENT:\n%s", capture.prompt.User)
+	}
+
+	// Final: the recorded ride is never reconsidered, even at a default title.
+	human.Name = "Afternoon Gravel Ride"
+	h.strava.byID[humanID] = human
+
+	if _, err := h.store.Enqueue(t.Context(), store.Pending{
+		AthleteID: 4242, ActivityID: humanID, Aspect: "update",
+		EnqueuedAt: h.now.Add(-time.Minute), ProcessAfter: h.now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("a ride recorded under a human title was renamed after all: %+v", writes)
+	}
+}
+
+// Only a sport ride's human title is recorded.
+//
+// A commute ActivityFix titled arrives commute-tagged and classifies as an
+// errand; a hand-titled ride below the sport thresholds is one this service
+// would never name. Recording either would fill RECENT with "Zur Arbeit" or
+// with rides the model is never asked about.
+func TestHumanTitlesOutsideTierFiveAreNotRecorded(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		mutate func(*strava.Activity)
+	}{
+		{"commute titled by ActivityFix", func(a *strava.Activity) {
+			a.Name = "Zur Arbeit"
+			a.Commute = true
+			a.Distance = 5400
+			a.MovingTime = 1100
+		}},
+		{"short ride the athlete titled", func(a *strava.Activity) {
+			a.Name = "Kurz um den Block"
+			a.Distance = 8000
+			a.MovingTime = 1500
+		}},
+		{"walk the athlete titled", func(a *strava.Activity) {
+			a.Name = "Spaziergang"
+			a.SportType = "Walk"
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, true, nil)
+			tc.mutate(&h.strava.activity)
+			h.enqueue(t, "create")
+
+			result, err := h.proc.Sweep(t.Context())
+			if err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+
+			if result.Skipped != 1 {
+				t.Errorf("result = %+v, want one skip", result)
+			}
+
+			if _, named, _ := h.store.Named(t.Context(), 4242, 777); named {
+				t.Errorf("%s was recorded in the named log", tc.name)
+			}
+		})
+	}
+}
+
+// A store that cannot record the title fails the activity, which leaves it
+// queued for the next sweep rather than dropping the title on the floor.
+func TestHumanTitleThatCannotBeRecordedStaysQueued(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Store = &faultyStore{Store: d.Store, markNamedErr: errors.New("firestore: unavailable")}
+	})
+	h.strava.activity.Name = "Fünf auf einen Streich"
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Failed != 1 {
+		t.Errorf("result = %+v, want one failure", result)
+	}
+
+	if n, _ := h.store.Len(t.Context()); n != 1 {
+		t.Errorf("%d entries queued, want the failed one kept", n)
+	}
+}
+
+// A tool's title, or one of this service's own templates typed by hand, is
+// not the athlete's and is not recorded — the same filter the import applies,
+// because a recorded row teaches style and is never revisited.
+func TestToolAndTemplateTitlesAreNotRecordedAsHuman(t *testing.T) {
+	t.Parallel()
+
+	for _, title := range []string{
+		"Zwift - Watopia Flat Route",
+		"Tough Endurance Ride - Xert",
+		"Zur Arbeit",
+	} {
+		t.Run(title, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, true, nil)
+			h.strava.activity.Name = title
+			h.enqueue(t, "create")
+
+			result, err := h.proc.Sweep(t.Context())
+			if err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+
+			if result.Skipped != 1 || len(h.strava.writes()) != 0 {
+				t.Errorf("result = %+v, writes = %v; want one skip and no write",
+					result, h.strava.writes())
+			}
+
+			if _, named, _ := h.store.Named(t.Context(), 4242, 777); named {
+				t.Errorf("%q was recorded as the athlete's own", title)
+			}
+		})
+	}
+}
+
+// Dry run records a human title all the same: the ride is final whatever the
+// write mode, and the observation window is when the athlete's titles should
+// start teaching.
+func TestHumanTitleIsRecordedInDryRun(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, false, nil)
+	h.strava.activity.Name = "Fünf auf einen Streich"
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if title, named, _ := h.store.Named(t.Context(), 4242, 777); !named || title != "Fünf auf einen Streich" {
+		t.Errorf("dry run did not record the athlete's title: %q, %v", title, named)
+	}
+
+	if n, _ := h.store.Len(t.Context()); n != 0 {
+		t.Errorf("%d entries queued; a recorded human title is final and leaves the queue", n)
+	}
+}

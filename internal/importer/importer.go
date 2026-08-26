@@ -21,6 +21,7 @@ import (
 
 	"github.com/jkreileder/titelheld/internal/classifier"
 	"github.com/jkreileder/titelheld/internal/logsafe"
+	"github.com/jkreileder/titelheld/internal/naming"
 	"github.com/jkreileder/titelheld/internal/store"
 	"github.com/jkreileder/titelheld/internal/strava"
 )
@@ -246,7 +247,7 @@ func (d Deps) importOne(
 		AthleteID:  d.AthleteID,
 		ActivityID: activity.ID,
 		Title:      activity.Name,
-		Language:   Language(activity.Name),
+		Language:   string(naming.GuessLanguage(activity.Name)),
 		Source:     store.SourceImported,
 		At:         activity.StartDate,
 	}); err != nil {

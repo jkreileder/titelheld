@@ -30,9 +30,10 @@ reordering one must not require migrating anything here. It is re-derivable only
 titles against a series, which is why it is remembered rather than recomputed — and losing it
 costs a repeated or skipped entry, not a wrong write.
 
-`named` also stores the language each title was written in and whether a model or a template
-produced it. Neither is re-derivable: re-reading an activity returns the title but never says
-which language was chosen for it, or which tier named it.
+`named` also stores the language each title was written in and its source: a model, a template,
+an import, or the athlete's own hand on a sport ride the service therefore left alone. Neither is
+re-derivable: re-reading an activity returns the title but never says which language was chosen
+for it, or who named it.
 
 Two collections genuinely have to survive, and they fail differently.
 

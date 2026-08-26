@@ -1,4 +1,4 @@
-package importer
+package naming
 
 import (
 	"strings"
@@ -42,20 +42,21 @@ var englishMarkers = map[string]struct{}{
 	"home": {}, "work": {}, "morning": {}, "evening": {}, "night": {},
 }
 
-// Language guesses the language a title was written in.
+// GuessLanguage guesses the language a title was written in.
 //
-// A heuristic, and only ever applied to imported titles: a title this service
-// wrote carries the language the model reported, which is authoritative and is
-// stored with it. There is nothing to recover that from on an old activity —
-// re-reading it from Strava returns the words and no more — so the choice is
-// between guessing and storing nothing.
+// A heuristic, for titles this service did not write: an imported one, or one
+// the athlete wrote by hand on a ride the skip gate declined. A title this
+// service wrote carries the language the model reported, which is
+// authoritative and is stored with it. There is nothing to recover that from
+// on somebody else's title — re-reading the activity from Strava returns the
+// words and no more — so the choice is between guessing and storing nothing.
 //
 // It guesses, and defaults to German, because that is this athlete's language
 // for the utility rides that make up most of a history and because a wrong
 // label costs a slightly less well-matched few-shot example rather than a
 // wrong title. "wind", "warm" and a few others are deliberately in both lists
 // and cancel out.
-func Language(title string) string {
+func GuessLanguage(title string) Language {
 	german, english := 0, 0
 
 	for _, r := range title {
@@ -79,8 +80,8 @@ func Language(title string) string {
 	}
 
 	if english > german {
-		return "en"
+		return English
 	}
 
-	return "de"
+	return German
 }

@@ -715,6 +715,14 @@ func TestClassify(t *testing.T) {
 			if got.Reason != tt.wantReason {
 				t.Errorf("Reason = %q, want %q", got.Reason, tt.wantReason)
 			}
+
+			// The flag is the gate's and nobody else's: set exactly when the
+			// skip is for an unrecognized title, never for a tier-1 sport, a
+			// Whoop session or a kept Zwift ride.
+			wantHuman := tt.wantReason == reasonNotDefaultTitle
+			if got.HumanTitled != wantHuman {
+				t.Errorf("HumanTitled = %v, want %v", got.HumanTitled, wantHuman)
+			}
 		})
 	}
 }

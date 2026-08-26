@@ -1,6 +1,9 @@
 package classifier
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // The titles this service writes without asking a model.
 //
@@ -58,4 +61,27 @@ func (c Config) TemplateTitles() []string {
 	titles = append(titles, c.CommuteTitle(DirectionToWork), c.CommuteTitle(DirectionToHome))
 
 	return append(titles, defaultErrandTitles...)
+}
+
+// Fragments that mark a title as another tool's output.
+//
+// Deliberately not part of [MachineTitles]. That set answers a different
+// question — may this service overwrite the title? — and a Zwift ride's answer
+// is no: the shipped virtual-ride policy keeps what Zwift wrote. This answers
+// "did a person write it?", which the title history asks of every ride it
+// records, whether by import or by the skip gate.
+const (
+	zwiftTitlePrefix = "Zwift - "
+	xertTitleSuffix  = " - Xert"
+)
+
+// IsToolTitle reports whether a title is a tool's output rather than a
+// person's: Zwift names a virtual ride after its route, and Xert marks what
+// it touched. Both are the tool talking whatever the sport type says — a Zwift
+// ride recorded as a plain Ride carries the same title. Trimmed, because Strava
+// keeps whatever trailing space a title was saved with.
+func IsToolTitle(title string) bool {
+	title = strings.TrimSpace(title)
+
+	return strings.HasPrefix(title, zwiftTitlePrefix) || strings.HasSuffix(title, xertTitleSuffix)
 }

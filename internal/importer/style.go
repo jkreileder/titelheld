@@ -16,19 +16,6 @@ import (
 // says nothing about how this athlete names a ride.
 var importableSportTypes = []string{"Ride", "GravelRide"}
 
-// Fragments that mark a title as another tool's output.
-//
-// Deliberately not part of [classifier.MachineTitles]. That set answers a
-// different question — may this service overwrite the title? — and a Zwift
-// ride's answer is no: the shipped virtual-ride policy keeps what Zwift wrote.
-// Adding these there would make thousands of virtual rides renamable as a side
-// effect of tidying an import, which is the kind of change that looks like
-// housekeeping and is not.
-const (
-	zwiftTitlePrefix = "Zwift - "
-	xertTitleSuffix  = " - Xert"
-)
-
 // importableSport reports whether an activity's titles belong in the history.
 func importableSport(sportType string) bool {
 	return slices.Contains(importableSportTypes, strings.TrimSpace(sportType))
@@ -47,10 +34,7 @@ func (d Deps) notTheAthletesStyle(title string) bool {
 		return true
 	}
 
-	// Zwift names a virtual ride after the route it was ridden on, and Xert
-	// marks what it touched. Both are the tool talking, whatever the sport
-	// type says: a Zwift ride recorded as a plain Ride carries the same title.
-	if strings.HasPrefix(title, zwiftTitlePrefix) || strings.HasSuffix(title, xertTitleSuffix) {
+	if classifier.IsToolTitle(title) {
 		return true
 	}
 

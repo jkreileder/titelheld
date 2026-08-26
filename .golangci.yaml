@@ -38,8 +38,10 @@ linters:
       # Stringer methods on Tier, Action and Direction legitimately share these
       # short labels; folding them into one constant would couple three
       # unrelated enums together.
+      # "wind" is a myWindsock fact label and a word in both of the language
+      # heuristic's marker lists, where being in both is the point.
       ignore-string-values:
-        - '^(none|skip|unknown)$'
+        - '^(none|skip|unknown|wind)$'
     revive:
       rules:
         - name: exported
