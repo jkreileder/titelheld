@@ -26,6 +26,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -270,6 +272,10 @@ const (
 	// the deliberate trade: dry run is a review window someone is watching,
 	// the scheduler is paused until they open it, and a budget alert bounds
 	// the bill.
+	//
+	// One piece of state is written in dry run regardless: a human title the
+	// skip gate declines is recorded, because that ride is final whatever the
+	// write mode — see [Processor.recordHumanTitle].
 	outcomeDryRun
 )
 
@@ -333,22 +339,38 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 // recordHumanTitle remembers a title the athlete wrote, when that is why a
 // sport ride was skipped.
 //
-// The skip gate declines any title it does not recognize, and until now it
-// declined without a trace: a title the athlete typed onto a ride was invisible
-// to RECENT, so the model could invent it a second time. Recorded under
-// [store.SourceHuman] it joins the no-repeat list and the few-shot examples.
+// The skip gate declines any title it does not recognize. A title the athlete
+// typed onto a ride is one the model must not invent a second time, and the
+// best style data there is; recorded under [store.SourceHuman] it joins the
+// no-repeat list and the few-shot examples.
 //
-// Sport rides only. A commute titled by ActivityFix arrives commute-tagged and
-// classifies as an errand, and a ride below the sport thresholds is one this
-// service would never name — neither title is a repeat to avoid on a sport
-// ride, and a working week of "Zur Arbeit" would crowd the list. The tier is
-// what keeps them out; no title pattern has to be maintained.
+// Sport rides only — a decision, not a derivation. A commute titled by
+// ActivityFix arrives commute-tagged and classifies as an errand, and a ride
+// below the sport thresholds is one this service would never name; neither
+// title belongs in a sport ride's RECENT, and a working week of "Zur Arbeit"
+// would crowd the list. A hand-titled Zwift ride under the indoor naming mode
+// is skipped the same way and not recorded; that mode has no configuration
+// path yet, and the tier check is where to widen this if it gets one.
+//
+// Not every unrecognized title is a person's. A tool's title on an outdoor
+// ride — Zwift's route name on a ride uploaded as a plain Ride, Xert's suffix
+// on a pattern the machine-title list does not name — and this service's own
+// commute template typed by hand on a long ride are left unrecorded: the same
+// filter the import applies, because a row recorded here teaches style and is
+// never revisited.
 //
 // The row is the dedup record, so a ride recorded here is final: this service
 // is the last writer and never overwrites a person, and a title later reverted
-// to a Strava default is not reconsidered. Nothing is sent to Strava — this
-// runs on the skip path, which never reaches the writer, so neither the title
-// nor the attribution line can follow.
+// to a Strava default is not reconsidered. The title recorded is the one the
+// sweep saw; an edit the athlete makes afterwards is not tracked, because the
+// update event it causes is dropped at intake as already named. Nothing is
+// sent to Strava — this runs on the skip path, which never reaches the writer,
+// so neither the title nor the attribution line can follow.
+//
+// It records in dry run too. Dry run withholds writes to Strava and leaves
+// activities queued so that turning writes on still names them; a human title
+// is neither — the ride is final whatever the write mode — and the observation
+// window is exactly when the athlete's own titles should start teaching.
 //
 // Dated by the ride rather than the sweep, as an import is: with the scheduler
 // paused a sweep runs days late, and RECENT is ordered by this date.
@@ -360,6 +382,13 @@ func (p *Processor) recordHumanTitle(
 	decision classifier.Decision, logger *slog.Logger,
 ) error {
 	if !decision.HumanTitled || decision.Tier != classifier.TierSportRide {
+		return nil
+	}
+
+	if reason := notAPersonsTitle(activity.Name, p.deps.Classifier.TemplateTitles()); reason != "" {
+		logger.Info("not recording the title; it is not the athlete's own",
+			"title", logsafe.String(activity.Name), "reason", reason)
+
 		return nil
 	}
 
@@ -383,6 +412,25 @@ func (p *Processor) recordHumanTitle(
 		"title", logsafe.String(activity.Name))
 
 	return nil
+}
+
+// notAPersonsTitle says why an unrecognized title is still not the athlete's,
+// or nothing when it is. The gate has already ruled out Strava's defaults and
+// the configured machine titles; this is the rest of the import's filter.
+func notAPersonsTitle(title string, templates []string) string {
+	title = strings.TrimSpace(title)
+
+	if classifier.IsToolTitle(title) {
+		return "a tool's title"
+	}
+
+	if slices.ContainsFunc(templates, func(template string) bool {
+		return strings.TrimSpace(template) == title
+	}) {
+		return "one of this service's own templates"
+	}
+
+	return ""
 }
 
 // toClassifierActivity converts what Strava returned into what the classifier

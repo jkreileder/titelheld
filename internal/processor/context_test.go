@@ -1520,12 +1520,11 @@ func TestThePromptIsNotLoggedByDefault(t *testing.T) {
 
 // A title the athlete wrote is remembered, and the ride is left alone.
 //
-// The skip gate used to decline a human-titled ride without a trace, so a
-// title live on the athlete's feed was invisible to RECENT and the model could
-// invent it a second time. Now the skip records it under source human. The
-// negative control is the whole assertion: the human-titled ride is neither
-// renamed nor prefixed, and its title still reaches the next ride's RECENT.
-// Remove the recorder and the RECENT half fails.
+// A title live on the athlete's feed is one the model must not invent again,
+// so the skip records it under source human. The negative control is the whole
+// assertion: the human-titled ride is neither renamed nor prefixed, and its
+// title still reaches the next ride's RECENT. Remove the recorder and the
+// RECENT half fails.
 func TestHumanTitleIsRememberedAndNeverRenamed(t *testing.T) {
 	t.Parallel()
 
@@ -1689,7 +1688,7 @@ func TestHumanTitleThatCannotBeRecordedStaysQueued(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t, true, func(d *Deps) {
-		d.Store = failingMarkNamed{Store: d.Store}
+		d.Store = &faultyStore{Store: d.Store, markNamedErr: errors.New("firestore: unavailable")}
 	})
 	h.strava.activity.Name = "Fünf auf einen Streich"
 	h.enqueue(t, "create")
@@ -1708,11 +1707,60 @@ func TestHumanTitleThatCannotBeRecordedStaysQueued(t *testing.T) {
 	}
 }
 
-// failingMarkNamed refuses every write to the named log.
-type failingMarkNamed struct {
-	store.Store
+// A tool's title, or one of this service's own templates typed by hand, is
+// not the athlete's and is not recorded — the same filter the import applies,
+// because a recorded row teaches style and is never revisited.
+func TestToolAndTemplateTitlesAreNotRecordedAsHuman(t *testing.T) {
+	t.Parallel()
+
+	for _, title := range []string{
+		"Zwift - Watopia Flat Route",
+		"Tough Endurance Ride - Xert",
+		"Zur Arbeit",
+	} {
+		t.Run(title, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, true, nil)
+			h.strava.activity.Name = title
+			h.enqueue(t, "create")
+
+			result, err := h.proc.Sweep(t.Context())
+			if err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+
+			if result.Skipped != 1 || len(h.strava.writes()) != 0 {
+				t.Errorf("result = %+v, writes = %v; want one skip and no write",
+					result, h.strava.writes())
+			}
+
+			if _, named, _ := h.store.Named(t.Context(), 4242, 777); named {
+				t.Errorf("%q was recorded as the athlete's own", title)
+			}
+		})
+	}
 }
 
-func (failingMarkNamed) MarkNamed(context.Context, store.Naming) error {
-	return errors.New("firestore: unavailable")
+// Dry run records a human title all the same: the ride is final whatever the
+// write mode, and the observation window is when the athlete's titles should
+// start teaching.
+func TestHumanTitleIsRecordedInDryRun(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, false, nil)
+	h.strava.activity.Name = "Fünf auf einen Streich"
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if title, named, _ := h.store.Named(t.Context(), 4242, 777); !named || title != "Fünf auf einen Streich" {
+		t.Errorf("dry run did not record the athlete's title: %q, %v", title, named)
+	}
+
+	if n, _ := h.store.Len(t.Context()); n != 0 {
+		t.Errorf("%d entries queued; a recorded human title is final and leaves the queue", n)
+	}
 }
