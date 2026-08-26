@@ -79,6 +79,14 @@
   that run would write. None of this widens `MachineTitles` — that set decides
   what may be *overwritten*, and a Zwift ride keeps its title.
 
+- `cmd/titelheld-config/` seeds the athlete's `config` document from the
+  shipped default profile, reserving what `-reserve` names, and refuses if
+  one exists - the document is authoritative from its first write and is
+  edited in place after that. Store-only: no Strava client, no token
+  refresh, and `config.LoadStore` reads nothing but where Firestore is. The
+  wiring is `app.SeedConfig`; the read-back goes through
+  `processor.FranchisesFromStored`, the sweep's own conversion.
+
 - `internal/naming/` builds the prompt, validates what comes back, and holds
   the two LLM implementations behind one interface it defines itself. No HTTP
   client of its own beyond the providers, no Firestore: a caller assembles a
