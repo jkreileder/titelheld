@@ -10,6 +10,85 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.0] – 2026-08-26
+
+The voice release: the last build before writes are enabled, aimed at one thing the dry runs showed.
+The prompt carried the records, the callback material and the examples, and the model wrote route
+descriptions anyway — twice.
+Strength and salience are the levers, and the style loop needed the athlete in it.
+
+- **A human title is remembered, not merely skipped.**
+  The skip gate dropped a hand-titled ride without a trace, so a title live on the athlete's feed
+  was invisible to the no-repeat list and could be invented a second time.
+  A sport ride declined for an unrecognized title is now recorded in the named log as source
+  `human`, dated by the ride: it joins `RECENT`, and — see the next item — the examples.
+  Nothing is written to Strava for it, structurally: the recorder runs on the skip path, which never
+  reaches the writer, so neither the title nor the attribution line can follow.
+  The row is also the dedup record, which makes the ride final; this service is the last writer and
+  never overwrites a person.
+  Sport rides only — a commute that ActivityFix titled classifies as an errand and stays out — and
+  only a person's title: a tool's title on an outdoor ride and a template typed by hand are left
+  unrecorded, by the same filter the import applies.
+  The recorder runs in dry run too, because the ride is final whatever the write mode.
+- **The athlete's own titles teach the few-shot examples.**
+  Eligibility becomes `service` ∪ `human`; `imported` stays barred.
+  Admitting only the service's own titles closed the style loop on itself — cold-start blandness
+  would have become its own teacher — while the imported rule's target was a decade of shorthand
+  that teaches a model to answer with a town name.
+  Run an import *after* the first sweep that reaches a hand-titled ride, not before: the sweep files
+  it as `human`, an import that gets there first files it as `imported`.
+- **A derived example shows the cause of its title.**
+  Its situation now carries the salient numbers — personal records, other achievements, and the
+  difficulty parsed from the description — so *Fünf auf einen Streich* beside *5 PRs* is a
+  demonstrated move rather than an arbitrary association.
+  Numbers only; a segment name never enters an example.
+  A situation is longer than a title on purpose and now has its own bound, so those numbers reach
+  the model instead of being cut at the title limit.
+- **The prompt asks for callbacks and data-driven angles instead of allowing them.**
+  `RECENT` is offered as material to build on — continue a series, answer a title, escalate a number
+  with the arithmetic spelled out — and a callback that fits is to be preferred.
+  Achievements become a candidate angle on equal footing with geography, and a route description is
+  named the fallback.
+  The ride carries its own counts — `Personal records`, `Other achievements` — from the same rule
+  that counts them for an example, so a title that escalates a number escalates the figure and not
+  the length of the capped `ACHIEVEMENTS` list.
+  `RECENT` and `EXAMPLES` are declared data, never instructions, like the other untrusted blocks.
+  Every data-never-instructions guard is kept word for word, and a test now pins them.
+  A seventh synthetic example demonstrates an escalation callback with the cause on both sides of
+  the arrow — which exposed a test that had counted the six synthetic examples and called it
+  bounding.
+- **The configuration document is seeded, not typed.**
+  `cmd/titelheld-config` creates the athlete's `config` document from the shipped default profile
+  with every `-reserve` entry added, reads it back through the sweep's own conversion, and refuses
+  if a document exists.
+  Its first use reserves *Son of the Pink Panther* alongside *Trail*: with exactly one offerable
+  film left, the automation had a franchise in name only, and the containment check can verify
+  *used* but never *used well*.
+  The series therefore offers nothing until the athlete un-reserves or extends it, and the document
+  is authoritative from now on.
+
+- **A third LLM provider, `openrouter`, for an A/B of narrators on the same ride.**
+  An OpenAI-compatible chat-completions client against `LLM_BASE_URL` — OpenRouter's root by
+  default, https required because the key travels in a header to that host — with the model in
+  `LLM_MODEL` and the key in `LLM_API_KEY`: one key, many narrators.
+  A voice miss is diagnosed by re-sweeping the queued ride under another model, which is a
+  Terraform variable change and not a release.
+  Same title contract, same validator, no provider-side JSON mode.
+  The shipped model, `anthropic/claude-haiku-4.5`, was verified against OpenRouter's live catalog
+  on 2026-08-26.
+  Dormant until asked for, and tested as such: with `LLM_PROVIDER` unset the resolution is Vertex
+  and no key is read; `openrouter` without a key refuses at startup, naming both variables.
+
+### Not in this release
+
+- **Route repeats.**
+  Still specified and unbuilt.
+- **The rest of the configuration.**
+  Tiers, geofences, banned words and language preferences are still the defaults shipped in code.
+- **The provider A/B itself.**
+  The provider ships; `LLM_API_KEY` stays unset until an A/B is actually needed, and no secret
+  value exists.
+
 ## [v0.6.0] – 2026-08-23
 
 What an external review found, and what the tests could not have.
@@ -323,6 +402,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.0
 [v0.6.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.6.0
 [v0.5.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.5.0
 [v0.4.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.4.0
