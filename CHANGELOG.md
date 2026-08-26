@@ -67,14 +67,27 @@ Strength and salience are the levers, and the style loop needed the athlete in i
   The series therefore offers nothing until the athlete un-reserves or extends it, and the document
   is authoritative from now on.
 
+- **A third LLM provider, `openrouter`, for an A/B of narrators on the same ride.**
+  An OpenAI-compatible chat-completions client against `LLM_BASE_URL` — OpenRouter's root by
+  default, https required because the key travels in a header to that host — with the model in
+  `LLM_MODEL` and the key in `LLM_API_KEY`: one key, many narrators.
+  A voice miss is diagnosed by re-sweeping the queued ride under another model, which is a
+  Terraform variable change and not a release.
+  Same title contract, same validator, no provider-side JSON mode.
+  The shipped model, `anthropic/claude-haiku-4.5`, was verified against OpenRouter's live catalog
+  on 2026-08-26.
+  Dormant until asked for, and tested as such: with `LLM_PROVIDER` unset the resolution is Vertex
+  and no key is read; `openrouter` without a key refuses at startup, naming both variables.
+
 ### Not in this release
 
 - **Route repeats.**
   Still specified and unbuilt.
 - **The rest of the configuration.**
   Tiers, geofences, banned words and language preferences are still the defaults shipped in code.
-- **The provider A/B.**
-  `LLM_API_KEY` stays unset; that is the diagnostic after this release if the voice still misses.
+- **The provider A/B itself.**
+  The provider ships; `LLM_API_KEY` stays unset until an A/B is actually needed, and no secret
+  value exists.
 
 ## [v0.6.0] – 2026-08-23
 
