@@ -80,11 +80,13 @@ resource "google_cloud_run_v2_service" "this" {
         cpu_idle = true
       }
 
-      # Dry run stays on in the deployed service. Flipping it is a deliberate,
-      # separate act.
+      # Writes are live. A release onto this service needs the dated
+      # WRITES_ACKNOWLEDGED repository variable, or the gate refuses to deploy;
+      # the rollback is this value back to "1" and the scheduler's paused flag
+      # back to true, applied.
       env {
         name  = "DRY_RUN"
-        value = "1"
+        value = "0"
       }
 
       # The scaling ceiling above, told to the container that depends on it.
