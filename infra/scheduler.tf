@@ -12,11 +12,11 @@ resource "google_cloud_scheduler_job" "sweep" {
 
   attempt_deadline = "320s"
 
-  # Paused. The handler exists, so this is no longer waiting on code - it is
-  # unpaused by hand, deliberately, after the naming pipeline has been reviewed
-  # end to end. Until then nothing fires, which is what keeps a service whose
-  # min_instance_count is 0 genuinely idle, and the budget honest.
-  paused = true
+  # Running: the sweep fires on the schedule above and names what is due. This
+  # flag and DRY_RUN in run.tf move together - paused with writes off keeps a
+  # service whose min_instance_count is 0 genuinely idle and lets the queue
+  # accumulate for review, which is the rollback.
+  paused = false
 
   retry_config {
     retry_count = 1
