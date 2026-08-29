@@ -6,26 +6,26 @@ everything that should stay boring untouched.
 
 *Titelheld* is German for the character a piece is named after: the one in the title role.
 
-> **Status: under construction.** The naming pipeline is complete end to end — classifier,
-> configuration, both stores, the Strava client with OAuth, the webhook and its delay queue,
-> geocoding, the prompt builder and LLM providers, and the sweep that drains the queue and
-> writes the title. The infrastructure is applied and the service is deployed.
+> **Status: live.** The naming pipeline is complete end to end — classifier, configuration, both
+> stores, the Strava client with OAuth, the webhook and its delay queue, geocoding, the prompt
+> builder and LLM providers, and the sweep that drains the queue and writes the title. The
+> infrastructure is applied, the service is deployed, and it is naming real activities.
 >
 > Not built: the athlete's tiers, geofences, banned words and language preferences, which still
 > ship as defaults in code and belong in the same configuration document franchises now live in;
 > and route repeats — see [What the prompt carries](#what-the-prompt-carries).
 >
-> **The scheduler is paused.** Nothing fires the sweep until it is unpaused by hand, which is
-> deliberate: the naming pipeline is reviewed end to end before it runs unattended.
+> **The service names activities for real.** `DRY_RUN` is `0` on the deployed service and Cloud
+> Scheduler fires the sweep every five minutes, so an activity that clears the classifier is
+> renamed without anyone asking. Dry run remains the default and the zero value everywhere in the
+> code — writes are on because Terraform says so, and nothing else can say it; see
+> [Writes and dry run](#writes-and-dry-run) and
+> [Turning writes off again](#turning-writes-off-again).
 >
-> **The push subscription is live**, so real events accumulate in the queue — see
-> [The push subscription](docs/infrastructure.md#the-push-subscription). Nothing drains them
-> while the scheduler is paused; that queue is the material the dry-run review reads. With
-> `FIRESTORE_PROJECT` unset the service runs on the in-memory store and forgets the OAuth token
-> on restart; see [docs/firestore-iam.md](docs/firestore-iam.md).
->
-> **Nothing can write to Strava yet.** Dry run is the default and the zero value throughout;
-> see [Writes and dry run](#writes-and-dry-run).
+> **The push subscription is live**, so real events reach the queue as they happen — see
+> [The push subscription](docs/infrastructure.md#the-push-subscription), and the sweep drains it
+> on the next tick. With `FIRESTORE_PROJECT` unset the service runs on the in-memory store and
+> forgets the OAuth token on restart; see [docs/firestore-iam.md](docs/firestore-iam.md).
 
 - [What it does](#what-it-does)
 - [Repository layout](#repository-layout)
@@ -50,6 +50,7 @@ everything that should stay boring untouched.
   - [What the tag push does](#what-the-tag-push-does)
   - [A draft means it is running](#a-draft-means-it-is-running)
   - [Versions do not turn on writes](#versions-do-not-turn-on-writes)
+  - [Turning writes off again](#turning-writes-off-again)
 - [Attribution](#attribution)
 - [License](#license)
 
@@ -501,6 +502,23 @@ already walked past. Reserving is not deleting: the rotation steps over a reserv
 un-reserving it later puts it back, behind the position if the rotation has already moved past
 it.
 
+**Not being offered is not the same as not being written.** The prompt invites a title to take
+color from the bike's name, and a series named after that bike shares its vocabulary, so a model
+can arrive at a film's exact wording with no franchise offered at all — which is how a reserved
+entry once reached a real activity. Reserving governs the offer; a check after the model has
+spoken governs the title.
+
+That check refuses any title claiming an entry of the series the ride matched, except the one
+being offered. Reserved entries, entries already spent, and entries the rotation has not reached
+yet are all covered, because claiming any of them spends a film the position will not record. The
+comparison is the one that decides spending, so casing, punctuation and an adaptation are all the
+entry. A refused title fails the activity and leaves it queued; the next sweep asks again.
+
+The motif itself stays free. An entry that says no more than the bike's name is matched by
+equality rather than containment, so a title merely themed on the bike is legal and only the
+named work is not: for a bike called *Pink Panther*, "The Pink Panther in the Wind" passes and
+"The Pink Panther" does not.
+
 ### What is stored
 
 Firestore stores a single integer per athlete per franchise: the index the rotation resumes at.
@@ -741,9 +759,9 @@ workflow.
 
 ### Versions do not turn on writes
 
-`DRY_RUN` is Terraform's to set, and it is set to `1`. There is no version number that means
-*now write to Strava*: turning writes on is a deliberate infrastructure change, never a side
-effect of shipping.
+`DRY_RUN` is Terraform's to set, and it is currently `0`. There is no version number that means
+*now write to Strava*: what a release changes is the image, and the write mode belongs to an
+infrastructure change nobody makes by shipping.
 
 The release checks that **before** deploying, not after. It reads `DRY_RUN` off the service the
 deploy will land on and refuses to deploy at all if writes are enabled — which works because
@@ -785,6 +803,25 @@ Acknowledgement covers writes being **on**, not any reading at all. `DRY_RUN` mu
 `1` or `0`; anything else — empty, a shape gcloud changed, a field that moved — fails the release
 whether or not the variable is set. Otherwise setting it once would turn the gate off
 permanently, including for the failure the gate exists to catch.
+
+### Turning writes off again
+
+Writes go off the way they came on: through Terraform, by hand, as a reviewed change. It is a
+procedure and not an emergency lever.
+
+Set `DRY_RUN` back to `"1"` and the scheduler's `paused` back to `true` in [`infra/`](infra), plan
+to a file, read the plan — two in-place updates, the service's environment and the scheduler's
+paused flag — and apply that file. Writes are off from the next revision, the scheduler stops
+firing, and the queue starts accumulating again, unnamed, for whoever reviews it next. The pull
+request that records the change follows the apply, because applies are by hand and the working
+tree is the source of truth for what was applied.
+
+Nothing downstream needs undoing for the service's sake: the named log holds only what was
+actually written, and an activity left queued is named later or not at all. What may need undoing
+is on Strava, and it is a person's judgement rather than a rollback step — a title already
+written stays written until somebody changes it, and changing it does not reach back into the
+named log, because the update event it causes is dropped at intake as already named. A row that
+has to change is changed where it lives.
 
 ## Attribution
 
