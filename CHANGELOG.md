@@ -10,6 +10,59 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.1] – 2026-08-29
+
+The first incident under real writes, and what it exposed.
+On 2026-08-29 the service wrote **"Son of the Pink Panther"** to a real activity — a film the
+athlete had reserved, on a ride the rotation had deliberately offered nothing for.
+Nothing malfunctioned: reserving governs what is *offered*, and nothing had ever governed what a
+model may *produce*.
+
+- **A title that claims a franchise entry is refused.**
+  The gear-name motif rule invites a title to take color from the bike, and a series named after
+  that bike shares its vocabulary, so a model reaches a film's exact wording with no franchise
+  offered at all — three of three calls on the incident ride reached for the series.
+  Ask and enforce, as everywhere else: the prompt now says the athlete's franchise entries are
+  theirs to spend, and a check after the model has spoken refuses the title that ignores it.
+  Every entry of the matched series is guarded except the one being offered — reserved, already
+  spent, and *future* entries alike, because claiming one spends a film the position will not
+  record and the rotation would offer again.
+  The comparison is the one that decides spending, so casing, punctuation and an adaptation are
+  all the entry.
+  An entry that says no more than the bike's name is matched by equality instead, so a title
+  merely themed on the bike stays legal and only the named work is not.
+  A refusal fails the activity and leaves it queued; the next sweep draws again.
+- **The first JSON value is decoded, not the whole response.**
+  On two of three calls the model returned well-formed JSON followed by one stray closing brace,
+  and both were rejected as "response is not JSON" — ten minutes and two model calls spent on a
+  byte that says nothing about the title inside the object.
+  Worse than the cost: each rejection re-rolls, so the title that lands is the first that parses,
+  which is a sampling loop nobody chose.
+  The schema is still enforced strictly; the leniency is about where the object ends.
+  Trailing text is reported and logged rather than discarded, because a provider that trails bytes
+  is drifting.
+- **`LOG_PROMPT` is its own flag, on by default.**
+  It used to follow the dry-run state, so prompt logging switched itself off at the moment writes
+  came on — and the first incident under writes had to be diagnosed from counters, which say how
+  much the prompt carried and never what it said.
+  It no longer consults `DRY_RUN`; `LOG_PROMPT=0` turns it off.
+  Terraform sets nothing, so this needs no infrastructure change.
+- **The public docs describe the live state.**
+  The scheduler fires every five minutes and `DRY_RUN` is `0`, so the README's paused-and-dry-run
+  callouts, copilot-instructions and `configuration.md` say what binds now — including that the
+  paused scheduler is gone from the reasons `max-instances=1` is tolerable in practice.
+  Turning writes off again is written down where turning them on is, and says what a rollback does
+  not undo.
+
+No infrastructure change ships with this release. The Cloud Scheduler job was paused by hand
+during the incident, which is drift from Terraform's `paused = false`; unpausing by hand after the
+deploy is what resolves it.
+
+Releasing onto a service with writes enabled still needs `WRITES_ACKNOWLEDGED`, re-dated to the
+day of the release: the gate reads `DRY_RUN` off the running service and refuses without a value
+inside the window. See
+[Versions do not turn on writes](README.md#versions-do-not-turn-on-writes).
+
 ## [v0.7.0] – 2026-08-26
 
 The voice release: the last build before writes are enabled, aimed at one thing the dry runs showed.
@@ -402,6 +455,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.1]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.1
 [v0.7.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.0
 [v0.6.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.6.0
 [v0.5.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.5.0
