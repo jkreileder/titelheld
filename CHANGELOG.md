@@ -12,7 +12,7 @@ step rather than a habit.
 
 ## [v0.7.1] – 2026-08-29
 
-The first incident under real writes, and the two mechanisms it exposed.
+The first incident under real writes, and what it exposed.
 On 2026-08-29 the service wrote **"Son of the Pink Panther"** to a real activity — a film the
 athlete had reserved, on a ride the rotation had deliberately offered nothing for.
 Nothing malfunctioned: reserving governs what is *offered*, and nothing had ever governed what a
@@ -58,8 +58,9 @@ No infrastructure change ships with this release. The Cloud Scheduler job was pa
 during the incident, which is drift from Terraform's `paused = false`; unpausing by hand after the
 deploy is what resolves it.
 
-Releasing onto a service with writes enabled still needs `WRITES_ACKNOWLEDGED` dated within the
-release window — the gate reads `DRY_RUN` off the running service and refuses without it. See
+Releasing onto a service with writes enabled still needs `WRITES_ACKNOWLEDGED`, re-dated to the
+day of the release: the gate reads `DRY_RUN` off the running service and refuses without a value
+inside the window. See
 [Versions do not turn on writes](README.md#versions-do-not-turn-on-writes).
 
 ## [v0.7.0] – 2026-08-26
