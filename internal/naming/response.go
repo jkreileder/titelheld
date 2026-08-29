@@ -18,13 +18,11 @@ type response struct {
 //
 // The contract is one JSON object and nothing else, and providers deviate from
 // it in two shapes that carry no meaning. One is a markdown fence around the
-// whole body. The other is trailing bytes after a complete object — Gemini
-// returned well-formed JSON followed by a stray "}" on two of three calls on
-// 2026-08-29, and each rejection failed the activity, left it queued and spent
-// another five minutes and another call before a response happened to parse.
-// Strictness about a byte after the object protects nothing, and the re-roll it
-// forces changes which title lands: the title written is the first that parses,
-// which is a sampling loop nobody chose.
+// whole body. The other is trailing bytes after a complete object — a stray
+// closing brace, a second object, a sentence. Strictness about either protects
+// nothing: what follows a complete object says nothing about the title inside
+// it, and rejecting the response costs a re-roll that decides which title
+// lands, since the one written is the first that parses.
 //
 // So the first JSON value is decoded and the schema is enforced strictly after
 // it — the leniency is about where the object ends, never about what is in it.

@@ -276,9 +276,9 @@ func (p *Processor) ask(
 	}
 
 	// The response carried the title and then kept going. Accepted rather
-	// than refused — a byte after the object says nothing about the title
-	// inside it — but recorded, because a provider that does this drifts and
-	// the log is where that shows.
+	// than refused — what follows a complete object says nothing about the
+	// title inside it — but recorded, because a provider that does this is
+	// drifting and the log is where that shows.
 	if trailing != "" {
 		logger.Warn("the model response carried trailing text after the JSON",
 			"provider", p.deps.Provider.Name(), "trailing", logsafe.String(trailing))

@@ -50,7 +50,7 @@ func TestLiveVertex(t *testing.T) {
 
 	t.Logf("raw response: %q", raw)
 
-	title, err := NewValidator(DefaultBannedWords()).ParseAndValidate(raw)
+	title, _, err := NewValidator(DefaultBannedWords()).ParseAndValidate(raw)
 	if err != nil {
 		t.Fatalf("the model's response did not survive validation: %v", err)
 	}
