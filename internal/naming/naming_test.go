@@ -1534,6 +1534,64 @@ func TestBrokenJSONStillFails(t *testing.T) {
 	}
 }
 
+// A fence does not hide what follows it.
+//
+// Unwrapping a fence is the one deviation forgiven silently. A model that
+// closes the fence and keeps talking has deviated twice, and the second one is
+// the caller's warning to make — so the suffix has to survive unfencing.
+func TestTextAfterAClosingFenceIsReported(t *testing.T) {
+	t.Parallel()
+
+	raw := "```json\n{\"title\":\"Gegenwind bis Musterstadt\",\"language\":\"de\"}\n```\nI picked that because the headwind stands out."
+
+	title, trailing, err := NewValidator(nil).ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("ParseAndValidate: %v", err)
+	}
+
+	if title.Text != "Gegenwind bis Musterstadt" {
+		t.Errorf("title = %q", title.Text)
+	}
+
+	if want := "I picked that because the headwind stands out."; trailing != want {
+		t.Errorf("trailing = %q, want %q", trailing, want)
+	}
+}
+
+// Both places a fenced response can trail are reported together.
+func TestTrailingInsideAndAfterAFenceAreBothReported(t *testing.T) {
+	t.Parallel()
+
+	raw := "```\n{\"title\":\"Sauber\",\"language\":\"de\"}\n}\n```\nnachher"
+
+	_, trailing, err := NewValidator(nil).ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("ParseAndValidate: %v", err)
+	}
+
+	for _, want := range []string{"}", "nachher"} {
+		if !strings.Contains(trailing, want) {
+			t.Errorf("trailing %q does not carry %q", trailing, want)
+		}
+	}
+}
+
+// A clean fenced response is still clean.
+func TestAFencedResponseWithNothingAfterItIsNotReported(t *testing.T) {
+	t.Parallel()
+
+	raw := "```json\n{\"title\":\"Sauber\",\"language\":\"de\"}\n```"
+
+	_, trailing, err := NewValidator(nil).ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("ParseAndValidate: %v", err)
+	}
+
+	if trailing != "" {
+		t.Errorf("trailing = %q, want none", trailing)
+	}
+}
+
 // A clean response reports no trailing text, so the caller's log line is
 // evidence of a real deviation rather than noise on every naming.
 func TestACleanResponseHasNoTrailingText(t *testing.T) {

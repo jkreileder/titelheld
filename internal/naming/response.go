@@ -30,7 +30,7 @@ type response struct {
 // travels in the error so a caller can log what came back rather than a guess
 // about it.
 func (v Validator) ParseAndValidate(raw string) (Title, string, error) {
-	body := unfence(strings.TrimSpace(raw))
+	body, afterFence := unfence(strings.TrimSpace(raw))
 
 	if body == "" {
 		return Title{}, "", ErrNoTitle
@@ -45,23 +45,34 @@ func (v Validator) ParseAndValidate(raw string) (Title, string, error) {
 
 	title, err := v.Validate(parsed.Title, Language(strings.ToLower(strings.TrimSpace(parsed.Language))))
 
-	return title, trailing(body, decoder), err
+	return title, trailing(body, decoder, afterFence), err
 }
 
-// trailing is whatever followed the decoded value, trimmed and bounded.
+// trailing is everything the response carried besides the JSON value.
 //
-// Taken by offset rather than by reading the decoder out. InputOffset is where
-// the value ended; the decoder's own buffer holds only as much of the
-// remainder as it happened to read ahead, so asking it would truncate the
-// evidence at a chunk boundary.
-func trailing(body string, decoder *json.Decoder) string {
-	return truncate(strings.TrimSpace(body[decoder.InputOffset():]))
+// Two disjoint regions, because a fenced response has two places to put
+// something: after the value but inside the fence, and after the fence itself.
+// Both are the same signal — a provider that keeps talking past the object —
+// and dropping either would make the caller's warning a partial truth.
+//
+// The part inside the fence is taken by offset rather than by reading the
+// decoder out: InputOffset is where the value ended, while the decoder's own
+// buffer holds only as much as it happened to read ahead.
+func trailing(body string, decoder *json.Decoder, afterFence string) string {
+	inside := strings.TrimSpace(body[decoder.InputOffset():])
+
+	return truncate(strings.TrimSpace(inside + "\n" + afterFence))
 }
 
-// unfence strips a markdown code fence if the whole body is wrapped in one.
-func unfence(body string) string {
+// unfence strips a markdown code fence, and hands back whatever followed it.
+//
+// The suffix is returned rather than discarded because it is evidence: a model
+// that closes the fence and then explains itself has deviated from the
+// contract twice, and only one of those is unambiguous enough to forgive
+// silently.
+func unfence(body string) (inside, after string) {
 	if !strings.HasPrefix(body, "```") {
-		return body
+		return body, ""
 	}
 
 	body = strings.TrimPrefix(body, "```")
@@ -73,11 +84,11 @@ func unfence(body string) string {
 		}
 	}
 
-	if before, _, ok := strings.CutLast(body, "```"); ok {
-		body = before
+	if before, rest, ok := strings.CutLast(body, "```"); ok {
+		return strings.TrimSpace(before), strings.TrimSpace(rest)
 	}
 
-	return strings.TrimSpace(body)
+	return strings.TrimSpace(body), ""
 }
 
 // truncate bounds what an error carries. A provider that returns a page of
