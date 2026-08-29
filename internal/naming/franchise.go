@@ -86,6 +86,105 @@ func SameEntry(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
+// Guarded is the set of franchise entries a title may not claim, together with
+// the gear name that stays free.
+//
+// Reserving an entry governs what the rotation *offers*. It says nothing about
+// what a model produces, and the two are not the same: the prompt invites a
+// title to take color from the bike's name, and a series named after that bike
+// shares its vocabulary, so a model can reach a film's exact wording with no
+// franchise offered at all. This is the enforcing half of ask-and-enforce —
+// the prompt asks, and this refuses.
+type Guarded struct {
+	entries  []string
+	gearName string
+}
+
+// Guard is the set a title for one ride may not claim: every entry of the
+// series except the one being offered and the ones no title carrying that
+// offer could be told apart from.
+//
+// Every entry, and not only the reserved or already-spent ones. A title
+// claiming an entry the rotation has not reached yet spends a film that will
+// still be offered later, which is the same duplicate a reserved entry
+// produces — the position moves on evidence, and there is no evidence in a
+// title nobody asked for.
+//
+// The exclusion is wider than the offered entry itself because entries nest.
+// A series holding "Die Hard" and "Die Hard 2" offers the second, the model
+// writes "Die Hard 2 nach Musterdorf", and that title contains the first — so
+// a guard that dropped only the exact offer would refuse the very title the
+// prompt asked for. On the first call, which is where the guard applies, that
+// refusal fails the activity and leaves it queued, and the next sweep asks the
+// same question and gets the same answer: one paid call every five minutes,
+// forever, with nothing in the log but "claims". So an entry the offer itself
+// would claim is not guarded, by the same test that does the claiming.
+//
+// A motif entry is excluded from that widening in turn, because it is matched
+// by equality: "Son of the Pink Panther" contains the bike's name, but it is
+// not "The Pink Panther" and offering it must not release that film.
+func (f Franchise) Guard(offered string) Guarded {
+	guard := Guarded{gearName: f.GearName}
+
+	for _, title := range f.Titles {
+		if offered != "" && guard.claims(offered, title) {
+			continue
+		}
+
+		guard.entries = append(guard.entries, title)
+	}
+
+	return guard
+}
+
+// Claimed reports the entry a title claims, and whether it claims one.
+//
+// The test is [UsesEntry], the same evidence advance-on-use accepts as
+// spending an entry: a title that would spend one is refused by exactly the
+// rule that would have spent it. Its normalization comes along, so casing,
+// punctuation and an adaptation — "Son of the Pink Panther nach Musterdorf" —
+// are all the entry, and none of them smuggles it through.
+//
+// One kind of entry is matched by equality instead: one whose core is nothing
+// more than the franchise's gear name. The prompt invites a title to take
+// color from the bike, and a series named after the bike would make
+// containment forbid every title that takes the invitation. "The Pink Panther
+// in the Wind" is a themed title and stays legal; "The Pink Panther" is a film
+// and does not. The motif stays free, the films do not — and a bare bike name
+// falls on the film's side, because nothing distinguishes the two.
+func (g Guarded) Claimed(title string) (string, bool) {
+	for _, entry := range g.entries {
+		if g.claims(title, entry) {
+			return entry, true
+		}
+	}
+
+	return "", false
+}
+
+func (g Guarded) claims(title, entry string) bool {
+	if !g.isMotif(entry) {
+		return UsesEntry(title, entry)
+	}
+
+	normalized := normalizeForMatch(title)
+
+	return normalized != "" &&
+		(normalized == normalizeForMatch(entry) || normalized == entryCore(entry))
+}
+
+// isMotif reports whether an entry says nothing more than the bike's name.
+//
+// Both sides go through [entryCore], not one through it and one around it: a
+// bike called "The Pink Panther" would otherwise never match the entry of the
+// same name, the exception would not apply, and containment would forbid every
+// title that took the motif rule's invitation.
+func (g Guarded) isMotif(entry string) bool {
+	gear := entryCore(g.gearName)
+
+	return gear != "" && entryCore(entry) == gear
+}
+
 // Applies reports whether a ride belongs to this franchise.
 func (f Franchise) Applies(sportType, gearName string) bool {
 	// Both sides trimmed: the configured name is typed into a document, and a

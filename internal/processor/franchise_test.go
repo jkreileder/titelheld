@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jkreileder/titelheld/internal/naming"
 	"github.com/jkreileder/titelheld/internal/store"
@@ -637,5 +638,170 @@ func TestFranchisesRoundTripThroughTheStoredShape(t *testing.T) {
 	stored := FranchisesToStored(profile)
 	if len(stored[0].Reserved) != 1 || stored[0].Reserved[0] != "Rise of the Silver Surfer" {
 		t.Errorf("the stored shape lost the reserved entries: %v", stored[0].Reserved)
+	}
+}
+
+// allReserved is the athlete's series as it stood on 2026-08-29: every entry
+// reserved, so the rotation offers nothing and every entry is theirs to spend.
+func allReserved() []naming.Franchise {
+	shipped := naming.DefaultProfile()[0]
+
+	return []naming.Franchise{{
+		Name:       shipped.Name,
+		SportTypes: shipped.SportTypes,
+		GearName:   shipped.GearName,
+		Titles:     slices.Clone(shipped.Titles),
+		Reserved:   slices.Clone(shipped.Titles),
+	}}
+}
+
+// A title claiming a reserved entry is refused, and the ride stays queued.
+//
+// The incident of 2026-08-29, reproduced. The franchise offered nothing —
+// every entry was the athlete's — and the model reached the exact wording of
+// one anyway, from the gear-name motif the prompt invites. Reserving governs
+// what is offered; only this refusal governs what is written.
+func TestATitleClaimingAReservedEntryIsRefused(t *testing.T) {
+	t.Parallel()
+
+	h := franchiseRide(t, true)
+	h.proc.deps.Franchises = allReserved()
+
+	provider := scripted(h, step{response: title("Son of the Pink Panther")})
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Failed != 1 || result.Named != 0 {
+		t.Errorf("sweep named %d, failed %d; want 0 named and 1 failed",
+			result.Named, result.Failed)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 0 {
+		t.Fatalf("%d PUTs, want none: %q was never this service's to spend",
+			len(writes), writes[0].name)
+	}
+
+	// Left queued, exactly as a malformed response leaves it: the next sweep
+	// draws again.
+	pending, err := h.store.Due(t.Context(), h.now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+
+	if len(pending) != 1 {
+		t.Errorf("%d queued, want the ride left for the next sweep", len(pending))
+	}
+
+	if provider.calls != 1 {
+		t.Errorf("the model was called %d times, want 1", provider.calls)
+	}
+}
+
+// The next draw gets written, and a title merely themed on the bike is one.
+//
+// The other half of the refusal: the motif rule stays usable. "The Pink
+// Panther in the Wind" names no film, and refusing it too would have made the
+// fix a ban on the bike's own name.
+func TestAThemedTitleIsWrittenAfterAClaimIsRefused(t *testing.T) {
+	t.Parallel()
+
+	h := franchiseRide(t, true)
+	h.proc.deps.Franchises = allReserved()
+
+	const themed = "The Pink Panther in the Wind"
+
+	scripted(h, step{response: title("Son of the Pink Panther")})
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("first Sweep: %v", err)
+	}
+
+	scripted(h, step{response: title(themed)})
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("second Sweep: %v", err)
+	}
+
+	if result.Named != 1 {
+		t.Fatalf("second sweep named %d, want 1", result.Named)
+	}
+
+	writes := h.strava.writes()
+	if len(writes) != 1 {
+		t.Fatalf("%d PUTs, want 1", len(writes))
+	}
+
+	if writes[0].name != themed {
+		t.Errorf("name is %q, want %q", writes[0].name, themed)
+	}
+}
+
+// The third, franchise-free call cannot spend the entry either.
+//
+// After two declined offers the ride is named from a prompt carrying no
+// FRANCHISE block, and that title is written with the position left where it
+// was. A title claiming the offered entry there would spend a film and see it
+// offered again on the next ride, so the guard covers that call too — and the
+// title that gets written is the one from the earlier call, which is already
+// known not to claim anything.
+func TestThePlainCallCannotClaimTheOfferedEntry(t *testing.T) {
+	t.Parallel()
+
+	h := franchiseRide(t, true)
+	entry, _ := shippedEntry(t)
+
+	const themed = "Der Panther im Morgengrauen"
+
+	provider := scripted(h,
+		step{response: title(themed)},
+		step{response: title(themed)},
+		step{response: title(entry + " am Musterbach")},
+	)
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if provider.calls != 3 {
+		t.Fatalf("the model was called %d times, want 3", provider.calls)
+	}
+
+	// The third prompt is the one with no FRANCHISE block — the call whose
+	// title the guard had to cover.
+	if offersFranchise(provider.prompts[2]) {
+		t.Error("the third prompt still offers the franchise")
+	}
+
+	writes := h.strava.writes()
+	if len(writes) != 1 {
+		t.Fatalf("%d PUTs, want 1", len(writes))
+	}
+
+	// The claiming title never reaches Strava; the title that does is the one
+	// that ignored the series, kept for exactly this case.
+	if writes[0].name != themed {
+		t.Errorf("name is %q, want %q", writes[0].name, themed)
+	}
+
+	if naming.UsesEntry(writes[0].name, entry) {
+		t.Errorf("the written title %q uses %q with the position unmoved", writes[0].name, entry)
+	}
+
+	position, err := h.store.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 0 {
+		t.Errorf("position = %d, want 0", position)
 	}
 }
