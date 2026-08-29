@@ -101,7 +101,8 @@ type Guarded struct {
 }
 
 // Guard is the set a title for one ride may not claim: every entry of the
-// series except the one being offered.
+// series except the one being offered and the ones no title carrying that
+// offer could be told apart from.
 //
 // Every entry, and not only the reserved or already-spent ones. A title
 // claiming an entry the rotation has not reached yet spends a film that will
@@ -109,20 +110,31 @@ type Guarded struct {
 // produces — the position moves on evidence, and there is no evidence in a
 // title nobody asked for.
 //
-// The offered entry is excluded because the prompt has just asked for it.
-// Refusing it would decline every franchise title there is.
+// The exclusion is wider than the offered entry itself because entries nest.
+// A series holding "Die Hard" and "Die Hard 2" offers the second, the model
+// writes "Die Hard 2 nach Musterdorf", and that title contains the first — so
+// a guard that dropped only the exact offer would refuse the very title the
+// prompt asked for. On the first call, which is where the guard applies, that
+// refusal fails the activity and leaves it queued, and the next sweep asks the
+// same question and gets the same answer: one paid call every five minutes,
+// forever, with nothing in the log but "claims". So an entry the offer itself
+// would claim is not guarded, by the same test that does the claiming.
+//
+// A motif entry is excluded from that widening in turn, because it is matched
+// by equality: "Son of the Pink Panther" contains the bike's name, but it is
+// not "The Pink Panther" and offering it must not release that film.
 func (f Franchise) Guard(offered string) Guarded {
-	entries := make([]string, 0, len(f.Titles))
+	guard := Guarded{gearName: f.GearName}
 
 	for _, title := range f.Titles {
-		if offered != "" && SameEntry(title, offered) {
+		if offered != "" && guard.claims(offered, title) {
 			continue
 		}
 
-		entries = append(entries, title)
+		guard.entries = append(guard.entries, title)
 	}
 
-	return Guarded{entries: entries, gearName: f.GearName}
+	return guard
 }
 
 // Claimed reports the entry a title claims, and whether it claims one.

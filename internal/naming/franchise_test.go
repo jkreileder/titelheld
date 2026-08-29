@@ -506,6 +506,68 @@ func TestGuardedCoversSpentAndFutureEntries(t *testing.T) {
 	}
 }
 
+// A series whose entries nest still offers its own entry.
+//
+// The trap this closes: "Die Hard 2" is offered, the model carries it into a
+// title, and that title contains "Die Hard" — so a guard holding the shorter
+// entry refuses the title the prompt asked for. The guard applies on the first
+// call, so the refusal fails the activity, the sweep requeues it, and the next
+// sweep asks the same question: one paid call every five minutes with nothing
+// in the log but "claims". The shipped profile escapes this only because its
+// one nesting entry happens to be the motif.
+func TestAnOfferReleasesTheEntriesItCannotBeToldApartFrom(t *testing.T) {
+	t.Parallel()
+
+	// No gear name, so nothing here is the motif and every entry is matched
+	// by containment.
+	series := Franchise{
+		Name:   "musterreihe",
+		Titles: []string{"Musterhart", "Musterhart 2", "Musterhart mit Anlauf"},
+	}
+
+	guard := series.Guard("Musterhart 2")
+
+	if entry, claimed := guard.Claimed("Musterhart 2 nach Musterdorf"); claimed {
+		t.Errorf("the offered entry's own title was refused as %q", entry)
+	}
+
+	// Releasing the shorter entry does not release the rest of the series.
+	if _, claimed := guard.Claimed("Musterhart mit Anlauf nach Musterdorf"); !claimed {
+		t.Error("a sibling entry was accepted while another was offered")
+	}
+
+	// And offering the shorter one still guards the longer: a title claiming
+	// it would spend an entry the rotation has yet to reach.
+	if _, claimed := series.Guard("Musterhart").Claimed("Musterhart 2 im Regen"); !claimed {
+		t.Error("a future entry was accepted because a prefix of it was offered")
+	}
+}
+
+// Offering a later film does not release the motif entry.
+//
+// The widening above is by containment, and every Panther title contains the
+// bike's name. The motif entry is matched by equality, so it stays guarded:
+// offering "Son of the Pink Panther" must not make "The Pink Panther" legal.
+func TestOfferingAnEntryDoesNotReleaseTheMotifEntry(t *testing.T) {
+	t.Parallel()
+
+	series := Franchise{
+		Name:     "muster-panther",
+		GearName: "Musterpanther",
+		Titles:   []string{"The Musterpanther", "Son of the Musterpanther"},
+	}
+
+	guard := series.Guard("Son of the Musterpanther")
+
+	if _, claimed := guard.Claimed("The Musterpanther"); !claimed {
+		t.Error("the motif entry was released by offering a later one")
+	}
+
+	if entry, claimed := guard.Claimed("Son of the Musterpanther nach Musterdorf"); claimed {
+		t.Errorf("the offered entry's own title was refused as %q", entry)
+	}
+}
+
 // A gear name carrying an article still exempts its own entry.
 //
 // The motif exception compares cores on both sides. Comparing a normalized
