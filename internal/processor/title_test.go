@@ -492,7 +492,7 @@ func TestATrailingBraceIsNamedAndReported(t *testing.T) {
 		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
 	})
 
-	h.provider.response = "{\n  \"title\": \"Gegenwind bis Pocking\",\n  \"language\": \"de\"\n}\n}"
+	h.provider.response = "{\n  \"title\": \"Gegenwind bis Musterstadt\",\n  \"language\": \"de\"\n}\n}"
 
 	h.enqueue(t, "create")
 
@@ -510,7 +510,7 @@ func TestATrailingBraceIsNamedAndReported(t *testing.T) {
 		t.Fatalf("%d PUTs, want 1", len(writes))
 	}
 
-	if writes[0].name != "Gegenwind bis Pocking" {
+	if writes[0].name != "Gegenwind bis Musterstadt" {
 		t.Errorf("name is %q", writes[0].name)
 	}
 
@@ -536,7 +536,7 @@ func TestACleanResponseIsNotReportedAsTrailing(t *testing.T) {
 		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
 	})
 
-	h.provider.response = title("Gegenwind bis Pocking")
+	h.provider.response = title("Gegenwind bis Musterstadt")
 
 	h.enqueue(t, "create")
 
