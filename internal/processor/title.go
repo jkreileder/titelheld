@@ -138,7 +138,7 @@ func (p *Processor) llmTitle(
 		"facts", len(ride.Facts),
 		"recent_titles", len(gathered.Context.RecentTitles),
 		"examples", len(gathered.Context.Examples),
-		"franchise_offered", gathered.Franchise != "",
+		"franchise_offered", gathered.Context.FranchiseNext != "",
 		"franchise_used", used)
 
 	named := titled{
@@ -151,7 +151,7 @@ func (p *Processor) llmTitle(
 	// out of the single lookup that resolved it rather than resolved again
 	// here — and only when the title that came back actually used the entry.
 	if used {
-		named.Franchise = gathered.Franchise
+		named.Franchise = gathered.Series.Name
 		named.FranchiseEntry = gathered.Context.FranchiseNext
 		named.FranchiseIndex = gathered.FranchiseIndex
 	}
@@ -183,12 +183,19 @@ const maxFranchiseOffers = 2
 func (p *Processor) complete(
 	ctx context.Context, ride naming.Ride, gathered gathered, logger *slog.Logger,
 ) (naming.Title, bool, error) {
-	title, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), logger)
+	entry := gathered.Context.FranchiseNext
+
+	// Every entry of the ride's series except the one being offered. The
+	// prompt asks the motif to leave the athlete's films alone; this is what
+	// makes the request binding, and it binds the very first call, before any
+	// series has been offered at all.
+	guard := gathered.Series.Guard(entry)
+
+	title, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), guard, logger)
 	if err != nil {
 		return naming.Title{}, false, err
 	}
 
-	entry := gathered.Context.FranchiseNext
 	if entry == "" {
 		return title, false, nil
 	}
@@ -203,17 +210,17 @@ func (p *Processor) complete(
 		}
 
 		logger.Info("the title did not use the franchise entry; offering it once more",
-			"franchise", logsafe.String(gathered.Franchise),
+			"franchise", logsafe.String(gathered.Series.Name),
 			"entry", logsafe.String(entry),
 			"title", logsafe.String(title.Text))
 
-		retry, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), logger)
+		retry, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), guard, logger)
 		if err != nil {
 			// The title in hand is a good one that simply ignored the series.
 			// Losing it because a second call failed would leave the ride at
 			// its Strava default over a franchise, which is garnish.
 			logger.Warn("the second franchise offer failed; naming without the series",
-				"franchise", logsafe.String(gathered.Franchise), "error", err)
+				"franchise", logsafe.String(gathered.Series.Name), "error", err)
 
 			return title, false, nil
 		}
@@ -222,7 +229,7 @@ func (p *Processor) complete(
 	}
 
 	logger.Info("the franchise entry went unused twice; naming without the series",
-		"franchise", logsafe.String(gathered.Franchise),
+		"franchise", logsafe.String(gathered.Series.Name),
 		"entry", logsafe.String(entry))
 
 	// Named again with no FRANCHISE block, so the title that gets written is
@@ -230,7 +237,11 @@ func (p *Processor) complete(
 	plain := gathered.Context
 	plain.FranchiseNext = ""
 
-	plainTitle, err := p.ask(ctx, naming.BuildPrompt(ride, plain), logger)
+	// Nothing is offered any more, so the entry that was offered joins the
+	// guard. Without that, a title from this call could still claim it — and
+	// this call's title is written with the position left where it was, so
+	// the entry would be spent on the feed and offered again on the next ride.
+	plainTitle, err := p.ask(ctx, naming.BuildPrompt(ride, plain), gathered.Series.Guard(""), logger)
 	if err != nil {
 		logger.Warn("naming without the series failed; keeping the title that ignored it",
 			"error", err)
@@ -242,8 +253,14 @@ func (p *Processor) complete(
 }
 
 // ask makes one provider call and validates what comes back.
+//
+// The guard is the second half of it. Reserving a franchise entry governs what
+// the rotation offers and nothing about what a model writes, so a title that
+// claims an entry is refused here — the same place a banned word or an
+// over-long title is refused, and with the same consequence: the activity
+// fails and stays queued, so the next sweep draws again.
 func (p *Processor) ask(
-	ctx context.Context, prompt naming.Prompt, logger *slog.Logger,
+	ctx context.Context, prompt naming.Prompt, guard naming.Guarded, logger *slog.Logger,
 ) (naming.Title, error) {
 	p.logPrompt(prompt, logger)
 
@@ -256,6 +273,13 @@ func (p *Processor) ask(
 	if err != nil {
 		return naming.Title{}, fmt.Errorf(
 			"llm %s returned an unusable title: %w", p.deps.Provider.Name(), err)
+	}
+
+	if entry, claimed := guard.Claimed(title.Text); claimed {
+		return naming.Title{}, fmt.Errorf(
+			"llm %s returned an unusable title: %w: %q claims %q",
+			p.deps.Provider.Name(), naming.ErrTitleClaimsEntry,
+			logsafe.String(title.Text), logsafe.String(entry))
 	}
 
 	return title, nil

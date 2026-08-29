@@ -354,3 +354,163 @@ func TestNothingOfferableIsImpossibleToUse(t *testing.T) {
 		}
 	}
 }
+
+// The guard refuses a title that claims an entry, and lets a themed one
+// through. The incident these cases come from: a ride on the "Pink Panther"
+// gear was offered nothing, because every entry was reserved, and was named
+// "Son of the Pink Panther" anyway.
+func TestGuardedClaimed(t *testing.T) {
+	t.Parallel()
+
+	// The athlete's production series as it stood: six films, all six
+	// reserved, nothing offerable.
+	panther := Franchise{
+		Name:     "pink-panther",
+		GearName: "Pink Panther",
+		Titles: []string{
+			"The Pink Panther",
+			"A Shot in the Dark",
+			"Inspector Clouseau",
+			"The Return of the Pink Panther",
+			"Trail of the Pink Panther",
+			"Son of the Pink Panther",
+		},
+		Reserved: []string{
+			"The Pink Panther",
+			"A Shot in the Dark",
+			"Inspector Clouseau",
+			"The Return of the Pink Panther",
+			"Trail of the Pink Panther",
+			"Son of the Pink Panther",
+		},
+	}
+
+	for _, tt := range []struct {
+		name    string
+		title   string
+		offered string
+		want    string
+	}{
+		{
+			name:  "the entry that was written",
+			title: "Son of the Pink Panther",
+			want:  "Son of the Pink Panther",
+		},
+		{
+			// The 2026-08-24 dry-run mashup. Equality would let it through,
+			// and it spends the film just as surely.
+			name:  "an adaptation of an entry",
+			title: "Son of the Pink Panther nach Bayerbach",
+			want:  "Son of the Pink Panther",
+		},
+		{
+			name:  "casing and punctuation do not smuggle one through",
+			title: "son of the pink panther!",
+			want:  "Son of the Pink Panther",
+		},
+		{
+			// The motif rule invites exactly this, and it names no film.
+			name:  "themed but distinct",
+			title: "The Pink Panther in the Wind",
+			want:  "",
+		},
+		{
+			name:  "themed in German",
+			title: "Sonstwas für den Pink Panther",
+			want:  "",
+		},
+		{
+			// Nothing distinguishes the bare bike name from the 1963 film.
+			name:  "the bike name alone reads as the film",
+			title: "The Pink Panther",
+			want:  "The Pink Panther",
+		},
+		{
+			name:  "an ordinary title",
+			title: "Gegenwind bis Pocking",
+			want:  "",
+		},
+		{
+			// What the prompt just asked for cannot be refused.
+			name:    "the offered entry is not guarded",
+			title:   "Inspector Clouseau im Nebel",
+			offered: "Inspector Clouseau",
+			want:    "",
+		},
+		{
+			// Offering one entry does not release the others.
+			name:    "another entry is still guarded while one is offered",
+			title:   "Trail of the Pink Panther",
+			offered: "Inspector Clouseau",
+			want:    "Trail of the Pink Panther",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entry, claimed := panther.Guard(tt.offered).Claimed(tt.title)
+
+			if tt.want == "" {
+				if claimed {
+					t.Fatalf("Claimed(%q) = %q, want no claim", tt.title, entry)
+				}
+
+				return
+			}
+
+			if !claimed {
+				t.Fatalf("Claimed(%q) = no claim, want %q", tt.title, tt.want)
+			}
+
+			if entry != tt.want {
+				t.Errorf("Claimed(%q) = %q, want %q", tt.title, entry, tt.want)
+			}
+		})
+	}
+}
+
+// A spent entry is guarded, and so is one the rotation has not reached. Both
+// are the incident's shape: a title claiming either spends a film with the
+// position left where it was, so the entry is handed out again later.
+func TestGuardedCoversSpentAndFutureEntries(t *testing.T) {
+	t.Parallel()
+
+	// No gear name, so no entry is the motif and every one is matched by
+	// containment.
+	series := Franchise{
+		Name:   "musterserie",
+		Titles: []string{"Musterfilm Eins", "Musterfilm Zwei", "Musterfilm Drei"},
+	}
+
+	// The rotation is at the second entry: the first is spent, the third has
+	// not been reached.
+	offered, _, ok := series.Next(1)
+	if !ok || offered != "Musterfilm Zwei" {
+		t.Fatalf("Next(1) = %q, %v", offered, ok)
+	}
+
+	guard := series.Guard(offered)
+
+	for _, tt := range []struct{ name, title, want string }{
+		{"spent", "Musterfilm Eins am Abend", "Musterfilm Eins"},
+		{"future", "Musterfilm Drei im Regen", "Musterfilm Drei"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entry, claimed := guard.Claimed(tt.title)
+			if !claimed || entry != tt.want {
+				t.Errorf("Claimed(%q) = %q, %v, want %q, true", tt.title, entry, claimed, tt.want)
+			}
+		})
+	}
+}
+
+// A ride that matched no franchise has an empty guard, which refuses nothing.
+func TestZeroGuardRefusesNothing(t *testing.T) {
+	t.Parallel()
+
+	if entry, claimed := (Franchise{}).Guard("").Claimed("Son of the Pink Panther"); claimed {
+		t.Errorf("the zero franchise claimed %q", entry)
+	}
+}

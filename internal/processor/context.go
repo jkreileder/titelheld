@@ -36,9 +36,11 @@ const maxExampleFailures = 2
 type gathered struct {
 	Context naming.Context
 
-	// Franchise is the series the offered entry came from. Empty when none
-	// applied, which is also when Context.FranchiseNext is empty.
-	Franchise string
+	// Series is the franchise the ride matched. Zero when none did — and
+	// kept whole, and kept even when it had nothing to offer, because the
+	// guard that refuses a title claiming an entry needs every entry of the
+	// series and not only the offerable ones.
+	Series naming.Franchise
 
 	// FranchiseIndex is where in that series the offered entry sits. The
 	// position is advanced past this index and not by one step, because the
@@ -71,12 +73,12 @@ func (p *Processor) promptContext(
 		Examples:     p.examplesFrom(ctx, history, logger),
 	}
 
-	next, index, franchise := p.franchiseNext(ctx, athleteID, ride, logger)
+	next, index, series := p.franchiseNext(ctx, athleteID, ride, logger)
 	promptContext.FranchiseNext = next
 
 	return gathered{
 		Context:        promptContext,
-		Franchise:      franchise,
+		Series:         series,
 		FranchiseIndex: index,
 	}, nil
 }
@@ -107,21 +109,27 @@ func titlesOf(history []store.NamedTitle) []string {
 }
 
 // franchiseNext offers the next entry of a series the ride qualifies for, and
-// names the series and the index it came from.
+// names the series it came from and the index it sits at.
 //
 // All three together, so a caller cannot advance a different series than the
 // one the prompt was shown, or a different place in it.
+//
+// The series comes back whenever one matched, including on every path that
+// offers nothing. An offer and a guard are different questions: the offer asks
+// what this ride may be handed, and the guard asks which entries it may not
+// take for itself — and a series with nothing left to offer is exactly the
+// case where every entry it holds is somebody else's to spend.
 //
 // Never blocking. A gear lookup that fails, a franchise that has run out, an
 // athlete with no franchises: all of them mean this ride is named normally,
 // which is the same outcome as the feature being off.
 func (p *Processor) franchiseNext(
 	ctx context.Context, athleteID int64, ride naming.Ride, logger *slog.Logger,
-) (next string, index int, franchiseName string) {
+) (next string, index int, series naming.Franchise) {
 	franchise, ok := naming.FranchiseFor(
 		p.franchises(ctx, athleteID, logger), ride.SportType, ride.GearName)
 	if !ok {
-		return "", 0, ""
+		return "", 0, naming.Franchise{}
 	}
 
 	position, err := p.deps.Store.FranchisePosition(ctx, athleteID, franchise.Name)
@@ -129,7 +137,11 @@ func (p *Processor) franchiseNext(
 		logger.Warn("could not read the franchise position; naming without it",
 			"franchise", logsafe.String(franchise.Name), "error", err)
 
-		return "", 0, ""
+		// Nothing is offered, so the guard forbids the whole series. Not
+		// knowing how far along the athlete is means not knowing which
+		// entries are still theirs, and the safe reading of that is all of
+		// them.
+		return "", 0, franchise
 	}
 
 	next, index, ok = franchise.Next(position)
@@ -140,7 +152,7 @@ func (p *Processor) franchiseNext(
 		logger.Info("no franchise entry to offer; naming normally",
 			"franchise", logsafe.String(franchise.Name), "position", position)
 
-		return "", 0, ""
+		return "", 0, franchise
 	}
 
 	// An entry that cannot be a title is not offered, and the position stays
@@ -155,10 +167,10 @@ func (p *Processor) franchiseNext(
 			"entry", logsafe.String(next),
 			"limit_runes", naming.MaxTitleRunes)
 
-		return "", 0, ""
+		return "", 0, franchise
 	}
 
-	return next, index, franchise.Name
+	return next, index, franchise
 }
 
 // franchises are the athlete's configured series.

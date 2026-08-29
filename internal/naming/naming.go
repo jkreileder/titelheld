@@ -96,6 +96,11 @@ var (
 	// ErrBadLanguage means the model reported a language this service does
 	// not produce.
 	ErrBadLanguage = errors.New("naming: unsupported language")
+
+	// ErrTitleClaimsEntry means the title claims a franchise entry that is
+	// not this service's to spend: one the athlete reserved, one the rotation
+	// has already spent, or one it has yet to offer.
+	ErrTitleClaimsEntry = errors.New("naming: title claims a franchise entry")
 )
 
 // DefaultBannedWords is the list the spec ships with. It is configuration, not
