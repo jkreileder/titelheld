@@ -58,6 +58,10 @@ No infrastructure change ships with this release. The Cloud Scheduler job was pa
 during the incident, which is drift from Terraform's `paused = false`; unpausing by hand after the
 deploy is what resolves it.
 
+Releasing onto a service with writes enabled still needs `WRITES_ACKNOWLEDGED` dated within the
+release window — the gate reads `DRY_RUN` off the running service and refuses without it. See
+[Versions do not turn on writes](README.md#versions-do-not-turn-on-writes).
+
 ## [v0.7.0] – 2026-08-26
 
 The voice release: the last build before writes are enabled, aimed at one thing the dry runs showed.
