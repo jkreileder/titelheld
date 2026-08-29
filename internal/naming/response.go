@@ -3,6 +3,7 @@ package naming
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -13,26 +14,58 @@ type response struct {
 }
 
 // ParseAndValidate turns a raw model response into a title, or explains why it
-// is not one.
+// is not one. It also reports whatever followed the JSON, so a caller can log
+// what the model actually sent.
 //
-// Every provider is asked for bare JSON, and each is capable of returning it
-// wrapped in a markdown fence anyway. Unwrapping that is not leniency about the
-// contract — it is recognizing the one deviation that is unambiguous. Anything
-// else fails, and the raw text travels in the error so a caller can log what
-// actually came back rather than a guess about it.
-func (v Validator) ParseAndValidate(raw string) (Title, error) {
+// The contract is one JSON object and nothing else, and providers deviate from
+// it in two shapes that carry no meaning. One is a markdown fence around the
+// whole body. The other is trailing bytes after a complete object — Gemini
+// returned well-formed JSON followed by a stray "}" on two of three calls on
+// 2026-08-29, and each rejection failed the activity, left it queued and spent
+// another five minutes and another call before a response happened to parse.
+// Strictness about a byte after the object protects nothing, and the re-roll it
+// forces changes which title lands: the title written is the first that parses,
+// which is a sampling loop nobody chose.
+//
+// So the first JSON value is decoded and the schema is enforced strictly after
+// it — the leniency is about where the object ends, never about what is in it.
+// Anything that is not a JSON object at all still fails, and the raw text
+// travels in the error so a caller can log what came back rather than a guess
+// about it.
+func (v Validator) ParseAndValidate(raw string) (Title, string, error) {
 	body := unfence(strings.TrimSpace(raw))
 
 	if body == "" {
-		return Title{}, ErrNoTitle
+		return Title{}, "", ErrNoTitle
 	}
 
 	var parsed response
-	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
-		return Title{}, fmt.Errorf("naming: response is not JSON: %w (response: %q)", err, truncate(raw))
+
+	reader := strings.NewReader(body)
+
+	decoder := json.NewDecoder(reader)
+	if err := decoder.Decode(&parsed); err != nil {
+		return Title{}, "", fmt.Errorf("naming: response is not JSON: %w (response: %q)", err, truncate(raw))
 	}
 
-	return v.Validate(parsed.Title, Language(strings.ToLower(strings.TrimSpace(parsed.Language))))
+	title, err := v.Validate(parsed.Title, Language(strings.ToLower(strings.TrimSpace(parsed.Language))))
+
+	return title, trailing(decoder, reader), err
+}
+
+// trailing is whatever followed the decoded value, trimmed and bounded.
+//
+// Both halves are needed. The decoder buffers ahead, so some of the remainder
+// is already inside it and the rest is still in the reader — asking either one
+// alone truncates the evidence at whatever chunk boundary the decoder happened
+// to stop at.
+func trailing(decoder *json.Decoder, rest io.Reader) string {
+	remainder, err := io.ReadAll(io.MultiReader(decoder.Buffered(), rest))
+	if err != nil {
+		return ""
+	}
+
+	return truncate(strings.TrimSpace(string(remainder)))
 }
 
 // unfence strips a markdown code fence if the whole body is wrapped in one.
