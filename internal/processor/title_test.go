@@ -1,7 +1,9 @@
 package processor
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -470,5 +472,79 @@ func TestAnUnhandledActionIsReported(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "unhandled action") {
 		t.Errorf("error %q does not say the action was unhandled", err)
+	}
+}
+
+// A response that trails bytes after the JSON is named, and the trailing text
+// is logged as evidence.
+//
+// This is the 2026-08-29 shape verbatim: well-formed JSON, then one more
+// closing brace. It used to fail the activity and leave it queued for the next
+// sweep, five minutes and one model call at a time. It is accepted now — a
+// byte after the object says nothing about the title inside it — but a
+// provider that does this is drifting, so the log says what came back.
+func TestATrailingBraceIsNamedAndReported(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
+	})
+
+	h.provider.response = "{\n  \"title\": \"Gegenwind bis Pocking\",\n  \"language\": \"de\"\n}\n}"
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Named != 1 || result.Failed != 0 {
+		t.Fatalf("sweep named %d, failed %d; want 1 named and 0 failed", result.Named, result.Failed)
+	}
+
+	writes := h.strava.writes()
+	if len(writes) != 1 {
+		t.Fatalf("%d PUTs, want 1", len(writes))
+	}
+
+	if writes[0].name != "Gegenwind bis Pocking" {
+		t.Errorf("name is %q", writes[0].name)
+	}
+
+	out := logged.String()
+
+	if !strings.Contains(out, "the model response carried trailing text after the JSON") {
+		t.Errorf("the trailing text was accepted without a word about it:\n%s", out)
+	}
+
+	// The evidence itself, not merely that something was trailing.
+	if !strings.Contains(out, `"trailing":"}"`) {
+		t.Errorf("the log does not carry what came back:\n%s", out)
+	}
+}
+
+// A clean response says nothing, so the warning means a real deviation.
+func TestACleanResponseIsNotReportedAsTrailing(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
+	})
+
+	h.provider.response = title("Gegenwind bis Pocking")
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if strings.Contains(logged.String(), "trailing text") {
+		t.Errorf("a clean response was reported as trailing:\n%s", logged.String())
 	}
 }
