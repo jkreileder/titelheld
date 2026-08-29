@@ -3,7 +3,6 @@ package naming
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 )
 
@@ -41,31 +40,24 @@ func (v Validator) ParseAndValidate(raw string) (Title, string, error) {
 
 	var parsed response
 
-	reader := strings.NewReader(body)
-
-	decoder := json.NewDecoder(reader)
+	decoder := json.NewDecoder(strings.NewReader(body))
 	if err := decoder.Decode(&parsed); err != nil {
 		return Title{}, "", fmt.Errorf("naming: response is not JSON: %w (response: %q)", err, truncate(raw))
 	}
 
 	title, err := v.Validate(parsed.Title, Language(strings.ToLower(strings.TrimSpace(parsed.Language))))
 
-	return title, trailing(decoder, reader), err
+	return title, trailing(body, decoder), err
 }
 
 // trailing is whatever followed the decoded value, trimmed and bounded.
 //
-// Both halves are needed. The decoder buffers ahead, so some of the remainder
-// is already inside it and the rest is still in the reader — asking either one
-// alone truncates the evidence at whatever chunk boundary the decoder happened
-// to stop at.
-func trailing(decoder *json.Decoder, rest io.Reader) string {
-	remainder, err := io.ReadAll(io.MultiReader(decoder.Buffered(), rest))
-	if err != nil {
-		return ""
-	}
-
-	return truncate(strings.TrimSpace(string(remainder)))
+// Taken by offset rather than by reading the decoder out. InputOffset is where
+// the value ended; the decoder's own buffer holds only as much of the
+// remainder as it happened to read ahead, so asking it would truncate the
+// evidence at a chunk boundary.
+func trailing(body string, decoder *json.Decoder) string {
+	return truncate(strings.TrimSpace(body[decoder.InputOffset():]))
 }
 
 // unfence strips a markdown code fence if the whole body is wrapped in one.
