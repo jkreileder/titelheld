@@ -809,12 +809,26 @@ permanently, including for the failure the gate exists to catch.
 Writes go off the way they came on: through Terraform, by hand, as a reviewed change. It is a
 procedure and not an emergency lever.
 
-Set `DRY_RUN` back to `"1"` and the scheduler's `paused` back to `true` in [`infra/`](infra), plan
-to a file, read the plan — two in-place updates, the service's environment and the scheduler's
-paused flag — and apply that file. Writes are off from the next revision, the scheduler stops
-firing, and the queue starts accumulating again, unnamed, for whoever reviews it next. The pull
-request that records the change follows the apply, because applies are by hand and the working
-tree is the source of truth for what was applied.
+**In two stages, because neither half is instantaneous.** Pausing the scheduler stops it
+*starting* a sweep; it does not cancel one already running. And a new revision does not evict the
+old one: Cloud Run drains in-flight requests, so the writing revision keeps serving its sweep to
+completion — up to the job's `attempt_deadline`, 320 seconds — after the revision with `DRY_RUN=1`
+is already live. Applying both changes at once therefore leaves a window in which writes are
+still possible, with nothing in the plan to say so.
+
+So: pause the scheduler first, on its own. Then wait out any sweep already in flight — the
+`sweep complete` line for it is the signal, and the attempt deadline is the outer bound. Only then
+set `DRY_RUN` back to `"1"` in [`infra/`](infra), plan to a file, read the plan, and apply that
+file.
+
+Writes are off from that revision, the scheduler is already quiet, and the queue starts
+accumulating again, unnamed, for whoever reviews it next. Pausing by hand ahead of the apply is
+drift from `paused = false`; the Terraform change that records the pause, and the pull request
+that records both, follow the apply, because applies are by hand and the working tree is the
+source of truth for what was applied.
+
+If the reason for the rollback is urgent, the pause alone is the fast half — it stops the next
+sweep within seconds and needs no deploy.
 
 Nothing downstream needs undoing for the service's sake: the named log holds only what was
 actually written, and an activity left queued is named later or not at all. What may need undoing
