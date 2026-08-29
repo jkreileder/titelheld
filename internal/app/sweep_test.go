@@ -253,7 +253,7 @@ func TestAnEmptyEnvironmentStillBansTheShippedWords(t *testing.T) {
 	deps := depsFromEnv(t, nil)
 
 	for _, word := range naming.DefaultBannedWords() {
-		if _, err := deps.Validator.ParseAndValidate(title(word + " ride")); !errors.Is(err, naming.ErrTitleBanned) {
+		if _, _, err := deps.Validator.ParseAndValidate(title(word + " ride")); !errors.Is(err, naming.ErrTitleBanned) {
 			t.Errorf("a title containing %q was accepted with no BANNED_WORDS set: %v", word, err)
 		}
 	}
@@ -268,11 +268,11 @@ func TestConfiguredBannedWordsReplaceTheShippedList(t *testing.T) {
 
 	deps := depsFromEnv(t, map[string]string{"BANNED_WORDS": "Musterwort"})
 
-	if _, err := deps.Validator.ParseAndValidate(title("Musterwort am Bach")); !errors.Is(err, naming.ErrTitleBanned) {
+	if _, _, err := deps.Validator.ParseAndValidate(title("Musterwort am Bach")); !errors.Is(err, naming.ErrTitleBanned) {
 		t.Errorf("the configured banned word was not rejected: %v", err)
 	}
 
-	if _, err := deps.Validator.ParseAndValidate(title("Epic ride")); err != nil {
+	if _, _, err := deps.Validator.ParseAndValidate(title("Epic ride")); err != nil {
 		t.Errorf("a shipped word was still banned after configuring a list: %v", err)
 	}
 }

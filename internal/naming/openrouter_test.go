@@ -44,7 +44,7 @@ func TestOpenRouterComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	if _, err := NewValidator(nil).ParseAndValidate(raw); err != nil {
+	if _, _, err := NewValidator(nil).ParseAndValidate(raw); err != nil {
 		t.Fatalf("ParseAndValidate: %v", err)
 	}
 

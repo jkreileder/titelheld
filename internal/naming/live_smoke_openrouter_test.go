@@ -29,7 +29,7 @@ func TestLiveOpenRouter(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	title, err := NewValidator(DefaultBannedWords()).ParseAndValidate(raw)
+	title, _, err := NewValidator(DefaultBannedWords()).ParseAndValidate(raw)
 	if err != nil {
 		t.Fatalf("ParseAndValidate(%q): %v", raw, err)
 	}

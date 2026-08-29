@@ -102,7 +102,7 @@ func TestParseAndValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := validator.ParseAndValidate(tt.raw)
+			got, _, err := validator.ParseAndValidate(tt.raw)
 
 			if tt.wantErr {
 				if err == nil {
@@ -128,7 +128,7 @@ func TestParseAndValidate(t *testing.T) {
 func TestParseErrorCarriesTheResponse(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewValidator(nil).ParseAndValidate("<html>gateway timeout</html>")
+	_, _, err := NewValidator(nil).ParseAndValidate("<html>gateway timeout</html>")
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -141,7 +141,7 @@ func TestParseErrorCarriesTheResponse(t *testing.T) {
 func TestParseErrorTruncatesALongResponse(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewValidator(nil).ParseAndValidate(strings.Repeat("x", 5000))
+	_, _, err := NewValidator(nil).ParseAndValidate(strings.Repeat("x", 5000))
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -278,7 +278,7 @@ func TestVertexComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	title, err := NewValidator(nil).ParseAndValidate(raw)
+	title, _, err := NewValidator(nil).ParseAndValidate(raw)
 	if err != nil {
 		t.Fatalf("ParseAndValidate: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestAnthropicComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	if _, err := NewValidator(nil).ParseAndValidate(raw); err != nil {
+	if _, _, err := NewValidator(nil).ParseAndValidate(raw); err != nil {
 		t.Fatalf("ParseAndValidate: %v", err)
 	}
 
@@ -1430,5 +1430,179 @@ func TestEveryProviderNamesTruncationBeforeAnythingElse(t *testing.T) {
 				t.Errorf("%s with %s: err = %v, want %q", name, body, err, want)
 			}
 		}
+	}
+}
+
+// The two responses that failed live on 2026-08-29 parse to their titles.
+//
+// Byte for byte as the log recorded them: well-formed JSON, then one more
+// closing brace. Each cost the activity a failed sweep and another five
+// minutes queued, for a byte that says nothing about the title.
+func TestTheIncidentResponsesParse(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		raw   string
+		title string
+		lang  Language
+	}{
+		{
+			raw:   "{\n  \"title\": \"The Pink Panther in the Wind\",\n  \"language\": \"en\"\n}\n}",
+			title: "The Pink Panther in the Wind",
+			lang:  English,
+		},
+		{
+			raw:   "{\n  \"title\": \"Sonstwas für den Pink Panther\",\n  \"language\": \"de\"\n}\n}",
+			title: "Sonstwas für den Pink Panther",
+			lang:  German,
+		},
+	} {
+		t.Run(tt.title, func(t *testing.T) {
+			t.Parallel()
+
+			title, trailing, err := NewValidator(nil).ParseAndValidate(tt.raw)
+			if err != nil {
+				t.Fatalf("ParseAndValidate(%q): %v", tt.raw, err)
+			}
+
+			if title.Text != tt.title {
+				t.Errorf("title = %q, want %q", title.Text, tt.title)
+			}
+
+			if title.Language != tt.lang {
+				t.Errorf("language = %q, want %q", title.Language, tt.lang)
+			}
+
+			// The stray brace is reported rather than discarded: a provider
+			// that does this is drifting, and the log is where that shows.
+			if trailing != "}" {
+				t.Errorf("trailing = %q, want %q", trailing, "}")
+			}
+		})
+	}
+}
+
+// A second object after the first is trailing evidence, not a second answer.
+func TestOnlyTheFirstJSONValueIsRead(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"title":"Erster","language":"de"}{"title":"Zweiter","language":"de"}`
+
+	title, trailing, err := NewValidator(nil).ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("ParseAndValidate: %v", err)
+	}
+
+	if title.Text != "Erster" {
+		t.Errorf("title = %q, want %q", title.Text, "Erster")
+	}
+
+	if want := `{"title":"Zweiter","language":"de"}`; trailing != want {
+		t.Errorf("trailing = %q, want %q", trailing, want)
+	}
+}
+
+// Leniency is about where the object ends and nothing else: a response that is
+// not JSON still fails, and the schema is still enforced strictly.
+func TestBrokenJSONStillFails(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		raw  string
+		want error
+	}{
+		{"a page of HTML", "<html>gateway timeout</html>", nil},
+		{"an unterminated object", `{"title":"Halbfertig","language":"de"`, nil},
+		{"a bare closing brace", "}", nil},
+		{"prose before the object", `Sure! {"title":"Egal","language":"de"}`, nil},
+		{"no title in the object", `{"language":"de"}`, ErrNoTitle},
+		{"a language this service does not write", `{"title":"Egal","language":"fr"}`, ErrBadLanguage},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := NewValidator(nil).ParseAndValidate(tt.raw)
+			if err == nil {
+				t.Fatalf("ParseAndValidate(%q) = no error, want one", tt.raw)
+			}
+
+			if tt.want != nil && !errors.Is(err, tt.want) {
+				t.Errorf("ParseAndValidate(%q) = %v, want %v", tt.raw, err, tt.want)
+			}
+		})
+	}
+}
+
+// A fence does not hide what follows it.
+//
+// Unwrapping a fence is the one deviation forgiven silently. A model that
+// closes the fence and keeps talking has deviated twice, and the second one is
+// the caller's warning to make — so the suffix has to survive unfencing.
+func TestTextAfterAClosingFenceIsReported(t *testing.T) {
+	t.Parallel()
+
+	raw := "```json\n{\"title\":\"Gegenwind bis Musterstadt\",\"language\":\"de\"}\n```\nI picked that because the headwind stands out."
+
+	title, trailing, err := NewValidator(nil).ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("ParseAndValidate: %v", err)
+	}
+
+	if title.Text != "Gegenwind bis Musterstadt" {
+		t.Errorf("title = %q", title.Text)
+	}
+
+	if want := "I picked that because the headwind stands out."; trailing != want {
+		t.Errorf("trailing = %q, want %q", trailing, want)
+	}
+}
+
+// Both places a fenced response can trail are reported together.
+func TestTrailingInsideAndAfterAFenceAreBothReported(t *testing.T) {
+	t.Parallel()
+
+	raw := "```\n{\"title\":\"Sauber\",\"language\":\"de\"}\n}\n```\nnachher"
+
+	_, trailing, err := NewValidator(nil).ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("ParseAndValidate: %v", err)
+	}
+
+	for _, want := range []string{"}", "nachher"} {
+		if !strings.Contains(trailing, want) {
+			t.Errorf("trailing %q does not carry %q", trailing, want)
+		}
+	}
+}
+
+// A clean fenced response is still clean.
+func TestAFencedResponseWithNothingAfterItIsNotReported(t *testing.T) {
+	t.Parallel()
+
+	raw := "```json\n{\"title\":\"Sauber\",\"language\":\"de\"}\n```"
+
+	_, trailing, err := NewValidator(nil).ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("ParseAndValidate: %v", err)
+	}
+
+	if trailing != "" {
+		t.Errorf("trailing = %q, want none", trailing)
+	}
+}
+
+// A clean response reports no trailing text, so the caller's log line is
+// evidence of a real deviation rather than noise on every naming.
+func TestACleanResponseHasNoTrailingText(t *testing.T) {
+	t.Parallel()
+
+	_, trailing, err := NewValidator(nil).ParseAndValidate(`{"title":"Sauber","language":"de"}`)
+	if err != nil {
+		t.Fatalf("ParseAndValidate: %v", err)
+	}
+
+	if trailing != "" {
+		t.Errorf("trailing = %q, want none", trailing)
 	}
 }

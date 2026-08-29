@@ -269,10 +269,19 @@ func (p *Processor) ask(
 		return naming.Title{}, fmt.Errorf("llm %s: %w", p.deps.Provider.Name(), err)
 	}
 
-	title, err := p.deps.Validator.ParseAndValidate(raw)
+	title, trailing, err := p.deps.Validator.ParseAndValidate(raw)
 	if err != nil {
 		return naming.Title{}, fmt.Errorf(
 			"llm %s returned an unusable title: %w", p.deps.Provider.Name(), err)
+	}
+
+	// The response carried the title and then kept going. Accepted rather
+	// than refused — what follows a complete object says nothing about the
+	// title inside it — but recorded, because a provider that does this is
+	// drifting and the log is where that shows.
+	if trailing != "" {
+		logger.Warn("the model response carried trailing text after the JSON",
+			"provider", p.deps.Provider.Name(), "trailing", logsafe.String(trailing))
 	}
 
 	if entry, claimed := guard.Claimed(title.Text); claimed {

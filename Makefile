@@ -21,6 +21,10 @@ fmt:
 .PHONY: lint
 lint:
 	$(GO) vet ./...
+# The smoke-tagged tests are excluded from every other target, so nothing else
+# compiles them: a signature change reaches them only when somebody runs them
+# against a live provider, which is the worst moment to discover it.
+	$(GO) vet -tags smoke ./...
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) config verify
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
