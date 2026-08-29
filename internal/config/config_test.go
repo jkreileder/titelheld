@@ -612,12 +612,16 @@ func TestLoadStoreReadsOnlyFirestore(t *testing.T) {
 	}
 }
 
-// LOG_PROMPT follows the dry run unless it is set, and it is its own switch.
+// LOG_PROMPT is on unless it is set, and the write mode does not move it.
+//
+// The independence is the point of the pair with DRY_RUN=0 below: prompt
+// logging used to follow the dry-run state, so it switched itself off exactly
+// when the service started writing for real.
 //
 // Its own parser rather than DRY_RUN's, which inverts its input: reusing that
 // one would make LOG_PROMPT=1 mean "do not log". This asserts the two read the
 // same way round.
-func TestLogPromptFollowsDryRunAndOverrides(t *testing.T) {
+func TestLogPromptIsIndependentOfTheWriteMode(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -626,8 +630,8 @@ func TestLogPromptFollowsDryRunAndOverrides(t *testing.T) {
 		want bool
 	}{
 		{name: "unset, dry run", env: nil, want: true},
-		{name: "unset, writes enabled", env: map[string]string{"DRY_RUN": "0"}, want: false},
-		{name: "on, writes enabled", env: map[string]string{"DRY_RUN": "0", "LOG_PROMPT": "1"}, want: true},
+		{name: "unset, writes enabled", env: map[string]string{"DRY_RUN": "0"}, want: true},
+		{name: "off, writes enabled", env: map[string]string{"DRY_RUN": "0", "LOG_PROMPT": "0"}, want: false},
 		{name: "off, dry run", env: map[string]string{"LOG_PROMPT": "0"}, want: false},
 		{name: "true", env: map[string]string{"LOG_PROMPT": "true"}, want: true},
 		{name: "yes", env: map[string]string{"LOG_PROMPT": "yes"}, want: true},

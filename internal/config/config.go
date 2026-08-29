@@ -71,9 +71,11 @@ type Config struct {
 
 	// LogPrompt logs the complete prompt sent for each naming.
 	//
-	// On by default while writes are off, because that is the observation
-	// window and its whole purpose is judging what the model was given rather
-	// than inferring it from counters. LOG_PROMPT forces it either way.
+	// On by default, and independent of the write mode. Deriving it from the
+	// dry run would switch prompt logging off at the moment the service
+	// starts writing for real, leaving the counters — which say how much the
+	// prompt carried and never what it said — as the only evidence for
+	// whatever goes wrong first. LOG_PROMPT=0 turns it off.
 	//
 	// Verbosity is what this gates. A prompt is the athlete's own material:
 	// their ride, their gear name, titles they have used, and place names the
@@ -457,11 +459,10 @@ func load(getenv func(string) string, serving bool) (Config, error) {
 
 	cfg.WritesEnabled = writesEnabled
 
-	// Defaults to the dry-run state — after WritesEnabled is known, because it
-	// is derived from it. The observation window then logs prompts without
-	// anyone remembering to ask for it, and a service with writes on does not
-	// unless somebody says so.
-	cfg.LogPrompt = !cfg.WritesEnabled
+	// On unless the environment says otherwise, and unrelated to the write
+	// mode: a flag derived from the dry run takes the evidence away at the
+	// moment it starts mattering.
+	cfg.LogPrompt = true
 
 	if raw := strings.TrimSpace(getenv(EnvLogPrompt)); raw != "" {
 		logPrompt, err := parseLogPrompt(raw)
