@@ -812,23 +812,30 @@ procedure and not an emergency lever.
 **In two stages, because neither half is instantaneous.** Pausing the scheduler stops it
 *starting* a sweep; it does not cancel one already running. And a new revision does not evict the
 old one: Cloud Run drains in-flight requests, so the writing revision keeps serving its sweep to
-completion — up to the job's `attempt_deadline`, 320 seconds — after the revision with `DRY_RUN=1`
-is already live. Applying both changes at once therefore leaves a window in which writes are
-still possible, with nothing in the plan to say so.
+completion after the revision with `DRY_RUN=1` is already live. One apply carrying both changes
+therefore leaves a window in which writes are still possible, with nothing in the plan to say so.
 
-So: pause the scheduler first, on its own. Then wait out any sweep already in flight — the
-`sweep complete` line for it is the signal, and the attempt deadline is the outer bound. Only then
-set `DRY_RUN` back to `"1"` in [`infra/`](infra), plan to a file, read the plan, and apply that
-file.
+**Stage one, by hand and immediately:** pause the scheduler. That is the fast half — it stops the
+next sweep within seconds and needs no deploy, which is what makes it first rather than part of
+the apply.
 
-Writes are off from that revision, the scheduler is already quiet, and the queue starts
-accumulating again, unnamed, for whoever reviews it next. Pausing by hand ahead of the apply is
-drift from `paused = false`; the Terraform change that records the pause, and the pull request
-that records both, follow the apply, because applies are by hand and the working tree is the
-source of truth for what was applied.
+**Then wait for the service to go quiet**, and read the log rather than a clock. `attempt_deadline`
+bounds *one attempt*, not the job: `retry_config.retry_count` is `1`, so a sweep that hits the
+deadline may be dispatched once more, and a pause does not stop a retry of an execution already
+under way. The signal is the service's own `sweep complete` line with nothing after it — see
+[Watching a sweep](docs/infrastructure.md#the-push-subscription) for the query.
 
-If the reason for the rollback is urgent, the pause alone is the fast half — it stops the next
-sweep within seconds and needs no deploy.
+**Stage two, the reviewed change:** set `DRY_RUN` back to `"1"` **and** `paused` to `true` in
+[`infra/`](infra), plan to a file, confirm exactly two in-place updates, and apply that file. Both
+belong in the same plan even though the pause has already happened by hand: `paused = false` is
+still what the tree declares, so an apply that changed only `DRY_RUN` would *un*-pause the
+scheduler and undo stage one. Applying both makes the tree agree with the running state instead of
+fighting it.
+
+Writes are off from that revision, the scheduler stays quiet, and the queue starts accumulating
+again, unnamed, for whoever reviews it next. The pull request recording the change follows the
+apply, because applies are by hand and the working tree is the source of truth for what was
+applied.
 
 Nothing downstream needs undoing for the service's sake: the named log holds only what was
 actually written, and an activity left queued is named later or not at all. What may need undoing
