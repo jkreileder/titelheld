@@ -130,7 +130,7 @@ func (f Franchise) Guard(offered string) Guarded {
 // The test is [UsesEntry], the same evidence advance-on-use accepts as
 // spending an entry: a title that would spend one is refused by exactly the
 // rule that would have spent it. Its normalization comes along, so casing,
-// punctuation and an adaptation — "Son of the Pink Panther nach Bayerbach" —
+// punctuation and an adaptation — "Son of the Pink Panther nach Musterdorf" —
 // are all the entry, and none of them smuggles it through.
 //
 // One kind of entry is matched by equality instead: one whose core is nothing
@@ -162,8 +162,13 @@ func (g Guarded) claims(title, entry string) bool {
 }
 
 // isMotif reports whether an entry says nothing more than the bike's name.
+//
+// Both sides go through [entryCore], not one through it and one around it: a
+// bike called "The Pink Panther" would otherwise never match the entry of the
+// same name, the exception would not apply, and containment would forbid every
+// title that took the motif rule's invitation.
 func (g Guarded) isMotif(entry string) bool {
-	gear := normalizeForMatch(g.gearName)
+	gear := entryCore(g.gearName)
 
 	return gear != "" && entryCore(entry) == gear
 }

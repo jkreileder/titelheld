@@ -397,10 +397,10 @@ func TestGuardedClaimed(t *testing.T) {
 			want:  "Son of the Pink Panther",
 		},
 		{
-			// The 2026-08-24 dry-run mashup. Equality would let it through,
-			// and it spends the film just as surely.
+			// An entry extended into a sentence is the entry, and equality
+			// would let it through while it spends the film just as surely.
 			name:  "an adaptation of an entry",
-			title: "Son of the Pink Panther nach Bayerbach",
+			title: "Son of the Pink Panther nach Musterdorf",
 			want:  "Son of the Pink Panther",
 		},
 		{
@@ -427,7 +427,7 @@ func TestGuardedClaimed(t *testing.T) {
 		},
 		{
 			name:  "an ordinary title",
-			title: "Gegenwind bis Pocking",
+			title: "Gegenwind bis Musterstadt",
 			want:  "",
 		},
 		{
@@ -503,6 +503,36 @@ func TestGuardedCoversSpentAndFutureEntries(t *testing.T) {
 				t.Errorf("Claimed(%q) = %q, %v, want %q, true", tt.title, entry, claimed, tt.want)
 			}
 		})
+	}
+}
+
+// A gear name carrying an article still exempts its own entry.
+//
+// The motif exception compares cores on both sides. Comparing a normalized
+// gear name against an entry core would miss here, and every themed title on a
+// bike whose name begins with an article would be refused by containment.
+func TestTheMotifExceptionSurvivesAnArticleInTheGearName(t *testing.T) {
+	t.Parallel()
+
+	series := Franchise{
+		Name:     "muster",
+		GearName: "The Musterpanther",
+		Titles:   []string{"The Musterpanther", "Son of the Musterpanther"},
+		Reserved: []string{"The Musterpanther", "Son of the Musterpanther"},
+	}
+
+	guard := series.Guard("")
+
+	if entry, claimed := guard.Claimed("The Musterpanther im Nebel"); claimed {
+		t.Errorf("a themed title was refused as %q", entry)
+	}
+
+	if _, claimed := guard.Claimed("The Musterpanther"); !claimed {
+		t.Error("the entry itself was accepted")
+	}
+
+	if _, claimed := guard.Claimed("Son of the Musterpanther im Nebel"); !claimed {
+		t.Error("an adaptation of a non-motif entry was accepted")
 	}
 }
 
