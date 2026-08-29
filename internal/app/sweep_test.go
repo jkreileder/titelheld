@@ -354,12 +354,14 @@ func TestTheDefaultPostureOfADeployedRevision(t *testing.T) {
 	}
 }
 
-// Prompt logging follows the writes flag, and LOG_PROMPT overrides either way.
+// Prompt logging is on by default and LOG_PROMPT is what turns it off; the
+// write mode does not touch it.
 //
 // Asserted through config.Load and sweepDeps rather than on a hand-built
-// config: the question is what a deployment gets, and the setting is derived
-// from another one, which is the kind of wiring that silently stops working.
-func TestPromptLoggingFollowsTheDryRunAndItsOverride(t *testing.T) {
+// config: the question is what a deployment gets, and prompt logging reached
+// the processor through a derivation from DRY_RUN that took the evidence away
+// exactly when writes came on.
+func TestPromptLoggingIsOnAndIndependentOfTheWriteMode(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -367,12 +369,12 @@ func TestPromptLoggingFollowsTheDryRunAndItsOverride(t *testing.T) {
 		env  map[string]string
 		want bool
 	}{
-		{name: "dry run, the deployed default", env: nil, want: true},
-		{name: "writes enabled", env: map[string]string{"DRY_RUN": "0"}, want: false},
+		{name: "dry run, the default", env: nil, want: true},
+		{name: "writes enabled, still on", env: map[string]string{"DRY_RUN": "0"}, want: true},
 		{
-			name: "writes enabled, logging asked for",
-			env:  map[string]string{"DRY_RUN": "0", "LOG_PROMPT": "1"},
-			want: true,
+			name: "writes enabled, logging refused",
+			env:  map[string]string{"DRY_RUN": "0", "LOG_PROMPT": "0"},
+			want: false,
 		},
 		{
 			name: "dry run, logging refused",

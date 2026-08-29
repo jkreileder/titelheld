@@ -18,7 +18,7 @@ route into the working tree; on Cloud Run they are injected from Secret Manager.
 | `STRAVA_ATHLETE_ID`    | no       | any     | Restrict processing to one athlete           |
 | `PROCESS_DELAY`        | no       | `10m`   | How long to wait before naming               |
 | `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
-| `LOG_PROMPT`           | no       | dry run | Log the whole prompt for each naming         |
+| `LOG_PROMPT`           | no       | on      | Set to `0` to stop logging the whole prompt  |
 | `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
 
 ## One instance, and the binary knows it
@@ -69,10 +69,17 @@ assumptions apply to it. The same goes for `cmd/titelheld-config`, which seeds t
 configuration document and reads only `FIRESTORE_PROJECT` and `FIRESTORE_DATABASE` — it talks to
 nothing but Firestore, so even the Strava credentials would be invented values.
 
-`LOG_PROMPT` defaults to whatever `DRY_RUN` says: prompts are logged while writes are off, which
-is the observation window and the time when what the model received is the thing being judged.
-The counters on the `named` line — places, achievements, facts, examples, recent titles — remain
-the steady-state signal; they say how much the prompt carried and never what it was.
+`LOG_PROMPT` is on by default and independent of `DRY_RUN`. It used to follow the dry-run state,
+which meant prompt logging switched itself off at the moment the service began writing for real —
+so the first thing that went wrong under writes had to be diagnosed from counters alone. The
+counters on the `named` line — places, achievements, facts, examples, recent titles — say how much
+the prompt carried and never what it said, which is exactly the difference that matters when a
+title is wrong.
+
+The cost is volume. Every naming writes the whole prompt to the log: the system rules, the ride,
+up to six place names, up to six segment names, six examples and twenty-five recent titles, at up
+to 16 KB per entry. On a handful of rides a week that is nothing; if it ever becomes something,
+`LOG_PROMPT=0` turns it off and leaves the counters.
 
 What is gated here is verbosity. A prompt is the athlete's own material — the ride, the gear name,
 titles already used, and place names the geo layer resolved, which produces names and has nowhere

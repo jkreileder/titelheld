@@ -58,7 +58,9 @@
   flattens newlines and caps at 256 - right for a title, which must not forge a
   second line. `Block` keeps newlines and tabs and caps at 16 KB, for a value
   whose line structure *is* the content: the naming prompt, logged whole while
-  `LOG_PROMPT` (defaulting to the dry-run state) is on.
+  `LOG_PROMPT` is on. It defaults to on and is independent of `DRY_RUN` -
+  deriving it from the write mode took the prompts away at the moment writes
+  began, which is when they are worth most.
 - `cmd/titelheld/` is a shim with no behavior, and is excluded from coverage.
 - `docs/` carries what a deployment needs and the README does not: every
   setting in `configuration.md`, the GCP deployment in `infrastructure.md`,
