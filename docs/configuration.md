@@ -53,10 +53,12 @@ bind callbacks to different athletes and can sweep the same queue at once, as we
 invalidating each other's refresh token.
 
 What makes it tolerable today is the deployment pattern rather than the code: releases are
-single-revision, no traffic split is configured, the authorization flow is a one-time bootstrap
-that has already run, and the scheduler is paused so a sweep is a manual act. None of that is
-enforced. Making the states safe across instances is a compare-and-set on the token document and
-a lease for the sweep, and neither is built.
+single-revision, no traffic split is configured, and the authorization flow is a one-time
+bootstrap that has already run. None of that is enforced. The sweep no longer has a fourth
+argument to add: the scheduler fires every five minutes, so two revisions serving at once can
+sweep the same queue, and only the single-revision release pattern keeps them from doing it.
+Making the states safe across instances is a compare-and-set on the token document and a lease for
+the sweep, and neither is built.
 
 **Apply the Terraform before releasing a build that carries this contract.** A revision started
 against infrastructure that predates it fails readiness, `gcloud run deploy` fails with it, and

@@ -178,11 +178,19 @@ spent on a title that never carried it cannot. Entries listed under `reserved`
 are never offered - they keep their place in the series and the athlete spends
 them by hand - and the position therefore advances *past the index* that was
 offered rather than by one step, monotonically, so a rotation that stepped over
-a reserved entry never hands it out later.
+a reserved entry never hands it out later. Reserving governs the *offer* and
+nothing else, so `Franchise.Guard` governs the title: it refuses a candidate
+claiming any entry of the matched series except the one being offered - future
+entries included, since claiming one spends a film the position will not
+record. The comparison is `UsesEntry`, the test that decides spending. An entry
+whose core is no more than the gear name is matched by equality instead,
+because containment there would forbid every title that takes the motif rule's
+invitation.
 
 Not built yet: route repeats. The Strava push subscription exists and is
-feeding the queue; the Cloud Scheduler job is deliberately paused, so nothing
-drains it until a sweep is run by hand. The title history is seeded by
+feeding the queue; the Cloud Scheduler job fires every five minutes and drains
+it, and `DRY_RUN=0` on the deployed service, so a cleared activity is renamed
+without anyone asking. The title history is seeded by
 `cmd/titelheld-import` rather than accumulating on its own.
 
 ## Design Rules That Are Not Negotiable
