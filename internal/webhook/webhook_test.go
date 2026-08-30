@@ -747,9 +747,18 @@ func TestAnUpdateWithoutATitleChangesNothing(t *testing.T) {
 	}
 }
 
-// The override is idempotent per title: it fires once for a rename, and a
-// re-delivery of the same event does nothing further.
-func TestTheOverrideFiresOncePerRename(t *testing.T) {
+// The override fires once for an activity and is idempotent under redelivery.
+//
+// Strava delivers at least once and in no guaranteed order, and echo
+// suppression by comparing against the current row stops working the moment
+// the row is rewritten. Gating on the row's source closes that: once the row
+// is the athlete's, nothing rewrites it — including a redelivered echo of this
+// service's own write, which would otherwise pass every other check and store
+// a machine title as theirs.
+//
+// The cost is a second rename of the same activity, which is not recorded. The
+// athlete's first correction is the one that counts.
+func TestTheOverrideFiresOnceAndResistsRedelivery(t *testing.T) {
 	t.Parallel()
 
 	memory := store.NewMemory()
@@ -765,12 +774,86 @@ func TestTheOverrideFiresOncePerRename(t *testing.T) {
 		t.Fatalf("row = %q/%q", entry.Title, entry.Source)
 	}
 
-	// A second, different rename is a second override — "once per rename",
-	// not once ever.
+	// A redelivered echo of the title this service wrote, arriving after the
+	// rename. It is not a Strava default, not a machine pattern and not a
+	// template, so every check but the source gate would let it through.
+	post(t, handler, renameEvent("Neun auf einen Streich"))
+
+	if got := row(t, memory); got.Title != "Windschief" {
+		t.Errorf("title = %q; a stale echo overwrote the athlete's rename", got.Title)
+	}
+
+	// And a later rename by the athlete is equally declined, which is the
+	// other half of the same trade.
 	post(t, handler, renameEvent("Gegenwind bis Musterstadt"))
 
-	if got := row(t, memory).Title; got != "Gegenwind bis Musterstadt" {
-		t.Errorf("title = %q, want the second rename", got)
+	if got := row(t, memory).Title; got != "Windschief" {
+		t.Errorf("title = %q; a human row was rewritten", got)
+	}
+}
+
+// Only a row this service's naming pipeline wrote is rewritten.
+//
+// The source is the tier gate: SourceService is written on the LLM path and
+// nowhere else, so a template row (a commute or errand) and an imported row (a
+// decade of the athlete's shorthand) stay as they are. Flipping either to
+// human would put it in the few-shot examples, which is exactly what the
+// recorder's tier gate and the imported-rows-never-teach rule exclude.
+func TestOnlyAServiceRowIsRewritten(t *testing.T) {
+	t.Parallel()
+
+	for _, source := range []string{
+		store.SourceTemplate, store.SourceImported, store.SourceHuman,
+	} {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+
+			memory := store.NewMemory()
+			handler := newHandler(t, memory, 4242)
+
+			if err := memory.MarkNamed(t.Context(), store.Naming{
+				AthleteID: 4242, ActivityID: renamedActivity,
+				Title: "Besorgungen", Language: "de", Source: source,
+				At: testNow.Add(-72 * time.Hour),
+			}); err != nil {
+				t.Fatalf("MarkNamed: %v", err)
+			}
+
+			post(t, handler, renameEvent("Windschief"))
+
+			got := row(t, memory)
+			if got.Title != "Besorgungen" || got.Source != source {
+				t.Errorf("row = %q/%q; a %s row was rewritten", got.Title, got.Source, source)
+			}
+		})
+	}
+}
+
+// An implausibly long title is not persisted.
+//
+// The POST intake authenticates nobody — the unguessable path is the whole
+// protection, and activity IDs are public — and this is the only place where
+// text from a request body reaches the store. A planted row is eligible to
+// become a few-shot example the model is told to imitate.
+func TestAnImplausiblyLongTitleIsNotRecorded(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 4242)
+	named(t, memory, "Neun auf einen Streich")
+
+	post(t, handler, renameEvent(strings.Repeat("ü", maxRecordedTitleRunes+1)))
+
+	if got := row(t, memory); got.Title != "Neun auf einen Streich" {
+		t.Errorf("title = %q; an over-long title was persisted", got.Title)
+	}
+
+	// Counted in runes, so a title of multi-byte characters at the limit is
+	// still recorded.
+	post(t, handler, renameEvent(strings.Repeat("ü", maxRecordedTitleRunes)))
+
+	if got := row(t, memory); got.Source != store.SourceHuman {
+		t.Errorf("a title at the limit was refused")
 	}
 }
 

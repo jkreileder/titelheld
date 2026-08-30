@@ -43,6 +43,11 @@ const (
 	// renamed the activity. It is the only title source this path trusts.
 	updateTitle = "title"
 
+	// maxRecordedTitleRunes bounds what an unauthenticated request body can
+	// put in the store. Far above any title a person writes, and far below
+	// the body limit.
+	maxRecordedTitleRunes = 256
+
 	deauthorizedValue = "false"
 	aspectCreate      = "create"
 	aspectUpdate      = "update"
@@ -286,10 +291,15 @@ func (h *Handler) process(ctx context.Context, event Event) {
 	}
 
 	if named {
-		h.recordRename(ctx, event, entry, log)
+		// The title the row holds after this event, which is not the one it
+		// held before when the athlete has just renamed the activity.
+		title := entry.Title
+		if renamed, ok := h.recordRename(ctx, event, entry, log); ok {
+			title = renamed
+		}
 
 		log.Info("event ignored", "reason", "activity already named",
-			"title", logsafe.String(entry.Title))
+			"title", logsafe.String(title))
 
 		return
 	}
@@ -355,7 +365,7 @@ func equalSecret(got, want string) bool {
 }
 
 // recordRename rewrites the named row when the athlete has retitled an
-// activity this service named.
+// activity this service named, and reports the title the row ends up with.
 //
 // The update event that carries a rename was previously dropped and nothing
 // else, so a correction reached the store only if somebody edited the row by
@@ -364,7 +374,7 @@ func equalSecret(got, want string) bool {
 // cannot invent it again and the few-shot examples so it teaches the voice
 // that produced it.
 //
-// Three things bound it.
+// Four things bound it.
 //
 // It reads updates.title and never fetches the activity. Intake acknowledges
 // before it touches the store and holds no Strava client; a rename is exactly
@@ -375,28 +385,53 @@ func equalSecret(got, want string) bool {
 // by the rename would put a ride renamed months later at the top of the list
 // and offer an old title as recent material.
 //
-// It applies the same filter the skip-path recorder applies. A title reset to
-// a Strava default, or replaced by a tool's, is not authorship — recording one
-// would teach the examples something the athlete never wrote.
+// It rewrites only a row this service's LLM pipeline wrote, and rewrites it
+// once. That is the tier gate the skip-path recorder applies, expressed
+// through the source: [store.SourceService] is written on the naming path and
+// nowhere else, so gating on it admits exactly the sport rides the recorder
+// admits. It also makes the path idempotent under redelivery, which nothing
+// else here could — Strava delivers at least once and in no guaranteed order,
+// and echo suppression by comparing against the current row stops working the
+// moment the row is rewritten. Without this gate a redelivered echo of this
+// service's own write, arriving after the athlete's rename, would pass every
+// other check and store a machine title as the athlete's, teaching the
+// examples a voice that is not theirs. The cost is that a second rename of the
+// same activity is not recorded; the athlete's first correction is the one
+// that counts, which is the limit pipeline step 3a already accepts.
+//
+// It applies the title filter the recorder applies, so a title reset to a
+// Strava default, or replaced by a tool's, leaves the row alone: resetting a
+// title is not authorship.
 func (h *Handler) recordRename(
 	ctx context.Context, event Event, entry store.NamedTitle, log *slog.Logger,
-) {
-	if h.athleteTitle == nil {
-		return
+) (string, bool) {
+	if h.athleteTitle == nil || entry.Source != store.SourceService {
+		return "", false
 	}
 
 	title := strings.TrimSpace(event.Updates[updateTitle])
 	if title == "" || title == strings.TrimSpace(entry.Title) {
 		// Nothing changed, or the event says nothing about the title — which
 		// is also the shape of this service's own write coming back round.
-		return
+		return "", false
+	}
+
+	// The POST intake authenticates nobody: the unguessable path is all that
+	// stands in front of it, and activity IDs are public. This is the only
+	// place where text from a request body is persisted, so it is bounded
+	// here rather than trusted. No title a person types comes close.
+	if len([]rune(title)) > maxRecordedTitleRunes {
+		log.Warn("not recording the rename; the title is implausibly long",
+			"runes", len([]rune(title)), "limit", maxRecordedTitleRunes)
+
+		return "", false
 	}
 
 	if !h.athleteTitle(title) {
 		log.Info("not recording the rename; the new title is not the athlete's own",
 			"title", logsafe.String(title))
 
-		return
+		return "", false
 	}
 
 	if err := h.named.MarkNamed(ctx, store.Naming{
@@ -411,9 +446,11 @@ func (h *Handler) recordRename(
 		// the cost of this failure is a stale row rather than a wrong write.
 		log.Error("could not record the athlete's rename", "error", err)
 
-		return
+		return "", false
 	}
 
 	log.Info("the athlete retitled this activity; the row is theirs now",
 		"was", logsafe.String(entry.Title), "title", logsafe.String(title))
+
+	return title, true
 }
