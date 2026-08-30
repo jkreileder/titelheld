@@ -149,16 +149,17 @@ func (c *Client) GetActivity(ctx context.Context, activityID int64) (*Activity, 
 
 // UpdateActivityName renames one activity and changes nothing else.
 //
-// This is the only mutating call in the service, and the only place a title
-// reaches Strava. It refuses with [ErrDryRun] unless the client was built with
-// [WriteModeEnabled]; the transport repeats that check, so neither this guard
-// nor a future mutating method can be bypassed.
+// This is the only place a title reaches Strava. It refuses with [ErrDryRun]
+// unless the client was built with [WriteModeEnabled]; the transport repeats
+// that check, so neither this guard nor a future mutating method can be
+// bypassed.
 //
 // Sport type and gear belong to other tools and are never sent. The
-// description is sent only by [UpdateActivityNameAndDescription], and only to
-// carry the attribution line.
+// description is sent only by [UpdateActivityNameAndDescription] and
+// [UpdateActivityDescription], and only to carry the attribution line or to
+// take it away again.
 func (c *Client) UpdateActivityName(ctx context.Context, activityID int64, name string) (*Activity, error) {
-	return c.update(ctx, activityID, name, nil)
+	return c.update(ctx, activityID, &name, nil)
 }
 
 // UpdateActivityNameAndDescription renames an activity and replaces its
@@ -175,25 +176,54 @@ func (c *Client) UpdateActivityName(ctx context.Context, activityID int64, name 
 func (c *Client) UpdateActivityNameAndDescription(
 	ctx context.Context, activityID int64, name, description string,
 ) (*Activity, error) {
-	return c.update(ctx, activityID, name, &description)
+	return c.update(ctx, activityID, &name, &description)
 }
 
-// update is the single mutating path. Both exported methods land here so the
+// UpdateActivityDescription replaces the description and leaves the title
+// alone.
+//
+// The title is omitted from the form rather than sent back unchanged. Sending
+// it would be a rename to the value Strava already holds, on an activity whose
+// title is the athlete's — and Strava rewrites a title it reads as containing
+// a link, so a round trip through this call is a chance to corrupt a title
+// this service has no business touching. What is not in the form cannot be
+// rewritten.
+//
+// The description is sent whole, because Strava's PUT replaces it. Building
+// the new value belongs to the caller; see the writer.
+func (c *Client) UpdateActivityDescription(
+	ctx context.Context, activityID int64, description string,
+) (*Activity, error) {
+	return c.update(ctx, activityID, nil, &description)
+}
+
+// update is the single mutating path. Every exported method lands here so the
 // dry-run guard cannot be reached around.
+//
+// A nil field is left out of the form entirely, which is how a caller says
+// "leave this alone": Strava changes only what the PUT names.
 func (c *Client) update(
-	ctx context.Context, activityID int64, name string, description *string,
+	ctx context.Context, activityID int64, name, description *string,
 ) (*Activity, error) {
 	if c.writeMode != WriteModeEnabled {
-		return nil, fmt.Errorf("strava: refusing to rename activity %d: %w", activityID, ErrDryRun)
+		return nil, fmt.Errorf("strava: refusing to update activity %d: %w", activityID, ErrDryRun)
 	}
 
-	if strings.TrimSpace(name) == "" {
+	if name != nil && strings.TrimSpace(*name) == "" {
 		return nil, fmt.Errorf("strava: refusing to rename activity %d to an empty title", activityID)
+	}
+
+	if name == nil && description == nil {
+		return nil, fmt.Errorf("strava: refusing to update activity %d with no fields", activityID)
 	}
 
 	path := "/activities/" + strconv.FormatInt(activityID, 10)
 
-	form := url.Values{"name": {name}}
+	form := url.Values{}
+	if name != nil {
+		form.Set("name", *name)
+	}
+
 	if description != nil {
 		form.Set("description", *description)
 	}
@@ -209,7 +239,7 @@ func (c *Client) update(
 
 	var activity Activity
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxActivityBytes)).Decode(&activity); err != nil {
-		return nil, fmt.Errorf("strava: decode renamed activity %d: %w", activityID, err)
+		return nil, fmt.Errorf("strava: decode updated activity %d: %w", activityID, err)
 	}
 
 	activity.AthleteID = activity.Athlete.ID

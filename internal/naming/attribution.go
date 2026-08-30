@@ -55,3 +55,33 @@ func Describe(existing string, enabled bool) (string, bool) {
 	// exactly as it was, including trailing whitespace and \r\n.
 	return Attribution + "\n\n" + existing, true
 }
+
+// RemoveAttribution takes the line back out, and reports whether it was there.
+//
+// The inverse of [Describe]: for every description that function produces, this
+// returns the input it was given, byte for byte. Nothing else in the
+// description is touched — not the whitespace in front of the line, not a
+// second copy of it, not anything another tool wrote.
+//
+// It matches the whole line and not the sentinel, which is the asymmetry worth
+// knowing about. [HasAttribution] is deliberately loose so that rewording the
+// prose can never cause an already-attributed activity to be attributed twice;
+// this is deliberately exact, because it deletes text and a description is the
+// athlete's. A description carrying some older wording of the line therefore
+// keeps it, and the caller learns that from the reported false rather than
+// from a line that silently took a neighboring sentence with it.
+//
+// What follows the line is removed with it: the line's own terminator and the
+// blank line [Describe] writes after it, and at most those two bytes.
+func RemoveAttribution(description string) (string, bool) {
+	index := strings.Index(description, Attribution)
+	if index < 0 {
+		return description, false
+	}
+
+	rest := description[index+len(Attribution):]
+	rest = strings.TrimPrefix(rest, "\n")
+	rest = strings.TrimPrefix(rest, "\n")
+
+	return description[:index] + rest, true
+}

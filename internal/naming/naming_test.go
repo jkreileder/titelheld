@@ -1625,3 +1625,116 @@ func TestACleanResponseHasNoTrailingText(t *testing.T) {
 		t.Errorf("trailing = %q, want none", trailing)
 	}
 }
+
+func TestRemoveAttribution(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		description string
+		want        string
+		removed     bool
+	}{
+		{
+			name:        "a description that is nothing but the line",
+			description: Attribution, want: "", removed: true,
+		},
+		{
+			name:        "the shape Describe writes",
+			description: Attribution + "\n\nXert: Difficult", want: "Xert: Difficult", removed: true,
+		},
+		{
+			name:        "no line to remove",
+			description: "Xert: Difficult", want: "Xert: Difficult", removed: false,
+		},
+		{
+			name:        "an empty description",
+			description: "", want: "", removed: false,
+		},
+		{
+			name:        "the athlete moved the line to the end",
+			description: "Xert: Difficult\n\n" + Attribution,
+			want:        "Xert: Difficult\n\n", removed: true,
+		},
+		{
+			name:        "the athlete put text around it",
+			description: "Above\n\n" + Attribution + "\n\nBelow",
+			want:        "Above\n\nBelow", removed: true,
+		},
+		{
+			name:        "a single newline after the line",
+			description: Attribution + "\nBelow", want: "Below", removed: true,
+		},
+		{
+			name:        "two copies: the first goes, the second stays",
+			description: Attribution + "\n\n" + Attribution,
+			want:        Attribution, removed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, removed := RemoveAttribution(tt.description)
+			if got != tt.want || removed != tt.removed {
+				t.Errorf("RemoveAttribution(%q) = %q, %v; want %q, %v",
+					tt.description, got, removed, tt.want, tt.removed)
+			}
+		})
+	}
+}
+
+// The round trip is the property that matters: whatever another tool wrote
+// comes back byte for byte, including the trailing whitespace and \r\n that a
+// normalizing implementation would quietly tidy away.
+func TestRemoveAttributionInvertsDescribeByteForByte(t *testing.T) {
+	t.Parallel()
+
+	originals := []string{
+		"",
+		"Xert: Difficult 87\r\nFocus: Endurance\r\n",
+		"myWindsock: 12.4 kph headwind   \n\n\tmybiketraffic: 41 passes\n",
+		"Ein Text mit Umlauten — äöü — und einem Emoji 🚲\n",
+		"   ",
+	}
+
+	for _, original := range originals {
+		described, changed := Describe(original, true)
+		if !changed {
+			t.Fatalf("Describe(%q) reported no change", original)
+		}
+
+		got, removed := RemoveAttribution(described)
+		if !removed {
+			t.Errorf("RemoveAttribution(%q) reported nothing removed", described)
+		}
+
+		if got != original {
+			t.Errorf("round trip of %q = %q, want the original back byte for byte",
+				original, got)
+		}
+	}
+}
+
+// The counterpart to TestAttributionSentinelIsTheURL: the presence check is
+// loose on purpose and the removal is exact on purpose, so a reworded line is
+// recognized and not deleted.
+func TestRemoveAttributionLeavesAnOldWordingAlone(t *testing.T) {
+	t.Parallel()
+
+	oldWording := "Titled by titelheld — " + sentinel + "\n\nXert: Difficult"
+
+	if !HasAttribution(oldWording) {
+		t.Fatal("HasAttribution on an old wording = false, want true")
+	}
+
+	got, removed := RemoveAttribution(oldWording)
+	if removed {
+		t.Errorf("RemoveAttribution removed an old wording, returning %q", got)
+	}
+
+	if got != oldWording {
+		t.Errorf("RemoveAttribution(%q) = %q, want it unchanged", oldWording, got)
+	}
+}

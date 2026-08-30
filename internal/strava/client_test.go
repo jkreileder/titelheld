@@ -787,3 +787,148 @@ func TestGetActivityStopsAtTheSizeLimit(t *testing.T) {
 		t.Error("GetActivity on an oversized body = nil error, want a decode failure")
 	}
 }
+
+func TestUpdateActivityDescriptionSendsNoName(t *testing.T) {
+	t.Parallel()
+
+	var (
+		gotMethod      atomic.Value
+		gotPath        atomic.Value
+		gotDescription atomic.Value
+		gotFields      atomic.Int64
+		hasName        atomic.Bool
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+
+		gotMethod.Store(r.Method)
+		gotPath.Store(r.URL.Path)
+		gotDescription.Store(r.PostForm.Get("description"))
+		gotFields.Store(int64(len(r.PostForm)))
+		_, present := r.PostForm["name"]
+		hasName.Store(present)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":12345,"name":"Windschief","athlete":{"id":7}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, WriteModeEnabled)
+
+	activity, err := client.UpdateActivityDescription(t.Context(), 12345, "Xert: Difficult")
+	if err != nil {
+		t.Fatalf("UpdateActivityDescription: %v", err)
+	}
+
+	if got := gotMethod.Load(); got != http.MethodPut {
+		t.Errorf("method = %v, want PUT", got)
+	}
+	if got := gotPath.Load(); got != "/activities/12345" {
+		t.Errorf("path = %v, want /activities/12345", got)
+	}
+	if got := gotDescription.Load(); got != "Xert: Difficult" {
+		t.Errorf("description = %v", got)
+	}
+
+	// The whole point of the method: the title is not in the form, so Strava
+	// has nothing to rewrite. A name field here — even the value already
+	// stored — would be this service touching a title that is the athlete's.
+	if hasName.Load() {
+		t.Error("the form carried a name field, want none")
+	}
+	if got := gotFields.Load(); got != 1 {
+		t.Errorf("form carried %d fields, want exactly 1 (description)", got)
+	}
+
+	if activity.Name != "Windschief" || activity.Owner() != 7 {
+		t.Errorf("decoded activity = %+v", activity)
+	}
+}
+
+func TestUpdateActivityDescriptionRefusesInDryRun(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, WriteModeDryRun)
+
+	if _, err := client.UpdateActivityDescription(t.Context(), 1, "anything"); !errors.Is(err, ErrDryRun) {
+		t.Errorf("UpdateActivityDescription in dry run = %v, want ErrDryRun", err)
+	}
+
+	if got := requests.Load(); got != 0 {
+		t.Errorf("server saw %d requests, want 0", got)
+	}
+}
+
+// An empty description is a legitimate value: it is what removing the
+// attribution line from a description that held nothing else produces.
+func TestUpdateActivityDescriptionAcceptsAnEmptyDescription(t *testing.T) {
+	t.Parallel()
+
+	var (
+		gotFields      atomic.Int64
+		hasDescription atomic.Bool
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+
+		gotFields.Store(int64(len(r.PostForm)))
+		_, present := r.PostForm["description"]
+		hasDescription.Store(present)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"name":"Windschief","athlete":{"id":7}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, WriteModeEnabled)
+
+	if _, err := client.UpdateActivityDescription(t.Context(), 1, ""); err != nil {
+		t.Fatalf("UpdateActivityDescription with an empty description: %v", err)
+	}
+
+	if !hasDescription.Load() {
+		t.Error("the form carried no description field, want an empty one")
+	}
+	if got := gotFields.Load(); got != 1 {
+		t.Errorf("form carried %d fields, want exactly 1 (description)", got)
+	}
+}
+
+// update is reachable only through the exported methods, each of which
+// supplies at least one field. The guard is what keeps that true of the next
+// one.
+func TestUpdateRefusesWithNoFields(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, WriteModeEnabled)
+
+	if _, err := client.update(t.Context(), 1, nil, nil); err == nil {
+		t.Error("update with no fields = nil error, want error")
+	}
+
+	if got := requests.Load(); got != 0 {
+		t.Errorf("server saw %d requests, want 0", got)
+	}
+}
