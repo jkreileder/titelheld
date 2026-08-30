@@ -26,9 +26,10 @@ Six collections, and nothing else. Adding a seventh means changing this document
 | `config`    | `{athleteID}`             | The athlete's configuration: franchise series    | **No** — hand-written   |
 
 `pending` holds an athlete, an activity and a deadline — and, as provenance nothing reads, the
-webhook aspect that queued it. It has never held anything a request body said, and that is the
-schema doing a job: the intake is reachable by anyone who learns the unguessable path, because
-Strava signs no webhook `POST`. An entry means *examine this activity*; whether the sweep names
+webhook aspect that queued it, which is `create` or `update` and is checked against those two
+before the enqueue. No free text from a request body has ever reached this collection, and that
+is the schema doing a job: the intake is reachable by anyone who learns the unguessable path,
+because Strava signs no webhook `POST`. An entry means *examine this activity*; whether the sweep names
 it or reconciles it against Strava is decided from `named` at sweep time. So a forged event costs
 one document and one redundant read.
 

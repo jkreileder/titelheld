@@ -48,10 +48,12 @@ is told to imitate.
 - **The attribution line comes out when the title stops being ours.**
   The line says this service named the activity; after a rename that is false. It is removed by a
   description-only write — the exact line and the blank line after it, every other byte left where
-  it was, and an older wording of the line left alone, because the presence check matches the URL
-  on purpose and deleting text has to be exact. The write omits `name` from the form rather than
-  sending the stored title back: Strava rewrites a title it reads as containing a link, and a
-  title this service no longer owns must not make that round trip.
+  it was. A *line*: the same text inside a sentence the athlete wrote is stepped over rather than
+  cut out of the middle of one, and an older wording of the line is left alone, because the
+  presence check matches the URL on purpose and deleting text has to be exact.
+  The write omits `name` from the form rather than sending the stored title back: Strava rewrites
+  a title it reads as containing a link, and a title this service no longer owns must not make
+  that round trip.
   Removal is keyed on the row's source rather than on what one sweep did, which is what makes it
   converge — after a crash between the record and the write, and after dry run, where the row is
   recorded, the write is withheld and the entry stays queued so that turning writes on finishes

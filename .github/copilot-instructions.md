@@ -56,8 +56,9 @@
   rather than having its `updates.title` written anywhere. Which of the two a
   sweep performs, naming or reconciling, is decided from the named log at sweep
   time and is not carried in the entry: a queue entry holds an athlete, an
-  activity and a deadline, and `Pending.Aspect` is provenance that nothing
-  reads.
+  activity and a deadline, plus `Pending.Aspect` - `create` or `update`,
+  checked against those two before the enqueue, and provenance that nothing
+  reads. No free text from a request body has ever reached the store.
 - `internal/server/` assembles the HTTP surface: health, the one-time OAuth
   bootstrap, and the webhook at its unguessable path.
 - `internal/app/` wires everything together and serves; it takes `getenv` as a

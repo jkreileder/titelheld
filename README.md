@@ -143,8 +143,9 @@ Two things, and only on an activity this service titled.
 **The title.** Only where the classifier cleared it: a Strava default, or a machine title
 another tool wrote. A human's title is never overwritten — on a sport ride it is *remembered*
 instead, recorded in the named log as source `human` so the prompt can neither repeat it nor
-miss the style it shows. That record is also what makes the ride final: it is never
-reconsidered, and no title is ever written to it again.
+miss the style it shows. That record is what makes the ride final *for naming*: no title is
+ever written to it again. The row itself still follows the athlete — a later rename replaces it,
+which is what [When the athlete renames](#when-the-athlete-renames) is about.
 
 **One line at the front of the description**, from pipeline step 7:
 
@@ -169,10 +170,12 @@ and Zwift rides left alone never get it, because they never got a title either.
 **And the same line, taken back out**, when the record says the title is no longer ours — see
 [When the athlete renames](#when-the-athlete-renames). That is the second and last way a
 description is touched: the exact line and the blank line after it, by the same
-read-modify-write, leaving every other byte where it was. A description carrying some older
-wording of the line keeps it — the presence check matches the URL so a reworded line cannot
-cause a second attribution, and the removal matches the whole line because it deletes text from
-a description that is the athlete's.
+read-modify-write, leaving every other byte where it was. It removes a *line* — the attribution
+has to start at the description or just after a line terminator and end at one, so the same text
+inside a sentence the athlete wrote is stepped over rather than cut out of the middle of it. A
+description carrying some older wording of the line keeps it too: the presence check matches the
+URL so a reworded line cannot cause a second attribution, and the removal matches the whole line
+because it deletes text from a description that is the athlete's.
 
 Nothing else is ours to change. Sport type, gear and the workout summaries other tools write
 are never touched.
@@ -352,7 +355,9 @@ so the ordering costs nothing that is not already handled.
 Queuing is all the intake does. An unnamed activity is queued to be named; an already-named one,
 on an update event, is queued to be re-examined. Which of the two a sweep performs is decided
 from the named log at sweep time and is not carried in the entry — a queue entry holds an
-athlete, an activity and a deadline, and has never held anything a request body said.
+athlete, an activity, a deadline, and the aspect the event declared, which is one of two known
+words checked before the enqueue and read by nothing. No free text from a request body has ever
+reached the store, and `updates.title` reaches nothing at all.
 
 The delay is served by a **Cloud Scheduler sweep** rather than Cloud Tasks: it needs no second
 GCP service and no client library, a failed activity simply stays queued until the next sweep
