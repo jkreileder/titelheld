@@ -57,15 +57,6 @@ type Ride struct {
 	Region  string
 	Country string
 
-	// Records and OtherAchievements count the ride's notable efforts — an
-	// effort ranked first among the athlete's own, and an effort Strava
-	// awarded something else — the same figures a derived example's situation
-	// carries, so a title that escalates a count is escalating the same count.
-	// The names under Achievements are capped and deduplicated and cannot be
-	// counted; these can.
-	Records           int
-	OtherAchievements int
-
 	// Achievements are the names of notable segment efforts — a personal
 	// top-three, or an achievement Strava awarded. Names only: the times and
 	// ranks that selected them never reach the prompt.
@@ -261,8 +252,6 @@ func BuildPrompt(ride Ride, ctx Context) Prompt {
 		writeField(&b, "Start hour", fmt.Sprintf("%02d:00", ride.StartLocal.Hour()))
 	}
 
-	writeCount(&b, "Personal records", ride.Records)
-	writeCount(&b, "Other achievements", ride.OtherAchievements)
 	writeField(&b, "Bike", ride.GearName)
 
 	writeList(&b, "PLACES", ride.Places)
@@ -416,16 +405,6 @@ func writeNumber(b *strings.Builder, label string, value float64, unit string) {
 	}
 
 	fmt.Fprintf(b, "- %s: %.1f %s\n", label, value, unit)
-}
-
-// writeCount omits a zero the way writeNumber does: "Personal records: 0" is
-// a claim, and an absent line is not.
-func writeCount(b *strings.Builder, label string, value int) {
-	if value <= 0 {
-		return
-	}
-
-	fmt.Fprintf(b, "- %s: %d\n", label, value)
 }
 
 func writeInt(b *strings.Builder, label string, value int, unit string) {

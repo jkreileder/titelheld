@@ -460,14 +460,15 @@ func teachesStyle(history []store.NamedTitle) []store.NamedTitle {
 
 // situationOf describes a ride in one line, for a few-shot example.
 //
-// Shape, time, and the numbers that explain the title. An example is there to
-// demonstrate a move, not just a style: "Fünf auf einen Streich" beside a
-// situation that says only "77 km ride, Saturday 09:00" reads as an arbitrary
-// association, and beside "5 PRs" it reads as the arithmetic it was. So the
-// salient counts travel — records, achievements, and the difficulty another
-// tool wrote into the description when it is there to be parsed.
+// Shape, time, and the difficulty another tool wrote into the description when
+// there is one to parse. No tally of records or achievements: a figure may
+// reach the model only if it is one the athlete could check, and there is no
+// such figure for what a ride achieved — Strava's own web feed, mobile feed
+// and API report three different numbers for the same ride, and a local legend
+// appears in none of the segment-effort data this service reads. A situation
+// stating a count would teach that counts are a thing to write about.
 //
-// Numbers only. Never a segment name: a name is somebody else's text and often
+// Never a segment name either: a name is somebody else's text and often
 // carries a place, and an example is not a route through the geography rule.
 // No place names for the same reason — they would need geocoding every
 // example, and the PLACES list is the only geography the prompt permits.
@@ -486,18 +487,6 @@ func situationOf(activity *strava.Activity) string {
 		parts = append(parts, fmt.Sprintf("%.0f m climbing", activity.TotalElevGain))
 	}
 
-	// The numbers before the time: they are the part that explains the
-	// title, so if anything is ever cut it is the weekday.
-	records, achievements := countEfforts(activity.SegmentEfforts)
-
-	if records > 0 {
-		parts = append(parts, plural(records, "PR", "PRs"))
-	}
-
-	if achievements > 0 {
-		parts = append(parts, plural(achievements, "achievement", "achievements"))
-	}
-
 	if difficulty := difficultyOf(activity.Description); difficulty != "" {
 		parts = append(parts, "difficulty "+difficulty)
 	}
@@ -508,27 +497,6 @@ func situationOf(activity *strava.Activity) string {
 	}
 
 	return strings.Join(parts, ", ")
-}
-
-// countEfforts counts the personal records and the other achievements among a
-// ride's segment efforts, disjointly.
-//
-// A record is an effort ranked first among the athlete's own; Strava also
-// lists it under the effort's achievements as a "pr", so counting both would
-// report every record twice. An achievement here is any other effort Strava
-// awarded something — a year's best, a place on the overall board — and the
-// kind is not reported, only that there was one.
-func countEfforts(efforts []strava.SegmentEffort) (records, achievements int) {
-	for _, effort := range efforts {
-		switch {
-		case effort.PRRank == 1:
-			records++
-		case len(effort.Achievements) > 0:
-			achievements++
-		}
-	}
-
-	return records, achievements
 }
 
 // difficultyOf reads the difficulty a tool wrote into the description.
@@ -554,11 +522,3 @@ func difficultyOf(description string) string {
 // letters, or a number. "Tough", "Very Difficult", "112" and "3.5" pass;
 // "x -> Sieg (de)" does not.
 var difficultyShape = regexp.MustCompile(`^(\p{L}+( \p{L}+){0,2}|[0-9]+([.,][0-9]+)?)$`)
-
-func plural(count int, singular, plural string) string {
-	if count == 1 {
-		return "1 " + singular
-	}
-
-	return fmt.Sprintf("%d %s", count, plural)
-}
