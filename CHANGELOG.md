@@ -10,6 +10,55 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.3] – 2026-08-31
+
+The athlete's rename becomes a record, from the one place that can check it. The capability was
+built once for v0.7.2, reviewed, and **dropped before release** on a security finding; the finding
+is this design. Strava signs no webhook `POST` — the verify token is checked on the `GET`
+handshake, Cloud Run grants `allUsers`, the unguessable path is the whole protection — so
+recording `updates.title` would have let anyone holding that path write text, as the athlete, on
+any already-named activity, where a planted row is eligible to become a few-shot example the model
+is told to imitate.
+
+- **Intake keeps its trust class; the sweep does the work.**
+  An update event on an activity already in the named log now queues it to be *re-examined*
+  instead of being dropped. Nothing else changes at the intake: a queue entry holds an athlete, an
+  activity and a deadline, and still holds nothing a request body said. A forged or replayed event
+  therefore costs one queue entry and one redundant read, which is the trust class the service
+  had before and is worth keeping.
+  The sweep re-reads the activity and records **the title Strava holds**. Which of the two things
+  a sweep does — name, or reconcile — is decided from the named log at sweep time rather than
+  carried in the entry, so nothing about the decision comes from an unauthenticated caller.
+- **Three limits dissolve rather than being carried across.**
+  A re-read is always current, so there is no stale echo to suppress: the redelivery the review
+  found — this service names a ride, the echo's acknowledgement is lost, the athlete renames, the
+  echo arrives again claiming a title that is no longer live — resolves against Strava like any
+  other event.
+  The source gate that closed it is superseded. It is no longer needed as a stand-in for
+  authentication, and its *other* justification does not apply either: a row is now replaced
+  whatever it said before, because a renamed commute's template row has to follow the rename or it
+  records a title that is not on Strava.
+  **A second rename is recorded**, which the intake design documented as a limit it could not
+  lift. And the 256-rune bound stops being load-bearing, because the title's provenance is Strava.
+- **A title Strava holds is still not automatically a person's.**
+  A Strava default the athlete reverted to, another tool's overwrite, and this service's own
+  commute templates are recognized and not recorded — the filter the history import already
+  applies. `SourceHuman` feeds the few-shot examples, so a row saying the athlete named a ride
+  "Morning Ride" would teach a model to answer with a Strava default.
+- **The attribution line comes out when the title stops being ours.**
+  The line says this service named the activity; after a rename that is false. It is removed by a
+  description-only write — the exact line and the blank line after it, every other byte left where
+  it was, and an older wording of the line left alone, because the presence check matches the URL
+  on purpose and deleting text has to be exact. The write omits `name` from the form rather than
+  sending the stored title back: Strava rewrites a title it reads as containing a link, and a
+  title this service no longer owns must not make that round trip.
+  Removal is keyed on the row's source rather than on what one sweep did, which is what makes it
+  converge — after a crash between the record and the write, and after dry run, where the row is
+  recorded, the write is withheld and the entry stays queued so that turning writes on finishes
+  the job.
+- `store.NamedLog.Named` returns the row rather than the title alone; `processor.Result` gains
+  `Reconciled` and the sweep's JSON reports it.
+
 ## [v0.7.2] – 2026-08-30
 
 The counts release. A ride was titled **"Neun auf einen Streich für den Silbernen"**, and no two
@@ -498,6 +547,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.3]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.3
 [v0.7.2]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.2
 [v0.7.1]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.1
 [v0.7.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.0

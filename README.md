@@ -32,6 +32,7 @@ everything that should stay boring untouched.
 - [The classifier](#the-classifier)
 - [Writes and dry run](#writes-and-dry-run)
 - [What gets written](#what-gets-written)
+- [When the athlete renames](#when-the-athlete-renames)
 - [What the prompt carries](#what-the-prompt-carries)
   - [The figure rule](#the-figure-rule)
 - [Configuration](docs/configuration.md) — every setting, and why it exists
@@ -143,7 +144,7 @@ Two things, and only on an activity this service titled.
 another tool wrote. A human's title is never overwritten — on a sport ride it is *remembered*
 instead, recorded in the named log as source `human` so the prompt can neither repeat it nor
 miss the style it shows. That record is also what makes the ride final: it is never
-reconsidered, and nothing about it — not the title, not the description — is ever written.
+reconsidered, and no title is ever written to it again.
 
 **One line at the front of the description**, from pipeline step 7:
 
@@ -165,8 +166,63 @@ Attribution never blocks a naming. If the description cannot be read, the title 
 own and the reason is logged. It is on by default and can be switched off; skipped activities
 and Zwift rides left alone never get it, because they never got a title either.
 
+**And the same line, taken back out**, when the record says the title is no longer ours — see
+[When the athlete renames](#when-the-athlete-renames). That is the second and last way a
+description is touched: the exact line and the blank line after it, by the same
+read-modify-write, leaving every other byte where it was. A description carrying some older
+wording of the line keeps it — the presence check matches the URL so a reworded line cannot
+cause a second attribution, and the removal matches the whole line because it deletes text from
+a description that is the athlete's.
+
 Nothing else is ours to change. Sport type, gear and the workout summaries other tools write
 are never touched.
+
+## When the athlete renames
+
+A title this service wrote is a suggestion. The athlete overwrites one from time to time, and
+what they typed is the best style data there is — so the record follows them.
+
+Strava emits an update event for the rename. The intake **queues the activity and writes
+nothing**, which is the whole design: Strava signs no webhook `POST`. The verify token is
+checked on the `GET` handshake, Cloud Run holds `roles/run.invoker` for `allUsers` because the
+webhook has no way to present a Google credential, and the unguessable path is the entire
+protection. So a forged or replayed event may cost one queue entry and no more — the sweep
+re-validates every queued activity against Strava. Recording a title an event *claimed* would
+spend that: a planted row is eligible to become a few-shot example the model is told to
+imitate, and no origin authentication exists to buy it back.
+
+The sweep does the rest, because it holds what the intake does not — the authenticated context,
+the Strava client and the write mode. It re-reads the activity and records **the title Strava
+holds**, never the one the event claimed:
+
+| What Strava holds        | What happens                                                       |
+| ------------------------ | ------------------------------------------------------------------ |
+| The recorded title       | Nothing. The event was this service's own rename coming back round |
+| Something a person typed | The row becomes that title, source `human`, dated by the ride      |
+| Something else           | Nothing recorded — see below                                       |
+
+Re-reading rather than comparing against a claim is what makes the rest fall out. There is no
+stale echo to suppress: an event delivered twice, out of order, or minutes late resolves
+against the same current Strava state. A second rename is recorded like the first, because
+nothing has to remember how many there have been. And a delay is not needed for correctness at
+all — a re-read is always current, and a later rename produces a later event. The queued
+reconcile waits out the same delay anyway, which costs nothing and buys two small things: a
+burst of edits collapses into one entry, and the athlete is not raced while they are still
+typing.
+
+"Something else" is a Strava default the athlete reverted to, another tool's overwrite, or one
+of this service's own commute templates. None of those is recorded, and the reason is what the
+`human` source is *for*: it feeds the few-shot examples, so a row saying the athlete named a
+ride "Morning Ride" would teach a model to answer with a Strava default. It is the same filter
+the history import applies. What is deliberately not checked is the tier or what the row said
+before — a renamed commute's template row has to follow the rename, or it records a title that
+is not on Strava.
+
+The activity is never renamed here, and cannot be: this service is the last writer and it
+writes a title once. The only write is the attribution line coming out, and only once the row
+says the title is the athlete's. That is driven by the row rather than by what one sweep did,
+which is what makes it finish after a crash and after a dry run: the row is already `human`,
+the title has not moved, and the next sweep does the description alone.
 
 ## What the prompt carries
 
@@ -293,6 +349,11 @@ Events are acknowledged before the queue is written, which is the order Strava's
 budget assumes. A delivery that is never acknowledged is retried, and the queue is idempotent,
 so the ordering costs nothing that is not already handled.
 
+Queuing is all the intake does. An unnamed activity is queued to be named; an already-named one,
+on an update event, is queued to be re-examined. Which of the two a sweep performs is decided
+from the named log at sweep time and is not carried in the entry — a queue entry holds an
+athlete, an activity and a deadline, and has never held anything a request body said.
+
 The delay is served by a **Cloud Scheduler sweep** rather than Cloud Tasks: it needs no second
 GCP service and no client library, a failed activity simply stays queued until the next sweep
 instead of needing its own retry policy, and ten-minute precision makes the scheduler's coarse
@@ -343,8 +404,12 @@ entry left queued, never a rename sent with nothing recorded. The response is a 
 `cancelled` field is true, carrying the counts of what was finished before it stopped:
 
 ```json
-{"due":12,"named":3,"skipped":1,"failed":0,"cancelled":true}
+{"due":12,"named":3,"reconciled":2,"skipped":1,"failed":0,"cancelled":true}
 ```
+
+`reconciled` counts activities that were re-examined against Strava rather than named — an
+update event on one already in the named log. It is neither a naming nor a skip: no title was
+produced, and nothing was declined. See [When the athlete renames](#when-the-athlete-renames).
 
 ## Development
 
