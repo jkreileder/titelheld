@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/jkreileder/titelheld/internal/config"
+	"github.com/jkreileder/titelheld/internal/processor"
 	"github.com/jkreileder/titelheld/internal/server"
 	"github.com/jkreileder/titelheld/internal/store"
 	firestorestore "github.com/jkreileder/titelheld/internal/store/firestore"
@@ -50,13 +51,25 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		RedirectURL:  cfg.RedirectURL(),
 	}
 
+	// The rename path needs the same title filter the sweep's recorder uses,
+	// so it is built from the same configuration rather than from a second
+	// copy of the rules.
+	classifierCfg, err := classifierConfig(cfg)
+	if err != nil {
+		return err
+	}
+
 	hook, err := webhook.New(webhook.Config{
 		VerifyToken: cfg.StravaVerifyToken,
 		AthleteID:   cfg.AthleteID,
 		Delay:       cfg.ProcessDelay,
 		Queue:       dataStore,
 		Named:       dataStore,
-		Logger:      logger,
+		AthleteTitle: func(title string) bool {
+			return processor.IsAthleteTitle(
+				title, classifierCfg.MachineTitles, classifierCfg.TemplateTitles())
+		},
+		Logger: logger,
 	})
 	if err != nil {
 		return fmt.Errorf("build webhook: %w", err)

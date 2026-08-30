@@ -11,9 +11,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jkreileder/titelheld/internal/logsafe"
+	"github.com/jkreileder/titelheld/internal/naming"
 	"github.com/jkreileder/titelheld/internal/store"
 )
 
@@ -35,7 +37,12 @@ const (
 
 	// updateAuthorized is the key Strava uses to signal a revoked grant, and
 	// deauthorizedValue the value that means revoked.
-	updateAuthorized  = "authorized"
+	updateAuthorized = "authorized"
+
+	// updateTitle is the key an update event carries when the athlete has
+	// renamed the activity. It is the only title source this path trusts.
+	updateTitle = "title"
+
 	deauthorizedValue = "false"
 	aspectCreate      = "create"
 	aspectUpdate      = "update"
@@ -73,6 +80,10 @@ type Handler struct {
 	named       store.NamedLog
 	logger      *slog.Logger
 	now         func() time.Time
+
+	// athleteTitle decides whether a title on an already-named activity is
+	// the athlete's own. Nil leaves a rename a plain drop.
+	athleteTitle func(string) bool
 }
 
 // Config configures a [Handler].
@@ -91,6 +102,12 @@ type Config struct {
 	Queue store.Queue
 	Named store.NamedLog
 
+	// AthleteTitle, when set, turns a rename into training data: an update
+	// event whose title differs from the recorded row rewrites that row under
+	// source human, provided this reports the new title is the athlete's own.
+	// Nil disables the path entirely.
+	AthleteTitle func(string) bool
+
 	// Logger defaults to slog.Default.
 	Logger *slog.Logger
 
@@ -108,13 +125,14 @@ func New(cfg Config) (*Handler, error) {
 	}
 
 	handler := &Handler{
-		verifyToken: cfg.VerifyToken,
-		athleteID:   cfg.AthleteID,
-		delay:       cfg.Delay,
-		queue:       cfg.Queue,
-		named:       cfg.Named,
-		logger:      cfg.Logger,
-		now:         cfg.Now,
+		verifyToken:  cfg.VerifyToken,
+		athleteID:    cfg.AthleteID,
+		delay:        cfg.Delay,
+		queue:        cfg.Queue,
+		named:        cfg.Named,
+		athleteTitle: cfg.AthleteTitle,
+		logger:       cfg.Logger,
+		now:          cfg.Now,
 	}
 
 	if handler.logger == nil {
@@ -260,7 +278,7 @@ func (h *Handler) process(ctx context.Context, event Event) {
 
 	// An activity is named at most once, ever. This is also what makes the
 	// update event caused by our own rename a no-op rather than a second pass.
-	title, named, err := h.named.Named(ctx, event.OwnerID, event.ObjectID)
+	entry, named, err := h.named.Named(ctx, event.OwnerID, event.ObjectID)
 	if err != nil {
 		log.Error("could not check the named log", "error", err)
 
@@ -268,8 +286,10 @@ func (h *Handler) process(ctx context.Context, event Event) {
 	}
 
 	if named {
+		h.recordRename(ctx, event, entry, log)
+
 		log.Info("event ignored", "reason", "activity already named",
-			"title", logsafe.String(title))
+			"title", logsafe.String(entry.Title))
 
 		return
 	}
@@ -332,4 +352,68 @@ func equalSecret(got, want string) bool {
 	wantSum := sha256.Sum256([]byte(want))
 
 	return subtle.ConstantTimeCompare(gotSum[:], wantSum[:]) == 1
+}
+
+// recordRename rewrites the named row when the athlete has retitled an
+// activity this service named.
+//
+// The update event that carries a rename was previously dropped and nothing
+// else, so a correction reached the store only if somebody edited the row by
+// hand. Now the athlete's own wording becomes the row: the same title they can
+// see on their feed, under source human, where it joins RECENT so the model
+// cannot invent it again and the few-shot examples so it teaches the voice
+// that produced it.
+//
+// Three things bound it.
+//
+// It reads updates.title and never fetches the activity. Intake acknowledges
+// before it touches the store and holds no Strava client; a rename is exactly
+// the moment the athlete may still be editing, and a read-modify-write racing
+// them is the worst thing this path could do.
+//
+// It preserves NamedAt. RECENT is ordered by that timestamp, so dating the row
+// by the rename would put a ride renamed months later at the top of the list
+// and offer an old title as recent material.
+//
+// It applies the same filter the skip-path recorder applies. A title reset to
+// a Strava default, or replaced by a tool's, is not authorship — recording one
+// would teach the examples something the athlete never wrote.
+func (h *Handler) recordRename(
+	ctx context.Context, event Event, entry store.NamedTitle, log *slog.Logger,
+) {
+	if h.athleteTitle == nil {
+		return
+	}
+
+	title := strings.TrimSpace(event.Updates[updateTitle])
+	if title == "" || title == strings.TrimSpace(entry.Title) {
+		// Nothing changed, or the event says nothing about the title — which
+		// is also the shape of this service's own write coming back round.
+		return
+	}
+
+	if !h.athleteTitle(title) {
+		log.Info("not recording the rename; the new title is not the athlete's own",
+			"title", logsafe.String(title))
+
+		return
+	}
+
+	if err := h.named.MarkNamed(ctx, store.Naming{
+		AthleteID:  event.OwnerID,
+		ActivityID: event.ObjectID,
+		Title:      title,
+		Language:   string(naming.GuessLanguage(title)),
+		Source:     store.SourceHuman,
+		At:         entry.NamedAt,
+	}); err != nil {
+		// The event is still dropped: the activity is named either way, and
+		// the cost of this failure is a stale row rather than a wrong write.
+		log.Error("could not record the athlete's rename", "error", err)
+
+		return
+	}
+
+	log.Info("the athlete retitled this activity; the row is theirs now",
+		"was", logsafe.String(entry.Title), "title", logsafe.String(title))
 }

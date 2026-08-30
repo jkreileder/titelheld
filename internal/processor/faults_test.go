@@ -62,9 +62,9 @@ func (f *faultyStore) Due(ctx context.Context, at time.Time) ([]store.Pending, e
 	return f.Store.Due(ctx, at)
 }
 
-func (f *faultyStore) Named(ctx context.Context, athleteID, activityID int64) (string, bool, error) {
+func (f *faultyStore) Named(ctx context.Context, athleteID, activityID int64) (store.NamedTitle, bool, error) {
 	if f.namedErr != nil {
-		return "", false, f.namedErr
+		return store.NamedTitle{}, false, f.namedErr
 	}
 
 	return f.Store.Named(ctx, athleteID, activityID)

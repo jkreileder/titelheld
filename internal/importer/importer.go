@@ -34,7 +34,7 @@ type Activities interface {
 // History is the part of the store it writes to.
 type History interface {
 	MarkNamed(ctx context.Context, naming store.Naming) error
-	Named(ctx context.Context, athleteID, activityID int64) (string, bool, error)
+	Named(ctx context.Context, athleteID, activityID int64) (store.NamedTitle, bool, error)
 }
 
 // Deps is what an import needs.

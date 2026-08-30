@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jkreileder/titelheld/internal/classifier"
 	"github.com/jkreileder/titelheld/internal/store"
 )
 
@@ -36,6 +38,11 @@ func newHandler(t *testing.T, memory *store.Memory, athleteID int64) *Handler {
 		Named:       memory,
 		Logger:      quietLogger(),
 		Now:         func() time.Time { return testNow },
+		AthleteTitle: func(title string) bool {
+			// The production filter's shape, minimal: a Strava default is not
+			// the athlete's, anything else is.
+			return !classifier.IsDefaultTitle(title)
+		},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -382,9 +389,9 @@ type failingStore struct {
 	enqueueErr error
 }
 
-func (f *failingStore) Named(ctx context.Context, athleteID, activityID int64) (string, bool, error) {
+func (f *failingStore) Named(ctx context.Context, athleteID, activityID int64) (store.NamedTitle, bool, error) {
 	if f.namedErr != nil {
-		return "", false, f.namedErr
+		return store.NamedTitle{}, false, f.namedErr
 	}
 
 	return f.Memory.Named(ctx, athleteID, activityID)
@@ -617,5 +624,163 @@ func TestRecentEventTimeIsStillHonoured(t *testing.T) {
 	due, _ := memory.Due(t.Context(), testNow.Add(time.Hour))
 	if want := eventTime.Add(10 * time.Minute); !due[0].ProcessAfter.Equal(want) {
 		t.Errorf("ProcessAfter = %v, want %v", due[0].ProcessAfter, want)
+	}
+}
+
+// renamedActivity is the one activity the rename cases work on.
+const renamedActivity = 777
+
+// renameEvent is the update Strava sends when the athlete retitles an activity.
+func renameEvent(title string) string {
+	return fmt.Sprintf(
+		`{"object_type":"activity","object_id":%d,"aspect_type":"update",`+
+			`"owner_id":4242,"updates":{"title":%q}}`, renamedActivity, title)
+}
+
+// named seeds a row the way the sweep would have written one: source
+// service, because that is the only kind a rename can arrive on.
+func named(t *testing.T, memory *store.Memory, title string) time.Time {
+	t.Helper()
+
+	at := testNow.Add(-72 * time.Hour)
+
+	if err := memory.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 4242, ActivityID: renamedActivity,
+		Title: title, Language: "de", Source: store.SourceService, At: at,
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	return at
+}
+
+func row(t *testing.T, memory *store.Memory) store.NamedTitle {
+	t.Helper()
+
+	entry, ok, err := memory.Named(t.Context(), 4242, renamedActivity)
+	if err != nil || !ok {
+		t.Fatalf("Named: %v, %v", ok, err)
+	}
+
+	return entry
+}
+
+// The athlete's rename becomes the row, under their name.
+//
+// This is the systematic form of the one-off edit that repaired the row after
+// a title was written that should never have been: a correction the athlete
+// makes on their feed reaches the store by itself, joins RECENT so the model
+// cannot invent it again, and becomes eligible to teach the examples.
+func TestARenameBecomesTheAthletesRow(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 4242)
+	at := named(t, memory, "Neun auf einen Streich")
+
+	if code := post(t, handler, renameEvent("Windschief")).Code; code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+
+	entry := row(t, memory)
+
+	if entry.Title != "Windschief" {
+		t.Errorf("title = %q, want the athlete's", entry.Title)
+	}
+
+	if entry.Source != store.SourceHuman {
+		t.Errorf("source = %q, want %q", entry.Source, store.SourceHuman)
+	}
+
+	// RECENT is ordered by this, so a rename must not move the ride.
+	if !entry.NamedAt.Equal(at) {
+		t.Errorf("named_at = %v, want the row's own %v", entry.NamedAt, at)
+	}
+
+	// Still named: the activity is final either way, and a rename must not
+	// put it back in the queue.
+	if n, _ := memory.Len(t.Context()); n != 0 {
+		t.Errorf("%d queued; a renamed activity is still named", n)
+	}
+}
+
+// An update carrying the title this service wrote changes nothing.
+//
+// This is the shape of our own write coming back round, which is the event the
+// named log exists to absorb.
+func TestOurOwnTitleComingBackChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 4242)
+	named(t, memory, "Windschief")
+
+	post(t, handler, renameEvent("Windschief"))
+
+	if entry := row(t, memory); entry.Source != store.SourceService {
+		t.Errorf("source = %q; a re-delivery rewrote the row", entry.Source)
+	}
+}
+
+// An update that says nothing about the title changes nothing.
+func TestAnUpdateWithoutATitleChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 4242)
+	named(t, memory, "Windschief")
+
+	post(t, handler, fmt.Sprintf(`{"object_type":"activity","object_id":%d,"aspect_type":"update",`+
+		`"owner_id":4242,"updates":{"type":"Ride"}}`, renamedActivity))
+
+	if entry := row(t, memory); entry.Source != store.SourceService {
+		t.Errorf("source = %q; an unrelated update rewrote the row", entry.Source)
+	}
+}
+
+// The override is idempotent per title: it fires once for a rename, and a
+// re-delivery of the same event does nothing further.
+func TestTheOverrideFiresOncePerRename(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 4242)
+	named(t, memory, "Neun auf einen Streich")
+
+	for range 3 {
+		post(t, handler, renameEvent("Windschief"))
+	}
+
+	entry := row(t, memory)
+	if entry.Title != "Windschief" || entry.Source != store.SourceHuman {
+		t.Fatalf("row = %q/%q", entry.Title, entry.Source)
+	}
+
+	// A second, different rename is a second override — "once per rename",
+	// not once ever.
+	post(t, handler, renameEvent("Gegenwind bis Musterstadt"))
+
+	if got := row(t, memory).Title; got != "Gegenwind bis Musterstadt" {
+		t.Errorf("title = %q, want the second rename", got)
+	}
+}
+
+// Resetting a title to a Strava default is not authorship.
+//
+// The row would otherwise teach the examples a title the athlete never wrote,
+// and RECENT would forbid a name that is not a name.
+func TestAResetToADefaultDoesNotBecomeTheAthletesRow(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 4242)
+	named(t, memory, "Windschief")
+
+	post(t, handler, renameEvent("Morning Ride"))
+
+	entry := row(t, memory)
+	if entry.Title != "Windschief" || entry.Source != store.SourceService {
+		t.Errorf("row = %q/%q; a reset to a Strava default was recorded as the athlete's",
+			entry.Title, entry.Source)
 	}
 }

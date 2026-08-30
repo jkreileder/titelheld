@@ -288,11 +288,11 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 	// activity, Strava emitted an update event for that rename, and the event
 	// came back round. It is not an error and not work. A ride recorded under
 	// a human title is in the same log and is equally finished.
-	if title, named, err := p.deps.Store.Named(ctx, pending.AthleteID, pending.ActivityID); err != nil {
+	if entry, named, err := p.deps.Store.Named(ctx, pending.AthleteID, pending.ActivityID); err != nil {
 		return outcomeSkipped, fmt.Errorf("read the named log: %w", err)
 	} else if named {
 		logger.Info("already in the named log; dropping the event",
-			"title", logsafe.String(title))
+			"title", logsafe.String(entry.Title))
 
 		return outcomeSkipped, nil
 	}
@@ -412,6 +412,30 @@ func (p *Processor) recordHumanTitle(
 		"title", logsafe.String(activity.Name))
 
 	return nil
+}
+
+// IsAthleteTitle reports whether a title on an activity this service already
+// named is one the athlete wrote.
+//
+// The webhook asks this before it rewrites a named row after a rename. It is
+// the skip-path recorder's filter, exported rather than reimplemented: the two
+// must agree, because both decide what becomes style data, and a copy would
+// drift the first time either was edited.
+//
+// A Strava default and a recognized machine title fail it. Resetting a title,
+// or letting a tool have it back, is not authorship — and a row recorded as
+// the athlete's teaches the examples a voice they never used.
+func IsAthleteTitle(title string, machine classifier.MachineTitles, templates []string) bool {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return false
+	}
+
+	if classifier.IsDefaultTitle(trimmed) || machine.Matches(trimmed) {
+		return false
+	}
+
+	return notAPersonsTitle(trimmed, templates) == ""
 }
 
 // notAPersonsTitle says why an unrecognized title is still not the athlete's,

@@ -435,8 +435,8 @@ func TestTheNamedLogRecordsWhatStravaKept(t *testing.T) {
 		t.Fatal("the activity is not in the named log")
 	}
 
-	if stored != kept {
-		t.Errorf("named log holds %q, want what Strava kept: %q", stored, kept)
+	if stored.Title != kept {
+		t.Errorf("named log holds %q, want what Strava kept: %q", stored.Title, kept)
 	}
 }
 
@@ -515,8 +515,8 @@ func TestAnUnchangedTitleIsNotRewritten(t *testing.T) {
 		t.Fatalf("Named: %v", err)
 	}
 
-	if stored != "Musterrunde am Musterbach" {
-		t.Errorf("named log holds %q", stored)
+	if stored.Title != "Musterrunde am Musterbach" {
+		t.Errorf("named log holds %q", stored.Title)
 	}
 
 	if got := counting.count(); got != 1 {

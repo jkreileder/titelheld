@@ -221,9 +221,15 @@ type NamedLog interface {
 	// MarkNamed records that an activity was given a title by this service.
 	MarkNamed(ctx context.Context, naming Naming) error
 
-	// Named reports whether the activity has already been named, and with what
-	// title.
-	Named(ctx context.Context, athleteID, activityID int64) (string, bool, error)
+	// Named reports whether the activity has already been named, and returns
+	// the row if so.
+	//
+	// The whole row rather than the title alone: a caller correcting the row
+	// after the athlete renames the activity has to preserve what it does not
+	// mean to change, and NamedAt is the one field it must not invent — the
+	// order of RECENT is that timestamp, and a rename months later would
+	// otherwise put an old ride at the top of it.
+	Named(ctx context.Context, athleteID, activityID int64) (NamedTitle, bool, error)
 
 	// RecentTitles returns the titles most recently written for an athlete,
 	// newest first, at most limit of them.

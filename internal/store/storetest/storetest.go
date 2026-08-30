@@ -311,12 +311,39 @@ func namedLogRoundTrip(t *testing.T, s store.Store) {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 
-	title, named, err := s.Named(t.Context(), 1, 5)
+	entry, named, err := s.Named(t.Context(), 1, 5)
 	if err != nil {
 		t.Fatalf("Named: %v", err)
 	}
-	if !named || title != "The Pink Panther Strikes Again" {
-		t.Errorf("Named = %q, %v", title, named)
+	if !named || entry.Title != "The Pink Panther Strikes Again" {
+		t.Errorf("Named = %q, %v", entry.Title, named)
+	}
+
+	// A second MarkNamed on the same key replaces the row rather than adding
+	// one, carrying every field with it. That is what lets the athlete's
+	// rename correct what this service wrote, and the timestamp is part of it:
+	// the caller preserves the row's own, so RECENT keeps its order.
+	corrected := Now.Add(-72 * time.Hour)
+
+	if err := s.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 1, ActivityID: 5,
+		Title: "Windschief", Language: "de",
+		Source: store.SourceHuman, At: corrected,
+	}); err != nil {
+		t.Fatalf("MarkNamed over an existing row: %v", err)
+	}
+
+	overwritten, ok, err := s.Named(t.Context(), 1, 5)
+	if err != nil || !ok {
+		t.Fatalf("Named after overwrite: %v, %v", ok, err)
+	}
+
+	if overwritten.Title != "Windschief" || overwritten.Source != store.SourceHuman {
+		t.Errorf("row = %q/%q, want the correction", overwritten.Title, overwritten.Source)
+	}
+
+	if !overwritten.NamedAt.Equal(corrected) {
+		t.Errorf("named_at = %v, want %v", overwritten.NamedAt, corrected)
 	}
 }
 
