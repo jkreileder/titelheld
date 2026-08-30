@@ -1368,25 +1368,29 @@ func unwrap(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-// The ride being named carries the counts the examples teach with.
+// The prompt states no tally at all.
 //
-// The names under ACHIEVEMENTS are capped and deduplicated, so a model asked
-// to escalate "Fünf auf einen Streich" from a list of six names would write
-// six for a ride with eight records. The counts under RIDE are the figure.
-func TestBuildPromptCarriesTheEffortCounts(t *testing.T) {
+// The figure rule: a title may carry a figure only if the prompt states it,
+// and the prompt states only figures consistent across Strava's surfaces.
+// There is no such figure for a ride's achievements — web, mobile and the API
+// disagree, and local legends are absent from segment efforts entirely — so
+// RIDE carries names and no counts, and a model has nothing to escalate.
+func TestBuildPromptStatesNoEffortTally(t *testing.T) {
 	t.Parallel()
 
-	prompt := BuildPrompt(Ride{Records: 8, OtherAchievements: 1}, Context{})
+	prompt := BuildPrompt(Ride{
+		Achievements: []string{"Musterhöhe Nordrampe", "Musterbach Sprint"},
+	}, Context{}).User
 
-	for _, want := range []string{"- Personal records: 8\n", "- Other achievements: 1"} {
-		if !strings.Contains(prompt.User, want) {
-			t.Errorf("the prompt lacks %q:\n%s", want, prompt.User)
+	for _, gone := range []string{"Personal records", "Other achievements"} {
+		if strings.Contains(prompt, gone) {
+			t.Errorf("the prompt still tallies %q:\n%s", gone, prompt)
 		}
 	}
 
-	if plain := BuildPrompt(Ride{}, Context{}).User; strings.Contains(plain, "records") ||
-		strings.Contains(plain, "achievements: 0") {
-		t.Errorf("a ride with nothing notable claims a count:\n%s", plain)
+	// The names stay: a segment name is checkable by opening the ride.
+	if !strings.Contains(prompt, "Musterhöhe Nordrampe") {
+		t.Errorf("the achievement names were dropped along with the counts:\n%s", prompt)
 	}
 }
 
