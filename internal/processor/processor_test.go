@@ -795,3 +795,40 @@ func TestTheNamedLogIsKeyedOnTheQueuesAthlete(t *testing.T) {
 		t.Errorf("%d PUTs; the activity was renamed again under a different key", len(writes))
 	}
 }
+
+// IsAthleteTitle decides what a rename may record.
+//
+// The webhook asks this before it rewrites a named row, and it is the same
+// filter the skip-path recorder applies — the two must agree, because both
+// decide what becomes style data.
+func TestIsAthleteTitle(t *testing.T) {
+	t.Parallel()
+
+	machine := classifier.DefaultMachineTitles()
+	templates := classifier.DefaultConfig().TemplateTitles()
+	if len(templates) == 0 {
+		t.Fatal("the shipped configuration names no templates")
+	}
+
+	for _, tt := range []struct {
+		name  string
+		title string
+		want  bool
+	}{
+		{"a title the athlete wrote", "Windschief", true},
+		{"padded, still theirs", "  Windschief  ", true},
+		{"a Strava default", "Morning Ride", false},
+		{"a shipped machine title", "Difficult Mixed Breakaway Specialist Ride", false},
+		{"one of this service's own templates", templates[0], false},
+		{"empty", "", false},
+		{"whitespace only", "   ", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := IsAthleteTitle(tt.title, machine, templates); got != tt.want {
+				t.Errorf("IsAthleteTitle(%q) = %v, want %v", tt.title, got, tt.want)
+			}
+		})
+	}
+}
