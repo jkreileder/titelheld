@@ -10,6 +10,49 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.2] – 2026-08-30
+
+The counts release. A ride was titled **"Neun auf einen Streich für den Silbernen"**, and no two
+surfaces agreed on what it had achieved: the Strava web feed showed 3, the mobile feed 5, and the
+API's `achievement_count` 9 — the last of which is where the nine came from, and the only one the
+athlete could not reach by counting. The prompt had stated `Personal records: 1` and `Other
+achievements: 8`, and the model added them.
+
+- **The figure rule.**
+  A title may contain a figure only if the prompt states that figure, and the prompt states only
+  figures consistent across Strava's own surfaces.
+  No count of what a ride achieved qualifies, so the tallies leave the prompt: `Personal records`
+  and `Other achievements` go from `RIDE`, the PR and achievement counts go from a derived
+  example's situation, and `Ride.Records`, `Ride.OtherAchievements` and `countEfforts` are deleted
+  rather than left unprinted.
+  The athlete counts five for that ride, two of them local legends — which appear nowhere in the
+  segment-effort data this service reads, so no arithmetic over it could ever have reached their
+  number. The counts were not bucketed wrongly; they came from a source without the answer.
+  The `ACHIEVEMENTS` names stay: a segment name is checkable by opening the ride page, which is
+  exactly what a tally is not.
+  No every-integer-must-be-a-stated-figure check is built — with no figure in the prompt there is
+  nothing for a title to quote.
+- **The variety rule replaces the escalation instance.**
+  The system prompt told the model to write those titles: *"escalate a number when this ride's
+  figures support it — after 'Fünf auf einen Streich', a ride with eight records is 'Acht auf einen
+  Streich'"*, with the title it names sitting permanently in `RECENT` as an imported row. Two of
+  the three LLM titles judged since go-live were number titles. The specification was the
+  operator's; the model did what it was told.
+  In its place, pre-registered before the evidence: **a move already visible in the last few
+  `RECENT` titles is a reason to choose a different angle**, because a pattern repeated is a
+  formula and not a voice. The invitation to build on `RECENT` stays.
+  The synthetic escalation example is deleted rather than reworded, and the two rules that pointed
+  at the retired counts are rewritten. `TestDataGuardsAreVerbatim` pins the variety rule word for
+  word.
+Not in this release, by decision: **turning the athlete's rename into training data.** It was built
+and dropped. Strava does not sign its webhook POSTs, so recording `updates.title` straight into the
+named log would have let anyone holding the unguessable path write text as the athlete's on any
+already-named activity — where a planted row is eligible to become a few-shot example. Intake's
+trust class is that a forged event can at most enqueue an activity ID, which the sweep then
+re-validates against Strava; that is worth keeping. v0.7.3 builds it sweep-side, where the title
+recorded is the one Strava actually holds. Removing this service's attribution line when a rename
+means the title is no longer ours belongs in the same place, for the same reason.
+
 ## [v0.7.1] – 2026-08-29
 
 The first incident under real writes, and what it exposed.
@@ -455,6 +498,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.2]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.2
 [v0.7.1]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.1
 [v0.7.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.0
 [v0.6.0]: https://github.com/jkreileder/titelheld/releases/tag/v0.6.0
