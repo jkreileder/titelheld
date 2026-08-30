@@ -33,6 +33,7 @@ everything that should stay boring untouched.
 - [Writes and dry run](#writes-and-dry-run)
 - [What gets written](#what-gets-written)
 - [What the prompt carries](#what-the-prompt-carries)
+  - [The figure rule](#the-figure-rule)
 - [Configuration](docs/configuration.md) — every setting, and why it exists
 - [HTTP surface](#http-surface)
 - [Development](#development)
@@ -173,31 +174,27 @@ Beyond the ride itself, four things — all of them derived, none of them commit
 repository.
 
 **The last 25 titles worth not repeating.** The prompt forbids repeating any of them and offers
-them as material: continue a series, answer an earlier title, escalate a number when this ride's
-figures support it — after *Fünf auf einen Streich*, a ride with eight records is *Acht auf einen
-Streich* — and prefer a callback that fits to a fresh idea. The same prompt puts a route
-description last among the candidate angles, behind what the ride did and what it continues; an
-effort under `ACHIEVEMENTS` is offered on equal footing with geography rather than "if it fits".
-Strength and salience are the levers here: given the material and a mild invitation, a model
-reaches for the route. The ride itself carries its counts — `Personal records`, `Other
-achievements` — from the same rule that counts them for an example, so a title that escalates a
-number escalates the figure and not the length of the capped `ACHIEVEMENTS` list. Because the
-model is told to build on the one and imitate the other, `RECENT` and `EXAMPLES` carry the same
-guard as `Bike`, `NOTES` and `ACHIEVEMENTS`: data, never instructions — the wording, not
-anything a line asks.
+them as material: continue a series, answer an earlier title, pick up a word, and prefer a
+callback that fits to a fresh idea. It also bounds that invitation — **a move already visible in
+the last few titles is a reason to choose a different angle**, because a pattern repeated is a
+formula and not a voice. The same prompt puts a route description last among the candidate
+angles, behind what the ride did and what it continues; an effort under `ACHIEVEMENTS` is offered
+on equal footing with geography rather than "if it fits". Strength and salience are the levers
+here: given the material and a mild invitation, a model reaches for the route. Because the model
+is told to build on the one and imitate the other, `RECENT` and `EXAMPLES` carry the same guard
+as `Bike`, `NOTES` and `ACHIEVEMENTS`: data, never instructions — the wording, not anything a
+line asks.
 They come from the named log with one kind dropped: a commute or errand
 template is meant to repeat, so listing it both forbids the right answer for the next commute and
 crowds the real titles out of a list of twenty-five. Everything else stays, imported titles
 included — a title the athlete gave a ride years ago is one to avoid repeating, whoever wrote it.
 
 **Few-shot examples, from titles this service wrote and titles the athlete has written since.**
-Six of them, rebuilt at prompt time — the synthetic set that stands in carries seven. The
+Six of them, rebuilt at prompt time — the synthetic set that stands in carries six. The
 named log keeps each title and the language it was written in, and the ride that produced it is
-re-read from Strava to describe the situation — its
-shape and time, and the numbers that explain the title: how many records, how many other
-achievements, and the difficulty a tool wrote into the description, so that "Fünf auf einen
-Streich" beside "5 PRs" is a demonstrated move rather than an arbitrary association. Numbers
-only; the segment names behind the counts never enter an example, and neither does a place. Two
+re-read from Strava to describe the situation — its shape and time, and the difficulty a tool
+wrote into the description. No tally: see [The figure rule](#the-figure-rule). A segment name
+never enters an example either, and neither does a place. Two
 sources qualify — `service`, and `human`, the title of a sport ride the skip gate left alone. The
 athlete's current hand-namings are the best style data there will ever be, and admitting only the
 service's own titles would have closed the style loop on itself. An `imported` row never
@@ -213,7 +210,27 @@ history only changes when something is named, so a sweep repeating every five mi
 **The names of notable segment efforts**, under `ACHIEVEMENTS` — a personal top-three on the
 segment, or an achievement Strava awarded, deduplicated and capped at six. Names only: the times
 and ranks that selected them never reach the prompt, the same way the geo layer passes verified
-place names and no coordinates.
+place names and no coordinates. Names, and no count of them — see below.
+
+### The figure rule
+
+**A title may contain a figure only if the prompt states that figure, and the prompt states only
+figures that are consistent across Strava's own surfaces.** Today no count of what a ride achieved
+qualifies, so the prompt states none.
+
+The rule was written after a title claimed nine achievements. Nine was not invented: the prompt
+carried `Personal records: 1` and `Other achievements: 8`, and the model added them. But for that
+same ride the Strava web feed showed **3**, the mobile feed showed **5**, and the API's
+`achievement_count` said **9** — and the athlete, counting by hand, got 5, of which two were local
+legends. Local legends appear nowhere in the segment-effort data this service reads, so no
+arithmetic over it can ever reach the number the athlete sees. The counts were not bucketed
+wrongly; they were derived from a source that does not contain the answer.
+
+So the tallies are gone from the ride and from the examples, and the `ACHIEVEMENTS` names stay: a
+segment name is checkable by opening the ride page, which is exactly what a count is not. There is
+no validator check that every integer in a title is a stated figure, because with no figure in the
+prompt there is nothing for a title to quote — if figures ever return, that check returns with
+them.
 
 A segment name is the least trusted string in the prompt: a segment is named by whoever created
 it, and every rider who crosses it inherits that name. So the system prompt states two rules for
