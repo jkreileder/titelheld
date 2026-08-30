@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1317,6 +1318,13 @@ func TestDataGuardsAreVerbatim(t *testing.T) {
 // "8 PRs" producing "Acht auf einen Streich". Its situation stated a figure the
 // prompt is no longer allowed to state, and it demonstrated the one move the
 // variety rule now exists to break up, so it is gone rather than reworded.
+//
+// The tally pattern is deliberately loose. Distance and climbing are figures
+// about the ride's shape, readable off any activity page and reported the same
+// way everywhere; what the rule bars is a count of what the ride *achieved*,
+// which no two Strava surfaces agree on.
+var effortTally = regexp.MustCompile(`(?i)\d+\s*(PRs?|achievements?|records?|efforts?|segments?)`)
+
 func TestSyntheticExamplesTeachNoNumberTitle(t *testing.T) {
 	t.Parallel()
 
@@ -1325,10 +1333,11 @@ func TestSyntheticExamplesTeachNoNumberTitle(t *testing.T) {
 			t.Errorf("a synthetic example still teaches the escalation formula: %q", example.Title)
 		}
 
-		for _, tally := range []string{" PRs", " PR;", "achievements"} {
-			if strings.Contains(example.Situation, tally) {
-				t.Errorf("a synthetic situation states a count: %q", example.Situation)
-			}
+		// Any digit followed by a countable noun, rather than a list of
+		// spellings: " PRs" and " PR;" between them missed "1 PR", which is
+		// how a figure survived the rule that removed the others.
+		if match := effortTally.FindString(example.Situation); match != "" {
+			t.Errorf("a synthetic situation states a count (%q): %q", match, example.Situation)
 		}
 	}
 }

@@ -140,7 +140,7 @@ func SyntheticExamples() []Example {
 			Language:  German,
 		},
 		{
-			Situation: "65 km ride, 900 m climbing, 1 PR",
+			Situation: "65 km ride, 900 m climbing, best time yet on the long ascent",
 			Title:     "Bergwertung Musterhöhe",
 			Language:  German,
 		},
