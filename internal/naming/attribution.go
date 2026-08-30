@@ -63,25 +63,65 @@ func Describe(existing string, enabled bool) (string, bool) {
 // description is touched — not the whitespace in front of the line, not a
 // second copy of it, not anything another tool wrote.
 //
-// It matches the whole line and not the sentinel, which is the asymmetry worth
-// knowing about. [HasAttribution] is deliberately loose so that rewording the
-// prose can never cause an already-attributed activity to be attributed twice;
-// this is deliberately exact, because it deletes text and a description is the
-// athlete's. A description carrying some older wording of the line therefore
-// keeps it, and the caller learns that from the reported false rather than
-// from a line that silently took a neighboring sentence with it.
+// It removes a *line*, not a substring. The attribution has to occupy a whole
+// line — start at the beginning of the description or just after a line
+// terminator, and end at the description's end or at one — because an athlete
+// who wrote the URL into a sentence of their own has written a sentence, and
+// cutting the middle out of it would be this service editing their prose. An
+// occurrence that fails that test is stepped over, and a later whole-line one
+// is still removed.
+//
+// It also matches the whole line and not the sentinel, which is the deliberate
+// asymmetry. [HasAttribution] is loose so that rewording the prose can never
+// cause an already-attributed activity to be attributed twice; this is exact,
+// because it deletes text and a description is the athlete's. A description
+// carrying some older wording of the line therefore keeps it, and the caller
+// learns that from the reported false rather than from a line that silently
+// took a neighboring sentence with it.
 //
 // What follows the line is removed with it: the line's own terminator and the
-// blank line [Describe] writes after it, and at most those two bytes.
+// blank line [Describe] writes after it, and at most those two. Either may be
+// LF or CRLF — [Describe] writes LF, but the line survives whatever editor the
+// athlete has been through since.
 func RemoveAttribution(description string) (string, bool) {
-	index := strings.Index(description, Attribution)
-	if index < 0 {
-		return description, false
+	for searched := 0; ; {
+		offset := strings.Index(description[searched:], Attribution)
+		if offset < 0 {
+			return description, false
+		}
+
+		start := searched + offset
+		end := start + len(Attribution)
+
+		if !startsLine(description, start) || !endsLine(description, end) {
+			searched = end
+
+			continue
+		}
+
+		return description[:start] + cutTerminator(cutTerminator(description[end:])), true
+	}
+}
+
+// startsLine reports whether an index is at the beginning of a line.
+func startsLine(s string, index int) bool {
+	return index == 0 || s[index-1] == '\n'
+}
+
+// endsLine reports whether an index is at the end of a line.
+func endsLine(s string, index int) bool {
+	return index == len(s) || s[index] == '\n' || strings.HasPrefix(s[index:], "\r\n")
+}
+
+// cutTerminator removes one leading line terminator, if there is one. CRLF is
+// tried first, so a CRLF is one terminator rather than a stray carriage return
+// followed by an empty line.
+func cutTerminator(s string) string {
+	if rest, ok := strings.CutPrefix(s, "\r\n"); ok {
+		return rest
 	}
 
-	rest := description[index+len(Attribution):]
-	rest = strings.TrimPrefix(rest, "\n")
-	rest = strings.TrimPrefix(rest, "\n")
+	rest, _ := strings.CutPrefix(s, "\n")
 
-	return description[:index] + rest, true
+	return rest
 }

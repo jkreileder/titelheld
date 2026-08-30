@@ -1670,6 +1670,36 @@ func TestRemoveAttribution(t *testing.T) {
 			description: Attribution + "\n\n" + Attribution,
 			want:        Attribution, removed: true,
 		},
+		{
+			name:        "the line inside a sentence the athlete wrote",
+			description: "before " + Attribution + " after",
+			want:        "before " + Attribution + " after", removed: false,
+		},
+		{
+			name:        "inline first, then a real line: the real one goes",
+			description: "see " + Attribution + " ok\n" + Attribution + "\n\nXert: Difficult",
+			want:        "see " + Attribution + " ok\n" + "Xert: Difficult", removed: true,
+		},
+		{
+			name:        "a line that only starts with the attribution",
+			description: Attribution + " and more\n\nXert: Difficult",
+			want:        Attribution + " and more\n\nXert: Difficult", removed: false,
+		},
+		{
+			name:        "CRLF around the line",
+			description: "Above\r\n" + Attribution + "\r\nBelow",
+			want:        "Above\r\nBelow", removed: true,
+		},
+		{
+			name:        "CRLF, with the blank line Describe would have written",
+			description: Attribution + "\r\n\r\nXert: Difficult",
+			want:        "Xert: Difficult", removed: true,
+		},
+		{
+			name:        "a CRLF-terminated line at the end",
+			description: "Xert: Difficult\r\n" + Attribution,
+			want:        "Xert: Difficult\r\n", removed: true,
+		},
 	}
 
 	for _, tt := range tests {
