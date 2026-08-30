@@ -456,3 +456,42 @@ func TestProviderDispatchIsVertexUnlessAsked(t *testing.T) {
 		t.Errorf("Name() = %q", name)
 	}
 }
+
+// The rename filter is built from the deployment's own configuration.
+//
+// Asserted through config.Load rather than a hand-built config: the filter
+// decides what becomes style data, and one that agreed only with itself is how
+// the banned-word list shipped empty.
+func TestTheRenameFilterAgreesWithTheDeployedConfiguration(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(deployedEnv(nil))
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	athleteTitle, err := athleteTitleFilter(cfg)
+	if err != nil {
+		t.Fatalf("athleteTitleFilter: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name  string
+		title string
+		want  bool
+	}{
+		{"a title the athlete wrote", "Windschief", true},
+		{"a Strava default", "Morning Ride", false},
+		{"a shipped machine title", "Difficult Mixed Breakaway Specialist Ride", false},
+		{"one of this service's own templates", "Besorgungen", false},
+		{"nothing at all", "   ", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := athleteTitle(tt.title); got != tt.want {
+				t.Errorf("athleteTitle(%q) = %v, want %v", tt.title, got, tt.want)
+			}
+		})
+	}
+}

@@ -51,25 +51,19 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		RedirectURL:  cfg.RedirectURL(),
 	}
 
-	// The rename path needs the same title filter the sweep's recorder uses,
-	// so it is built from the same configuration rather than from a second
-	// copy of the rules.
-	classifierCfg, err := classifierConfig(cfg)
+	athleteTitle, err := athleteTitleFilter(cfg)
 	if err != nil {
 		return err
 	}
 
 	hook, err := webhook.New(webhook.Config{
-		VerifyToken: cfg.StravaVerifyToken,
-		AthleteID:   cfg.AthleteID,
-		Delay:       cfg.ProcessDelay,
-		Queue:       dataStore,
-		Named:       dataStore,
-		AthleteTitle: func(title string) bool {
-			return processor.IsAthleteTitle(
-				title, classifierCfg.MachineTitles, classifierCfg.TemplateTitles())
-		},
-		Logger: logger,
+		VerifyToken:  cfg.StravaVerifyToken,
+		AthleteID:    cfg.AthleteID,
+		Delay:        cfg.ProcessDelay,
+		Queue:        dataStore,
+		Named:        dataStore,
+		AthleteTitle: athleteTitle,
+		Logger:       logger,
 	})
 	if err != nil {
 		return fmt.Errorf("build webhook: %w", err)
@@ -156,5 +150,25 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (bou
 		if err := firestoreStore.Close(); err != nil {
 			logger.Error("closing the Firestore client", "error", err)
 		}
+	}, nil
+}
+
+// athleteTitleFilter decides which titles a rename may record.
+//
+// Built from the same configuration the sweep's recorder is built from, so the
+// two agree about what counts as the athlete's own writing. A hand-built
+// predicate here would pass its own tests and disagree with production the
+// first time either side was edited — the same trap that once shipped an empty
+// banned-word list.
+func athleteTitleFilter(cfg config.Config) (func(string) bool, error) {
+	classifierCfg, err := classifierConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	machine, templates := classifierCfg.MachineTitles, classifierCfg.TemplateTitles()
+
+	return func(title string) bool {
+		return processor.IsAthleteTitle(title, machine, templates)
 	}, nil
 }

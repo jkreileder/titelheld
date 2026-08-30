@@ -387,6 +387,15 @@ type failingStore struct {
 
 	namedErr   error
 	enqueueErr error
+	markErr    error
+}
+
+func (f *failingStore) MarkNamed(ctx context.Context, naming store.Naming) error {
+	if f.markErr != nil {
+		return f.markErr
+	}
+
+	return f.Memory.MarkNamed(ctx, naming)
 }
 
 func (f *failingStore) Named(ctx context.Context, athleteID, activityID int64) (store.NamedTitle, bool, error) {
@@ -782,5 +791,74 @@ func TestAResetToADefaultDoesNotBecomeTheAthletesRow(t *testing.T) {
 	if entry.Title != "Windschief" || entry.Source != store.SourceService {
 		t.Errorf("row = %q/%q; a reset to a Strava default was recorded as the athlete's",
 			entry.Title, entry.Source)
+	}
+}
+
+// Without the filter the rename path does not exist at all.
+//
+// Nil is the zero value, so a handler assembled without thinking about renames
+// drops an update event exactly as it always did.
+func TestWithoutAnAthleteTitleFilterARenameChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+
+	handler, err := New(Config{
+		VerifyToken: testVerifyToken,
+		AthleteID:   4242,
+		Delay:       10 * time.Minute,
+		Queue:       memory,
+		Named:       memory,
+		Logger:      quietLogger(),
+		Now:         func() time.Time { return testNow },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	named(t, memory, "Neun auf einen Streich")
+
+	if code := post(t, handler, renameEvent("Windschief")).Code; code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+
+	if entry := row(t, memory); entry.Title != "Neun auf einen Streich" {
+		t.Errorf("title = %q; the row changed with no filter configured", entry.Title)
+	}
+}
+
+// A store that cannot record the rename still answers the event.
+//
+// Strava is told 200 before any of this runs, and the activity is named either
+// way, so the cost of the failure is a stale row rather than a wrong write or
+// a retry.
+func TestAFailedRenameRecordIsLoggedAndDropped(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	failing := &failingStore{Memory: memory, markErr: errors.New("firestore unavailable")}
+
+	handler, err := New(Config{
+		VerifyToken:  testVerifyToken,
+		AthleteID:    4242,
+		Delay:        10 * time.Minute,
+		Queue:        memory,
+		Named:        failing,
+		Logger:       quietLogger(),
+		Now:          func() time.Time { return testNow },
+		AthleteTitle: func(string) bool { return true },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	named(t, memory, "Neun auf einen Streich")
+
+	if code := post(t, handler, renameEvent("Windschief")).Code; code != http.StatusOK {
+		t.Errorf("status %d; the event must still be acknowledged", code)
+	}
+
+	if entry := row(t, memory); entry.Title != "Neun auf einen Streich" {
+		t.Errorf("title = %q; the failed write left a partial row", entry.Title)
 	}
 }
