@@ -1586,8 +1586,9 @@ func TestHumanTitleIsRememberedAndNeverRenamed(t *testing.T) {
 	}
 
 	// Remembered: in the named log as the athlete's, dated by the ride.
-	if title, named, err := h.store.Named(t.Context(), 4242, humanID); err != nil || !named || title != humanTitle {
-		t.Errorf("Named = %q, %v, %v; want the human title recorded", title, named, err)
+	if entry, named, err := h.store.Named(t.Context(), 4242, humanID); err != nil || !named ||
+		entry.Title != humanTitle {
+		t.Errorf("Named = %q, %v, %v; want the human title recorded", entry.Title, named, err)
 	}
 
 	history, err := h.store.RecentTitles(t.Context(), 4242, naming.RecentTitleLimit)
@@ -1760,8 +1761,9 @@ func TestHumanTitleIsRecordedInDryRun(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 
-	if title, named, _ := h.store.Named(t.Context(), 4242, 777); !named || title != "Fünf auf einen Streich" {
-		t.Errorf("dry run did not record the athlete's title: %q, %v", title, named)
+	if entry, named, _ := h.store.Named(t.Context(), 4242, 777); !named ||
+		entry.Title != "Fünf auf einen Streich" {
+		t.Errorf("dry run did not record the athlete's title: %q, %v", entry.Title, named)
 	}
 
 	if n, _ := h.store.Len(t.Context()); n != 0 {

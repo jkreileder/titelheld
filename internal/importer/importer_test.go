@@ -233,13 +233,13 @@ func TestImportLeavesServiceWrittenTitlesAlone(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	title, _, err := memory.Named(t.Context(), 4242, 30)
+	entry, _, err := memory.Named(t.Context(), 4242, 30)
 	if err != nil {
 		t.Fatalf("Named: %v", err)
 	}
 
-	if title != "Musterrunde am Musterbach" {
-		t.Errorf("the service-written title was overwritten with %q", title)
+	if entry.Title != "Musterrunde am Musterbach" {
+		t.Errorf("the service-written title was overwritten with %q", entry.Title)
 	}
 }
 
@@ -452,12 +452,12 @@ type failingHistory struct {
 	writeErr error
 }
 
-func (f failingHistory) Named(context.Context, int64, int64) (string, bool, error) {
+func (f failingHistory) Named(context.Context, int64, int64) (store.NamedTitle, bool, error) {
 	if f.err != nil {
-		return "", false, f.err
+		return store.NamedTitle{}, false, f.err
 	}
 
-	return "", false, nil
+	return store.NamedTitle{}, false, nil
 }
 
 func (f failingHistory) MarkNamed(context.Context, store.Naming) error {

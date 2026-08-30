@@ -426,7 +426,8 @@ func TestTheNamedLogRecordsWhatStravaKept(t *testing.T) {
 		t.Fatalf("writes = %+v, want one PUT of %q", writes, sent)
 	}
 
-	stored, named, err := h.store.Named(t.Context(), 4242, 777)
+	storedRow, named, err := h.store.Named(t.Context(), 4242, 777)
+	stored := storedRow.Title
 	if err != nil {
 		t.Fatalf("Named: %v", err)
 	}
@@ -510,7 +511,8 @@ func TestAnUnchangedTitleIsNotRewritten(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 
-	stored, _, err := h.store.Named(t.Context(), 4242, 777)
+	storedRow, _, err := h.store.Named(t.Context(), 4242, 777)
+	stored := storedRow.Title
 	if err != nil {
 		t.Fatalf("Named: %v", err)
 	}

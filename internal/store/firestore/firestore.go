@@ -380,22 +380,30 @@ func (s *Store) RecentTitles(
 }
 
 // Named implements [store.NamedLog].
-func (s *Store) Named(ctx context.Context, athleteID, activityID int64) (string, bool, error) {
+func (s *Store) Named(
+	ctx context.Context, athleteID, activityID int64,
+) (store.NamedTitle, bool, error) {
 	snapshot, err := s.collection(CollectionNamed).Doc(activityKey(athleteID, activityID)).Get(ctx)
 	if err != nil {
 		if notFound(err) {
-			return "", false, nil
+			return store.NamedTitle{}, false, nil
 		}
 
-		return "", false, fmt.Errorf("firestore: read named log: %w", err)
+		return store.NamedTitle{}, false, fmt.Errorf("firestore: read named log: %w", err)
 	}
 
 	var doc namedDoc
 	if err := snapshot.DataTo(&doc); err != nil {
-		return "", false, fmt.Errorf("firestore: decode named log: %w", err)
+		return store.NamedTitle{}, false, fmt.Errorf("firestore: decode named log: %w", err)
 	}
 
-	return doc.Title, true, nil
+	return store.NamedTitle{
+		ActivityID: doc.ActivityID,
+		Title:      doc.Title,
+		Language:   doc.Language,
+		Source:     doc.Source,
+		NamedAt:    doc.NamedAt.UTC(),
+	}, true, nil
 }
 
 // placeDoc is the stored shape of a cached place.

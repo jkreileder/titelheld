@@ -1,5 +1,21 @@
 // Package webhook implements Strava's push-subscription endpoint: the
-// validation handshake and the event intake that queues activities for naming.
+// validation handshake and the event intake that queues activities.
+//
+// Queuing is all it does. An unnamed activity is queued to be named; an
+// already-named one, on an update event, is queued to be re-examined against
+// Strava. Which of the two a sweep performs is decided from the named log at
+// sweep time, not carried in the entry — the queue holds an athlete, an
+// activity and a deadline, and has never held anything a request body said.
+//
+// That is the intake's whole trust class, and it is deliberate. Strava signs
+// nothing: the verify token is checked on the GET handshake, the POST carries
+// no signature, and Cloud Run grants allUsers, so the unguessable path is the
+// only thing standing between an anonymous caller and this handler. A forged
+// or replayed event may therefore cost one queue entry and nothing else,
+// because the sweep re-validates every queued activity against Strava. Writing
+// anything an event *claimed* — a title, most of all, since a stored title can
+// become a few-shot example the model is told to imitate — would spend that
+// for good, and no origin authentication is available to buy it back.
 package webhook
 
 import (
@@ -258,22 +274,35 @@ func (h *Handler) process(ctx context.Context, event Event) {
 		return
 	}
 
-	// An activity is named at most once, ever. This is also what makes the
-	// update event caused by our own rename a no-op rather than a second pass.
-	title, named, err := h.named.Named(ctx, event.OwnerID, event.ObjectID)
+	// An activity is named at most once, ever, so a named one is never queued
+	// to be named again. An update on it is queued to be *re-examined*: the
+	// athlete may have renamed it, and the sweep is where that is found out.
+	entry, named, err := h.named.Named(ctx, event.OwnerID, event.ObjectID)
 	if err != nil {
 		log.Error("could not check the named log", "error", err)
 
 		return
 	}
 
-	if named {
+	// A create event on an activity that is already named says nothing new —
+	// there is no earlier title for it to be a change from — and the rename
+	// this service performs itself arrives as an update, which reconciles to
+	// a drop one sweep later.
+	if named && event.AspectType != aspectUpdate {
 		log.Info("event ignored", "reason", "activity already named",
-			"title", logsafe.String(title))
+			"title", logsafe.String(entry.Title))
 
 		return
 	}
 
+	// Nothing from the request body but the activity ID reaches the store,
+	// here or anywhere below. Strava does not sign these POSTs — the verify
+	// token is checked on the GET handshake only, Cloud Run grants allUsers,
+	// and the unguessable path is the whole protection — so a forged event
+	// must cost at most one queue entry, which the sweep then re-validates
+	// against Strava. In particular updates.title is read by nothing: the
+	// title recorded for a rename is the one the sweep reads back from
+	// Strava, never the one the event claims.
 	pending := store.Pending{
 		AthleteID:    event.OwnerID,
 		ActivityID:   event.ObjectID,
@@ -293,6 +322,14 @@ func (h *Handler) process(ctx context.Context, event Event) {
 
 	if !added {
 		log.Info("event collapsed into an existing queue entry")
+
+		return
+	}
+
+	if named {
+		log.Info("activity queued for reconciliation",
+			"recorded_title", logsafe.String(entry.Title),
+			"process_after", pending.ProcessAfter)
 
 		return
 	}

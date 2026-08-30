@@ -279,14 +279,16 @@ func TestRepeatedDeliveryIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestAlreadyNamedActivityIsDropped(t *testing.T) {
+// An update on a named activity means the title may have moved, and only a
+// sweep can find out. It is queued to be re-examined — including the
+// self-caused one, this service's own rename coming back round, which
+// reconciles to a drop because Strava holds what the row holds.
+func TestUpdateOnANamedActivityIsQueuedForReconciliation(t *testing.T) {
 	t.Parallel()
 
 	memory := store.NewMemory()
 	handler := newHandler(t, memory, 0)
 
-	// This is the self-caused update: the rename we performed comes back as an
-	// event, and the named log makes it a no-op.
 	if err := memory.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 7, ActivityID: 5,
 		Title: "The Pink Panther Strikes Again", At: time.Now(),
@@ -295,7 +297,54 @@ func TestAlreadyNamedActivityIsDropped(t *testing.T) {
 	}
 
 	recorder := post(t, handler, `{"object_type":"activity","object_id":5,
-		"aspect_type":"update","owner_id":7,"updates":{"title":"The Pink Panther Strikes Again"}}`)
+		"aspect_type":"update","owner_id":7,"updates":{"title":"Windschief"}}`)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", recorder.Code)
+	}
+
+	due, err := memory.Due(t.Context(), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+
+	if len(due) != 1 {
+		t.Fatalf("queue holds %d entries, want 1", len(due))
+	}
+
+	if due[0].AthleteID != 7 || due[0].ActivityID != 5 {
+		t.Errorf("queued %+v, want athlete 7 activity 5", due[0])
+	}
+
+	// The row is untouched. Intake records nothing, and the title the event
+	// claimed is not in the store under any key.
+	entry, _, err := memory.Named(t.Context(), 7, 5)
+	if err != nil {
+		t.Fatalf("Named: %v", err)
+	}
+
+	if entry.Title != "The Pink Panther Strikes Again" {
+		t.Errorf("the named log now holds %q; intake wrote a title from the body", entry.Title)
+	}
+}
+
+// A create on an already-named activity says nothing: there is no earlier
+// title for it to be a change from.
+func TestCreateOnANamedActivityIsDropped(t *testing.T) {
+	t.Parallel()
+
+	memory := store.NewMemory()
+	handler := newHandler(t, memory, 0)
+
+	if err := memory.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 7, ActivityID: 5,
+		Title: "The Pink Panther Strikes Again", At: time.Now(),
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	recorder := post(t, handler, `{"object_type":"activity","object_id":5,
+		"aspect_type":"create","owner_id":7}`)
 
 	if recorder.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", recorder.Code)
@@ -382,9 +431,11 @@ type failingStore struct {
 	enqueueErr error
 }
 
-func (f *failingStore) Named(ctx context.Context, athleteID, activityID int64) (string, bool, error) {
+func (f *failingStore) Named(
+	ctx context.Context, athleteID, activityID int64,
+) (store.NamedTitle, bool, error) {
 	if f.namedErr != nil {
-		return "", false, f.namedErr
+		return store.NamedTitle{}, false, f.namedErr
 	}
 
 	return f.Memory.Named(ctx, athleteID, activityID)

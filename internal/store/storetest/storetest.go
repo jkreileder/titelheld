@@ -311,12 +311,39 @@ func namedLogRoundTrip(t *testing.T, s store.Store) {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 
-	title, named, err := s.Named(t.Context(), 1, 5)
+	entry, named, err := s.Named(t.Context(), 1, 5)
 	if err != nil {
 		t.Fatalf("Named: %v", err)
 	}
-	if !named || title != "The Pink Panther Strikes Again" {
-		t.Errorf("Named = %q, %v", title, named)
+	if !named || entry.Title != "The Pink Panther Strikes Again" {
+		t.Errorf("Named = %q, %v", entry.Title, named)
+	}
+
+	// The whole row comes back, not the title alone: a reconcile decides what
+	// to do about an activity from the source, and reads it here.
+	if entry.ActivityID != 5 || entry.Language != "en" || entry.Source != store.SourceService {
+		t.Errorf("Named = %+v, want the stored row", entry)
+	}
+	if !entry.NamedAt.Equal(Now) {
+		t.Errorf("Named.NamedAt = %v, want %v", entry.NamedAt, Now)
+	}
+
+	// MarkNamed replaces the row rather than refusing a second write. The
+	// athlete's rename lands here, and so does the one after that.
+	if err := s.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 1, ActivityID: 5,
+		Title: "Windschief", Language: "de",
+		Source: store.SourceHuman, At: Now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("MarkNamed a second time: %v", err)
+	}
+
+	entry, named, err = s.Named(t.Context(), 1, 5)
+	if err != nil || !named {
+		t.Fatalf("Named after the overwrite = %v, %v", named, err)
+	}
+	if entry.Title != "Windschief" || entry.Source != store.SourceHuman || entry.Language != "de" {
+		t.Errorf("Named after the overwrite = %+v, want the second row", entry)
 	}
 }
 

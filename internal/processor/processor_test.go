@@ -60,6 +60,11 @@ type put struct {
 	name        string
 	description string
 	hadDesc     bool
+
+	// descriptionOnly marks a write that carried no name at all — the
+	// attribution removal. A test that could not tell it from a rename could
+	// not tell whether the athlete's title had been touched.
+	descriptionOnly bool
 }
 
 func (f *fakeStrava) GetActivity(_ context.Context, id int64) (*strava.Activity, error) {
@@ -146,6 +151,34 @@ func (f *fakeStrava) UpdateActivityNameAndDescription(
 	}
 
 	f.activity.Name = stored
+	f.activity.Description = description
+
+	return &f.activity, nil
+}
+
+func (f *fakeStrava) UpdateActivityDescription(
+	_ context.Context, id int64, description string,
+) (*strava.Activity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
+
+	f.puts = append(f.puts, put{
+		description: description, hadDesc: true, descriptionOnly: true,
+	})
+
+	if activity, ok := f.byID[id]; ok {
+		activity.Description = description
+		f.byID[id] = activity
+
+		updated := activity
+
+		return &updated, nil
+	}
+
 	f.activity.Description = description
 
 	return &f.activity, nil
@@ -570,6 +603,12 @@ func (f *failFirstStrava) GetGear(ctx context.Context, gearID string) (strava.Ge
 	return f.inner.GetGear(ctx, gearID)
 }
 
+func (f *failFirstStrava) UpdateActivityDescription(
+	ctx context.Context, id int64, description string,
+) (*strava.Activity, error) {
+	return f.inner.UpdateActivityDescription(ctx, id, description)
+}
+
 func (f *failFirstStrava) GetActivity(ctx context.Context, id int64) (*strava.Activity, error) {
 	f.calls++
 
@@ -642,6 +681,12 @@ type failSecondGet struct {
 
 func (f *failSecondGet) GetGear(ctx context.Context, gearID string) (strava.Gear, error) {
 	return f.inner.GetGear(ctx, gearID)
+}
+
+func (f *failSecondGet) UpdateActivityDescription(
+	ctx context.Context, id int64, description string,
+) (*strava.Activity, error) {
+	return f.inner.UpdateActivityDescription(ctx, id, description)
 }
 
 func (f *failSecondGet) GetActivity(ctx context.Context, id int64) (*strava.Activity, error) {
