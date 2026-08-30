@@ -495,3 +495,32 @@ func TestTheRenameFilterAgreesWithTheDeployedConfiguration(t *testing.T) {
 		})
 	}
 }
+
+// A machine-title pattern that will not compile stops the service starting,
+// through this path too.
+//
+// The filter is built before the sweep is, so a configuration error has to
+// fail here as well — otherwise the webhook would be assembled against a
+// filter that could never be built and the failure would surface later, from
+// a different call, with a different message.
+func TestABadMachineTitlePatternFailsTheRenameFilter(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(deployedEnv(map[string]string{"MACHINE_TITLE_PATTERNS": "("}))
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	athleteTitle, err := athleteTitleFilter(cfg)
+	if err == nil {
+		t.Fatal("an uncompilable machine-title pattern was accepted")
+	}
+
+	if athleteTitle != nil {
+		t.Error("a filter was returned alongside the error")
+	}
+
+	if !strings.Contains(err.Error(), "machine titles") {
+		t.Errorf("error %q does not say what failed to compile", err)
+	}
+}
