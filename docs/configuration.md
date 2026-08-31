@@ -125,7 +125,7 @@ keyed provider without the key refuses at startup, naming both variables.
 | `LLM_API_KEY`            | keyed providers | —                   | Anthropic or OpenRouter; Vertex is keyless            |
 | `LLM_BASE_URL`           | no              | OpenRouter's        | `openrouter` only: an https API root                  |
 | `VERTEX_PROJECT`         | no              | `FIRESTORE_PROJECT` | Project the Vertex call bills to                      |
-| `VERTEX_LOCATION`        | no              | `europe-west3`      | Vertex region, or `global` — see below                |
+| `VERTEX_LOCATION`        | no              | `europe-west3`      | Vertex region, or `eu` / `global` — see below         |
 | `BANNED_WORDS`           | no              | shipped list        | Comma-separated; rejected in a title                  |
 | `MACHINE_TITLE_PATTERNS` | no              | Xert's pattern      | Newline-separated regexes; see below                  |
 
@@ -170,31 +170,43 @@ Gemini model availability is regional, and the documentation's model index does 
 an index is a catalogue of models, not a statement about where each one is served. Reading the
 publisher metadata per host does:
 
-| Model              | `global` | `europe-west3` | `europe-west4` |
-| ------------------ | -------- | -------------- | -------------- |
-| `gemini-3.7-flash` | 200      | 404            | 404            |
-| `gemini-3.6-flash` | 200      | 404            | 404            |
-| `gemini-3.5-flash` | 200      | 200 (GA)       | 200 (GA)       |
+| Model              | `global` | `eu` (REP) | `europe-west3` | `europe-west4` |
+| ------------------ | -------- | ---------- | -------------- | -------------- |
+| `gemini-3.7-flash` | 200      | 200        | 404            | 404            |
+| `gemini-3.6-flash` | 200      | 200        | 404            | 404            |
+| `gemini-3.5-flash` | 200      | 200        | 200 (GA)       | 200 (GA)       |
 
-The newest Flash models are real, but only behind the **global** endpoint, which routes the
-request to whichever region has capacity. The prompt carries place names derived from your GPS
-traces, and the rest of this deployment is `europe-west3`, so the shipped default is the newest
-model served **in region**:
+Read on 2026-08-31. The newest Flash models are real, but no European region serves them. Two
+locations do: **`global`**, which routes the request to whichever region has capacity, and the EU
+multi-region **`eu`**, which keeps it inside Europe. The prompt carries place names derived from
+your GPS traces, so that difference is the reason to prefer `eu` over `global`.
+
+The shipped default is the newest model served **in a single region**, which asks the least:
 
 ```sh
 VERTEX_LOCATION=europe-west3   # default
 LLM_MODEL=                     # unset -> gemini-3.5-flash
 ```
 
-To use a newer model instead, at the cost of regional routing:
+A newer model, still inside Europe:
+
+```sh
+VERTEX_LOCATION=eu
+LLM_MODEL=gemini-3.7-flash
+```
+
+Or a newer model wherever there is capacity:
 
 ```sh
 VERTEX_LOCATION=global
 LLM_MODEL=gemini-3.7-flash
 ```
 
-Both work with no code change. `global` is the one location whose host is unprefixed —
-`aiplatform.googleapis.com`, not `global-aiplatform.googleapis.com`, which does not resolve.
+All three work with no code change. The two multi-regions are the two locations whose host is not
+`LOCATION-aiplatform.googleapis.com`: `global` is served from the bare `aiplatform.googleapis.com`
+— `global-aiplatform.googleapis.com` does not resolve — and `eu` from the regional endpoint host
+`aiplatform.eu.rep.googleapis.com`, which is a hostname of a different shape rather than a
+prefix. `eu-aiplatform.googleapis.com` resolves and serves nothing.
 
 Recheck availability the same way when a newer model lands — a metadata read, not an inference
 call, so it costs nothing and generates no tokens:
@@ -204,6 +216,7 @@ PROJECT=titelheld-XXXXXX
 MODEL=gemini-3.5-flash
 
 for host in aiplatform.googleapis.com \
+  aiplatform.eu.rep.googleapis.com \
   europe-west3-aiplatform.googleapis.com \
   europe-west4-aiplatform.googleapis.com; do
   printf '%s: ' "$host"
@@ -227,12 +240,23 @@ so CI never runs it and no live call happens there:
 VERTEX_PROJECT=titelheld-XXXXXX go test -tags smoke ./internal/naming/ -run TestLiveVertex -v
 ```
 
+It reads `VERTEX_LOCATION` and `LLM_MODEL` too, so a model served only from a multi-region is
+checked the way the service would call it:
+
+```sh
+VERTEX_PROJECT=titelheld-XXXXXX VERTEX_LOCATION=eu LLM_MODEL=gemini-3.7-flash \
+  go test -tags smoke ./internal/naming/ -run TestLiveVertex -v
+```
+
 It needs application default credentials and spends a few tokens. A pass logs the validated title;
 a failure names the step that broke, which is the point of running the real code rather than a
 `curl` that resembles it.
 
-That distinction is not academic. `gemini-3.5-flash` reasons by default and those tokens are
-billed inside `maxOutputTokens`, so an early hand-written `curl` spent 241 of 256 thinking,
-returned a truncated fragment, and stopped at `MAX_TOKENS`. The provider therefore sends
-`thinkingConfig: {thinkingBudget: 0}` — naming a ride needs no chain of reasoning. Any hand-run
-`curl` needs that field too, or it reproduces the original failure.
+That distinction is not academic, and thinking is where it bites. Gemini reasons by default and
+those tokens are billed inside `maxOutputTokens`, so a ceiling sized for a title alone returns a
+fragment that stopped at `MAX_TOKENS`. The provider sends `thinkingConfig: {thinkingBudget: 0}`,
+which is as far as either model generation goes: `gemini-3.5-flash` honors it and thinks not at
+all, while Gemini 3.x cannot be stopped and reads it as a floor, spending a few hundred tokens
+regardless. The ceiling is 1024 tokens for that reason — naming a ride needs no chain of
+reasoning, but paying for one is not optional. Any hand-run `curl` needs both the field and the
+headroom, or it reproduces the original failure.

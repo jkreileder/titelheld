@@ -99,3 +99,22 @@ variable "llm_base_url" {
   type        = string
   default     = ""
 }
+
+# Where the Vertex call goes. A region keeps the request there and serves what
+# that region has; the two multi-regions reach models no European region does,
+# "eu" from inside Europe and "global" from wherever there is capacity. The
+# prompt carries place names derived from the athlete's GPS traces, which is
+# what makes the difference between those two worth a variable.
+variable "vertex_location" {
+  description = "VERTEX_LOCATION: the Vertex location the naming call addresses. Empty means the binary's own default, europe-west3."
+  type        = string
+  default     = ""
+
+  validation {
+    # The shape the binary enforces, enforced again here: the value is
+    # interpolated into the request host, so a malformed one is refused by an
+    # apply rather than by a revision that will not start.
+    condition     = var.vertex_location == "" || can(regex("^(?:eu|[a-z][a-z0-9-]{1,38}[a-z0-9])$", var.vertex_location))
+    error_message = "vertex_location must be empty, a GCP region such as europe-west3, or a multi-region the service has a host for: eu or global."
+  }
+}
