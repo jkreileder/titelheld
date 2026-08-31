@@ -749,8 +749,16 @@ func TestACancelledSweepCountsReconciliations(t *testing.T) {
 
 	h.strava.getHook = func() { cancel() }
 
-	if _, err := h.proc.Sweep(ctx); err != nil {
+	result, err := h.proc.Sweep(ctx)
+	if err != nil {
 		t.Fatalf("Sweep: %v", err)
+	}
+
+	// The counters first: "finished":1 alone is produced by any single
+	// non-error outcome, so a regression that counted the activity as skipped
+	// would satisfy the log line while falsifying this test's name.
+	if result.Reconciled != 1 || result.Skipped != 0 || !result.Cancelled {
+		t.Fatalf("result = %+v, want one reconciliation and a cancelled sweep", result)
 	}
 
 	if !strings.Contains(logged.String(), `"finished":1`) {
