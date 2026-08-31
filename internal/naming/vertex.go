@@ -29,21 +29,25 @@ import (
 // The model was not, in the end, taken from documentation at all. The model
 // index lists gemini-3.7-flash as the newest Flash model, but an index is a
 // catalogue and says nothing about where a model is served. Reading the
-// publisher-model metadata does:
+// publisher-model metadata does — the table below is a probe of 2026-08-31:
 //
-//	                    global   europe-west3   europe-west4
-//	gemini-3.7-flash    200      404            404
-//	gemini-3.6-flash    200      404            404
-//	gemini-3.5-flash    200      200 (GA)       200 (GA)
+//	                    global   eu (REP)   europe-west3   europe-west4
+//	gemini-3.7-flash    200      200        404            404
+//	gemini-3.6-flash    200      200        404            404
+//	gemini-3.5-flash    200      200        200 (GA)       200 (GA)
 //
-// The newest models exist, but only behind the global endpoint, which routes
-// to whichever region has capacity. This service ships regional: the prompt
-// carries place names derived from the athlete's GPS traces, and the rest of
-// the deployment is europe-west3. So the default is the newest model served
-// in-region, and the global endpoint is an opt-in documented in README.md.
+// The newest models exist, but no European region serves them. Two hosts
+// reach them: the global endpoint, which routes to whichever region has
+// capacity, and the EU multi-region, which keeps the request inside Europe.
+// That matters here because the prompt carries place names derived from the
+// athlete's GPS traces.
 //
-// README.md carries the probe, for rechecking when a newer model reaches the
-// region.
+// The EU multi-region is spelled aiplatform.eu.rep.googleapis.com — the
+// LOCATION-aiplatform pattern does not apply to it, and
+// eu-aiplatform.googleapis.com serves nothing at all.
+//
+// The default stays the newest model served in-region; the two multi-region
+// hosts are an opt-in, with the probe, in docs/configuration.md.
 
 // DefaultVertexModel is the Flash-class model this service ships with.
 const DefaultVertexModel = "gemini-3.5-flash"
@@ -90,19 +94,35 @@ func (v *Vertex) temperature() float64 {
 	return v.Temperature
 }
 
-// GlobalLocation is Vertex's multi-region routing location. It is spelled out
-// because it is the one location whose host is not prefixed with itself.
-const GlobalLocation = "global"
+// Vertex's two multi-region locations, spelled out because neither host
+// follows the LOCATION-aiplatform pattern every region uses.
+const (
+	// GlobalLocation routes to whichever region has capacity, from the bare
+	// host.
+	GlobalLocation = "global"
+
+	// EULocation keeps the request inside Europe, from a regional endpoint
+	// (REP) host of its own shape.
+	EULocation = "eu"
+)
+
+// euBaseURL is the EU multi-region's host. "eu-aiplatform.googleapis.com",
+// which the regional pattern would build, resolves but serves no model.
+const euBaseURL = "https://aiplatform.eu.rep.googleapis.com"
 
 func (v *Vertex) endpoint() string {
 	base := v.BaseURL
 	if base == "" {
-		// Every region is served from LOCATION-aiplatform.googleapis.com,
-		// except "global", which is served from the bare host — and
-		// "global-aiplatform.googleapis.com" does not resolve at all.
-		if v.Location == GlobalLocation {
+		// Every region is served from LOCATION-aiplatform.googleapis.com. The
+		// two multi-regions are not: "global" is the bare host — and
+		// "global-aiplatform.googleapis.com" does not resolve at all — and
+		// "eu" is the REP host above.
+		switch v.Location {
+		case GlobalLocation:
 			base = "https://aiplatform.googleapis.com"
-		} else {
+		case EULocation:
+			base = euBaseURL
+		default:
 			base = "https://" + v.Location + "-aiplatform.googleapis.com"
 		}
 	}
@@ -126,18 +146,31 @@ type vertexPart struct {
 	Text string `json:"text"`
 }
 
-// vertexThinkingConfig turns the model's reasoning off.
+// vertexThinkingConfig asks for as little reasoning as the model generation
+// allows.
 //
-// gemini-3.5-flash thinks by default, and thinking tokens are billed inside
-// maxOutputTokens. With a 256-token ceiling sized for "a title is a few dozen
-// bytes", a real call spent 241 tokens reasoning, produced 11, and stopped at
-// MAX_TOKENS mid-sentence — the answer crowded out by the deliberation about
-// it.
+// Gemini thinks by default and thinking tokens are billed inside
+// maxOutputTokens. A budget of zero is honored fully by gemini-3.5-flash,
+// which then thinks not at all; Gemini 3.x cannot disable thinking and reads
+// the zero as a floor, spending a few hundred tokens whatever it is told. It
+// is the minimum-thinking spelling on both generations, which is why one
+// request shape serves both.
 //
-// It also fixed the output shape. Thinking-on, the model prefixed prose and a
-// markdown fence despite responseMimeType; thinking-off, the same request
-// returns bare JSON. Naming a ride needs no chain of reasoning, so this is not
-// a budget trade — it is removing something the task never wanted.
+// It also fixes the output shape on 3.5-flash: thinking-on, the model prefixed
+// prose and a markdown fence despite responseMimeType; at a zero budget the
+// same request returns bare JSON. Naming a ride needs no chain of reasoning,
+// so this is not a budget trade — it is asking for something the task never
+// wanted.
+//
+// The budget rather than Gemini 3's thinkingLevel, verified live on both model
+// generations on 2026-08-31: the field is accepted for backwards compatibility
+// and never sent alongside a level, and a zero budget bought fewer thinking
+// tokens on 3.7-flash than thinkingLevel "low" — while "low" cannot express
+// what 3.5-flash still does, which is not think at all. One request shape per
+// provider is the rule an A/B of narrators rests on, and a model-conditional
+// split would spend it to make the shipped model worse. Should a generation
+// refuse the field, the call fails closed: a 400 or a MAX_TOKENS truncation
+// leaves the ride with the title it had.
 type vertexThinkingConfig struct {
 	ThinkingBudget int `json:"thinkingBudget"`
 }
@@ -262,7 +295,16 @@ const (
 const DefaultTemperature = 0.9
 
 // maxOutputTokens bounds a response that should be one short JSON object.
-const maxOutputTokens = 256
+//
+// The bound is sized for Vertex, where thinking tokens are billed inside it
+// and Gemini 3.x cannot be stopped from thinking: a budget of zero buys a
+// best-effort minimum of roughly 250 to 450 tokens, and a title that has to
+// fit in what is left of a 256-token ceiling arrives truncated at MAX_TOKENS.
+// A thousand leaves room for the deliberation and the answer both.
+//
+// The Anthropic and OpenRouter providers share the constant, where it stays
+// what it reads as: a bound on a runaway response.
+const maxOutputTokens = 1024
 
 // defaultTimeout bounds a naming call. A title is not worth holding a Cloud Run
 // instance open indefinitely.

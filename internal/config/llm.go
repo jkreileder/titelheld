@@ -89,9 +89,10 @@ func (p Provider) Keyed() bool {
 // rather than assumed, because model availability is regional and does not
 // follow the documentation's model index.
 //
-// "global" is also accepted, and reaches models that no European region
-// serves, at the cost of routing the request wherever there is capacity. The
-// trade-off and the probe are in README.md.
+// The two multi-regions are also accepted and reach models that no European
+// region serves: "eu", which keeps the request inside Europe, and "global",
+// which routes it wherever there is capacity. The trade-off and the probe are
+// in docs/configuration.md.
 const DefaultVertexLocation = "europe-west3"
 
 // vertexLocationPattern bounds VERTEX_LOCATION to the shape of a GCP location.
@@ -102,7 +103,13 @@ const DefaultVertexLocation = "europe-west3"
 // reach. The value is operator-supplied, so this is defense in depth rather
 // than a hole being closed — and it costs a startup error instead of a failure
 // on the first ride worth naming.
-var vertexLocationPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`)
+//
+// A region is three characters or more. "eu" is admitted by name rather than
+// by a shorter lower bound: it is the one two-letter location the naming layer
+// has a host for, and "us" — the plausible next guess, and a real Vertex
+// multi-region — would otherwise pass here and be built into a host that
+// resolves and serves nothing.
+var vertexLocationPattern = regexp.MustCompile(`^(?:eu|[a-z][a-z0-9-]{1,38}[a-z0-9])$`)
 
 // LLM is the naming layer's configuration.
 type LLM struct {
@@ -201,7 +208,8 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 
 	if !vertexLocationPattern.MatchString(llm.VertexLocation) {
 		*errs = append(*errs, fmt.Errorf(
-			"config: %s must be a GCP location such as europe-west3 or global, got %q",
+			"config: %s must be a GCP region such as europe-west3, or a multi-region this service "+
+				"has a host for — \"eu\" or \"global\"; got %q",
 			EnvVertexLocation, llm.VertexLocation))
 	}
 

@@ -32,7 +32,11 @@ func TestLiveVertex(t *testing.T) {
 		t.Fatalf("credentialed client: %v", err)
 	}
 
-	provider := &Vertex{Client: client, ProjectID: project, Location: location}
+	// LLM_MODEL, the same variable the service reads: a model served only from
+	// a multi-region is checked by pointing VERTEX_LOCATION and LLM_MODEL at
+	// it, with no build of its own.
+	provider := &Vertex{Client: client, ProjectID: project, Location: location,
+		Model: os.Getenv("LLM_MODEL")}
 	t.Logf("provider: %s @ %s", provider.Name(), location)
 
 	prompt := BuildPrompt(

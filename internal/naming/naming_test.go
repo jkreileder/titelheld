@@ -2,6 +2,7 @@ package naming
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -605,13 +606,33 @@ func TestVertexGlobalEndpoint(t *testing.T) {
 	}
 }
 
-// Thinking is off, and the request has to say so explicitly.
+// The EU multi-region's host is spelled aiplatform.eu.rep.googleapis.com. The
+// pattern every region follows would build eu-aiplatform.googleapis.com, which
+// resolves and serves no model — so a request built that way fails as a 404 on
+// the model rather than as a bad host.
+func TestVertexEUEndpoint(t *testing.T) {
+	t.Parallel()
+
+	got := (&Vertex{ProjectID: "p", Location: EULocation, Model: "m"}).endpoint()
+	want := "https://aiplatform.eu.rep.googleapis.com/v1/projects/p/locations/eu" +
+		"/publishers/google/models/m:generateContent"
+
+	if got != want {
+		t.Errorf("eu endpoint = %q, want %q", got, want)
+	}
+
+	if strings.Contains(got, "eu-aiplatform.googleapis.com") {
+		t.Errorf("eu endpoint took the regional pattern: %q", got)
+	}
+}
+
+// The request asks for minimum thinking, and has to say so explicitly.
 //
 // The model reasons by default and those tokens are billed inside
-// maxOutputTokens, so a real call spent 241 of 256 thinking and returned a
-// truncated fragment. This is the one field whose absence produced a
-// well-formed request that could never produce a title.
-func TestVertexDisablesThinking(t *testing.T) {
+// maxOutputTokens, so a request that says nothing spends the ceiling on
+// deliberation and returns a truncated fragment. This is the one field whose
+// absence produced a well-formed request that could never produce a title.
+func TestVertexAsksForMinimumThinking(t *testing.T) {
 	t.Parallel()
 
 	var gotBody string
@@ -631,7 +652,25 @@ func TestVertexDisablesThinking(t *testing.T) {
 	}
 
 	if !strings.Contains(gotBody, `"thinkingConfig":{"thinkingBudget":0}`) {
-		t.Errorf("request does not disable thinking: %s", gotBody)
+		t.Errorf("request does not ask for minimum thinking: %s", gotBody)
+	}
+
+	// The budget is a request, not a guarantee: Gemini 3.x cannot be stopped
+	// from thinking and spends a few hundred tokens against this same ceiling,
+	// so a ceiling with no room for them buys a truncated title rather than a
+	// short one.
+	var sent struct {
+		GenerationConfig struct {
+			MaxOutputTokens int `json:"maxOutputTokens"`
+		} `json:"generationConfig"`
+	}
+
+	if err := json.Unmarshal([]byte(gotBody), &sent); err != nil {
+		t.Fatalf("request body is not JSON: %v", err)
+	}
+
+	if got := sent.GenerationConfig.MaxOutputTokens; got < 1024 {
+		t.Errorf("maxOutputTokens = %d, too little to hold the thinking and the title", got)
 	}
 }
 

@@ -478,7 +478,13 @@ func TestLLMListsAreParsed(t *testing.T) {
 func TestLLMRejectsAMalformedVertexLocation(t *testing.T) {
 	t.Parallel()
 
-	for _, bad := range []string{"evil.example/x", "europe west3", "EUROPE-WEST3", "-west3", ""} {
+	// Shape cases are synthetic: what they assert is the pattern, and a real
+	// location name would say the check is about a place. The exceptions are
+	// the values that *are* the contract — "eu", "global" and the default
+	// below, and "us" here, a real Vertex multi-region this service has no
+	// host for, which has to be refused rather than built into one that
+	// serves nothing. "e" is the shape one character short of a location.
+	for _, bad := range []string{"evil.example/x", "musterland nord3", "MUSTERLAND-NORD3", "-nord3", "e", "eu-", "us", ""} {
 		vars := map[string]string{"VERTEX_LOCATION": bad}
 		if bad == "" {
 			continue // empty falls back to the default, which is covered elsewhere
@@ -489,7 +495,10 @@ func TestLLMRejectsAMalformedVertexLocation(t *testing.T) {
 		}
 	}
 
-	for _, good := range []string{"europe-west3", "europe-west4", "us-central1", "global"} {
+	// "eu" is the EU multi-region, and reaches models no European region
+	// serves; "global" and the shipped default are the other two values whose
+	// text is the contract. The rest are region-shaped and synthetic.
+	for _, good := range []string{DefaultVertexLocation, "musterland-nord3", "musterland1", "global", "eu"} {
 		if _, err := Load(env(map[string]string{"VERTEX_LOCATION": good})); err != nil {
 			t.Errorf("VERTEX_LOCATION=%q was rejected: %v", good, err)
 		}

@@ -10,6 +10,31 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.4] – Unreleased
+
+The newest Flash models are reachable without leaving Europe. A probe on 2026-08-31 found
+`gemini-3.7-flash` and `gemini-3.6-flash` served from the EU multi-region as well as from `global`,
+and from no European region — so the choice is no longer between a newer narrator and keeping a
+prompt built from the athlete's GPS traces inside Europe.
+
+- **`VERTEX_LOCATION=eu` reaches the EU multi-region.**
+  Its host is spelled `aiplatform.eu.rep.googleapis.com` rather than by the
+  `LOCATION-aiplatform.googleapis.com` pattern every region follows, and the name that pattern
+  would build serves nothing at all — so `eu` is a case the endpoint builder handles, next to
+  `global`. The startup check that bounds `VERTEX_LOCATION` admits `eu` by name rather than by a
+  shorter lower bound, so `us` — a real Vertex multi-region this service has no host for — is
+  still refused there instead of failing as a 404 on the model.
+  The shipped default is unchanged: `europe-west3` and `gemini-3.5-flash`, with a newer model an
+  opt-in through configuration.
+- **The output ceiling moves from 256 tokens to 1024.**
+  Gemini 3.x cannot be stopped from thinking, and thinking tokens are billed inside
+  `maxOutputTokens`: `thinkingBudget: 0` buys a best-effort minimum of a few hundred tokens
+  instead of none, and three of four live calls at the old ceiling ended at `MAX_TOKENS` with a
+  truncated title. The request still asks for a zero budget, which is the minimum-thinking
+  spelling on both model generations — `gemini-3.5-flash` honors it exactly.
+  Anthropic and OpenRouter share the constant, where it remains what it reads as: a bound on a
+  runaway response.
+
 ## [v0.7.3] – 2026-08-31
 
 The athlete's rename becomes a record, from the one place that can check it. The capability was
@@ -561,6 +586,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.4]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.4
 [v0.7.3]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.3
 [v0.7.2]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.2
 [v0.7.1]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.1
