@@ -16,14 +16,22 @@ it does not.
 
 Six collections, and nothing else. Adding a seventh means changing this document.
 
-| Collection  | Document ID               | Contents                                         | Re-derivable?           |
-| ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
-| `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes   | **No**                  |
-| `pending`   | `{athleteID}-{activity}`  | Queued activity and its `process_after` deadline | Yes                     |
-| `named`     | `{athleteID}-{activity}`  | Title written, its language and source, and when | Mostly, from Strava     |
-| `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
-| `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
-| `config`    | `{athleteID}`             | The athlete's configuration: franchise series    | **No** — hand-written   |
+| Collection  | Document ID               | Contents                                                  | Re-derivable?           |
+| ----------- | ------------------------- | --------------------------------------------------------- | ----------------------- |
+| `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes            | **No**                  |
+| `pending`   | `{athleteID}-{activity}`  | Queued activity, its `process_after` deadline, the aspect | Yes                     |
+| `named`     | `{athleteID}-{activity}`  | The recorded title, its language and source, and when     | Mostly, from Strava     |
+| `geocache`  | rounded coordinate key    | Verified place names from Nominatim                       | Yes, by refetching      |
+| `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series                       | In principle, painfully |
+| `config`    | `{athleteID}`             | The athlete's configuration: franchise series             | **No** — hand-written   |
+
+`pending` holds an athlete, an activity and a deadline — and, as provenance nothing reads, the
+webhook aspect that queued it, which is `create` or `update` and is checked against those two
+before the enqueue. No free text from a request body has ever reached this collection, and that
+is the schema doing a job: the intake is reachable by anyone who learns the unguessable path,
+because Strava signs no webhook `POST`. An entry means *examine this activity*; whether the sweep names
+it or reconciles it against Strava is decided from `named` at sweep time. So a forged event costs
+one document and one redundant read.
 
 `franchise` stores an integer, never the titles: the series is configuration, so renaming or
 reordering one must not require migrating anything here. It is re-derivable only by matching past
@@ -31,9 +39,13 @@ titles against a series, which is why it is remembered rather than recomputed �
 costs a repeated or skipped entry, not a wrong write.
 
 `named` also stores the language each title was written in and its source: a model, a template,
-an import, or the athlete's own hand on a sport ride the service therefore left alone. Neither is
-re-derivable: re-reading an activity returns the title but never says which language was chosen
-for it, or who named it.
+an import, or the athlete's own hand — on a sport ride the service therefore left alone, or on
+one it named and the athlete then renamed. Neither is re-derivable: re-reading an activity
+returns the title but never says which language was chosen for it, or who named it.
+
+A row is replaced, not appended to. The athlete's rename overwrites it, and so does the rename
+after that: the sweep re-reads the activity and records what Strava holds, so the row is as
+current as the last sweep that saw the activity.
 
 Two collections genuinely have to survive, and they fail differently.
 

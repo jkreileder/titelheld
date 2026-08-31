@@ -32,19 +32,33 @@
 - `internal/strava/` is the only package that talks to Strava: OAuth
   (`oauth.go`), the auto-refreshing token source (`tokensource.go`), the HTTP
   client with rate-limit accounting and 429 backoff (`client.go`), and the
-  calls this service makes: the activity read and the two rename writes
-  (`activity.go`), and the gear read a franchise matches on (`gear.go`). Gear
-  is *read*, never written — the name is a string the athlete typed into
-  Strava, and a franchise keys on it.
+  calls this service makes: the activity read, the two rename writes and the
+  description-only write that takes the attribution line back out
+  (`activity.go`), and the gear read a franchise matches on (`gear.go`). The
+  description-only write omits `name` from the form rather than sending the
+  stored title back: Strava rewrites a title it reads as containing a link, and
+  what is not in the form cannot be rewritten. Gear is *read*, never written —
+  the name is a string the athlete typed into Strava, and a franchise keys on
+  it.
 - `internal/store/` holds the persistence interfaces, an in-memory
   implementation, and `storetest`, the conformance suite both implementations
   must pass. `internal/store/firestore/` is the persistent one; its IAM is
-  documented in `docs/firestore-iam.md`.
+  documented in `docs/firestore-iam.md`. `NamedLog.Named` returns the whole
+  row rather than the title alone - a reconcile decides from the source, and
+  `MarkNamed` replaces a row rather than refusing a second write, which is what
+  lets a second rename be recorded.
 - `internal/webhook/` serves the subscription handshake and the event intake,
   and queues activities. It acknowledges before it touches the store. It
   writes nothing else: a POST carries no signature Strava will vouch for, so a
   forged event may at most enqueue an activity ID, which the sweep re-validates
-  against Strava. Recording anything from a request body would spend that.
+  against Strava. Recording anything from a request body would spend that -
+  which is why an update event on an *already named* activity is queued too,
+  rather than having its `updates.title` written anywhere. Which of the two a
+  sweep performs, naming or reconciling, is decided from the named log at sweep
+  time and is not carried in the entry: a queue entry holds an athlete, an
+  activity and a deadline, plus `Pending.Aspect` - `create` or `update`,
+  checked against those two before the enqueue, and provenance that nothing
+  reads. No free text from a request body has ever reached the store.
 - `internal/server/` assembles the HTTP surface: health, the one-time OAuth
   bootstrap, and the webhook at its unguessable path.
 - `internal/app/` wires everything together and serves; it takes `getenv` as a
@@ -121,6 +135,23 @@
   isolated - one bad ride never stalls a sweep - and the named log is written
   *before* the title is sent, so the failure mode is a ride that keeps its
   default title rather than one renamed twice.
+  `reconcile.go` handles an activity already in the log: it re-reads the
+  activity and records the title *Strava* holds, never one an event claimed.
+  Three endings - the recorded title, in which case nothing changed; a title a
+  person typed, which the row becomes under `SourceHuman` and dated by the
+  ride, except that a `SourceImported` row keeps its source so a rename cannot
+  promote a decade of shorthand into EXAMPLES; and anything else, which is not
+  recorded,
+  because `SourceHuman` feeds the few-shot examples and a row claiming the
+  athlete named a ride "Morning Ride" would teach exactly that. The filter is
+  the import's, minus the tier: a renamed commute's template row has to follow
+  or it records a title that is not on Strava. Once the row is the athlete's,
+  the attribution line comes out - keyed on the row's source rather than on
+  what this sweep did, which is what makes it converge after a crash and after
+  dry run. A re-read is always current, so no stale echo has to be suppressed
+  and a second rename is recorded like the first; the delay is retained not
+  because correctness needs it but because it collapses a burst of edits and
+  does not race an athlete who is still typing.
 - `internal/sweep/` serves the scheduled drain. It verifies Cloud Scheduler's
   OIDC token itself - a Bearer token that validates against the configured
   audience, an issuer of `https://accounts.google.com`, and an `email` that is
@@ -203,19 +234,26 @@ invitation.
 Not built yet: route repeats. The Strava push subscription exists and is
 feeding the queue; the Cloud Scheduler job fires every five minutes and drains
 it, and `DRY_RUN=0` on the deployed service, so a cleared activity is renamed
-without anyone asking. The title history is seeded by
+without anyone asking. The athlete's rename is reconciled sweep-side and the
+attribution line is removed with it. The title history is seeded by
 `cmd/titelheld-import` rather than accumulating on its own.
 
 ## Design Rules That Are Not Negotiable
 
 - **The title, and one line of the description.** Sport type, gear and workout
   summaries belong to other tools and are never touched. The description is
-  touched in exactly one way: the attribution line from pipeline step 7 is
-  prepended to activities this service titled, as a read-modify-write that
-  preserves every other byte. Nothing else about a description is ours to
-  change, and nothing at all is, on an activity we did not name.
+  touched in exactly two ways, and they are the same line: the attribution line
+  from pipeline step 7 is prepended to activities this service titled, and it
+  is removed again once the record says the title is the athlete's. Both are a
+  read-modify-write that preserves every other byte; the removal takes the
+  exact line and the blank line after it and nothing else, and leaves an older
+  wording alone, because the presence check is loose on purpose and deleting
+  text has to be exact. Nothing else about a description is ours to change, and
+  nothing at all is, on an activity we did not name.
 - **Fail closed.** An unrecognized title means someone else named the activity;
-  skip it. Never widen the default-title table by guessing.
+  skip it. Never widen the default-title table by guessing. The same rule
+  decides what a reconcile records: a title that is not recognizably a person's
+  is not recorded as one.
 - **Tier before gate.** `Classify` assigns a tier regardless of the current title,
   then the default-title gate decides whether an action may write. Keep those two
   concerns separate.
