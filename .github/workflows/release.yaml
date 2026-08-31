@@ -176,7 +176,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
-    uses: ./.github/workflows/release-image.yaml
+    uses: $/.github/workflows/release-image.yaml
     with:
       environment: production
 
