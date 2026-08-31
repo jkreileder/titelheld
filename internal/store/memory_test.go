@@ -256,12 +256,12 @@ func TestNamedLog(t *testing.T) {
 
 	memory := NewMemory()
 
-	title, named, err := memory.Named(t.Context(), 1, 5)
+	entry, named, err := memory.Named(t.Context(), 1, 5)
 	if err != nil {
 		t.Fatalf("Named: %v", err)
 	}
-	if named || title != "" {
-		t.Errorf("Named on an empty log = %q, %v", title, named)
+	if named || entry.Title != "" {
+		t.Errorf("Named on an empty log = %q, %v", entry.Title, named)
 	}
 
 	if err := memory.MarkNamed(t.Context(), Naming{
@@ -271,12 +271,12 @@ func TestNamedLog(t *testing.T) {
 		t.Fatalf("MarkNamed: %v", err)
 	}
 
-	title, named, err = memory.Named(t.Context(), 1, 5)
+	entry, named, err = memory.Named(t.Context(), 1, 5)
 	if err != nil {
 		t.Fatalf("Named: %v", err)
 	}
-	if !named || title != "The Pink Panther Strikes Again" {
-		t.Errorf("Named = %q, %v", title, named)
+	if !named || entry.Title != "The Pink Panther Strikes Again" {
+		t.Errorf("Named = %q, %v", entry.Title, named)
 	}
 
 	// Another athlete's activity with the same ID is a different record.

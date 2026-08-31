@@ -143,8 +143,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// make Cloud Scheduler retry immediately instead, straight back into
 	// whatever rate limit caused the failure.
 	writeJSON(w, http.StatusOK, fmt.Sprintf(
-		`{"due":%d,"named":%d,"skipped":%d,"failed":%d,"cancelled":%t}`,
-		result.Due, result.Named, result.Skipped, result.Failed, result.Cancelled))
+		`{"due":%d,"named":%d,"reconciled":%d,"skipped":%d,"failed":%d,"cancelled":%t}`,
+		result.Due, result.Named, result.Reconciled,
+		result.Skipped, result.Failed, result.Cancelled))
 }
 
 // authenticate returns nil if the caller is the scheduler, and otherwise an

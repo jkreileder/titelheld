@@ -48,6 +48,7 @@ type Activities interface {
 	GetGear(ctx context.Context, gearID string) (strava.Gear, error)
 	UpdateActivityName(ctx context.Context, activityID int64, name string) (*strava.Activity, error)
 	UpdateActivityNameAndDescription(ctx context.Context, activityID int64, name, description string) (*strava.Activity, error)
+	UpdateActivityDescription(ctx context.Context, activityID int64, description string) (*strava.Activity, error)
 }
 
 // Geographer resolves a polyline into verified place names.
@@ -171,8 +172,14 @@ type Result struct {
 	// Named is how many got a title (or would have, in dry run).
 	Named int
 
-	// Skipped is how many the classifier or the named log declined.
+	// Skipped is how many the classifier declined.
 	Skipped int
+
+	// Reconciled is how many were re-examined against Strava rather than
+	// named: an activity already in the named log, queued by an update event.
+	// Counted apart from Named and Skipped because it is neither — no title
+	// was produced, and the entry was not declined.
+	Reconciled int
 
 	// Failed is how many errored and stayed in the queue for the next sweep.
 	Failed int
@@ -204,7 +211,7 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			p.deps.Logger.Warn("sweep cancelled; the rest stays queued",
 				"due", result.Due,
-				"finished", result.Named+result.Skipped+result.Failed,
+				"finished", result.Named+result.Reconciled+result.Skipped+result.Failed,
 				"error", err)
 
 			result.Cancelled = true
@@ -228,13 +235,16 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 				"error", err)
 		case outcome == outcomeNamed, outcome == outcomeDryRun:
 			result.Named++
+		case outcome == outcomeReconciled, outcome == outcomeReconcileDryRun:
+			result.Reconciled++
 		default:
 			result.Skipped++
 		}
 
 		// Left queued after a failure, so the next sweep retries it, and after
-		// a dry run, so turning writes on still names it. See outcomeDryRun.
-		if err == nil && outcome != outcomeDryRun {
+		// a dry run, so turning writes on still does the work. See
+		// outcomeDryRun and outcome.staysQueued.
+		if err == nil && !outcome.staysQueued() {
 			if err := p.deps.Store.Remove(ctx, pending.AthleteID, pending.ActivityID); err != nil {
 				p.deps.Logger.Error("could not dequeue a finished activity",
 					"activity_id", pending.ActivityID, "error", err)
@@ -244,6 +254,7 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 
 	p.deps.Logger.Info("sweep complete",
 		"due", result.Due, "named", result.Named,
+		"reconciled", result.Reconciled,
 		"skipped", result.Skipped, "failed", result.Failed,
 		"cancelled", result.Cancelled)
 
@@ -251,7 +262,7 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 	return result, nil
 }
 
-// outcome distinguishes the two non-error endings.
+// outcome distinguishes the non-error endings.
 type outcome int
 
 const (
@@ -277,28 +288,60 @@ const (
 	// skip gate declines is recorded, because that ride is final whatever the
 	// write mode — see [Processor.recordHumanTitle].
 	outcomeDryRun
+
+	// outcomeReconciled is an activity already in the named log, re-examined
+	// against what Strava holds and finished with. See
+	// [Processor.reconcileOne].
+	outcomeReconciled
+
+	// outcomeReconcileDryRun is a reconciliation that wanted to write a
+	// description and did not, because writes are off.
+	//
+	// It stays queued for the same reason a dry-run naming does: the work is
+	// still owed, and turning writes on has to be enough to do it. The row
+	// itself is already updated — that is not a write to Strava and the
+	// athlete's rename is final whatever the write mode.
+	outcomeReconcileDryRun
 )
+
+// staysQueued reports whether the entry is left for the next sweep.
+//
+// Only the dry-run endings, and only because dry run has to be a no-op on the
+// queue. Everything else is finished with: named, skipped or reconciled.
+func (o outcome) staysQueued() bool {
+	return o == outcomeDryRun || o == outcomeReconcileDryRun
+}
 
 // processOne runs the pipeline for a single activity.
 func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outcome, error) {
 	logger := p.deps.Logger.With(
 		"activity_id", pending.ActivityID, "athlete_id", pending.AthleteID)
 
-	// Already named is the self-caused-event case: this service renamed the
-	// activity, Strava emitted an update event for that rename, and the event
-	// came back round. It is not an error and not work. A ride recorded under
-	// a human title is in the same log and is equally finished.
-	if title, named, err := p.deps.Store.Named(ctx, pending.AthleteID, pending.ActivityID); err != nil {
+	// An activity already in the named log is never named again — this
+	// service is the last writer and it writes once. What is left to do is
+	// reconcile: read what Strava holds now and bring the record into line
+	// with it.
+	//
+	// The queue entry says nothing about which of the two this is, and must
+	// not: it came from an unauthenticated POST. The named log is the
+	// authority, and it is read here on both paths.
+	recorded, named, err := p.deps.Store.Named(ctx, pending.AthleteID, pending.ActivityID)
+	if err != nil {
 		return outcomeSkipped, fmt.Errorf("read the named log: %w", err)
-	} else if named {
-		logger.Info("already in the named log; dropping the event",
-			"title", logsafe.String(title))
+	}
 
-		return outcomeSkipped, nil
+	if named {
+		return p.reconcileOne(ctx, pending, recorded, logger)
 	}
 
 	activity, err := p.deps.Activities.GetActivity(ctx, pending.ActivityID)
 	if err != nil {
+		if gone(err) {
+			logger.Info("dropping the event", "reason", "strava has no such activity")
+
+			return outcomeSkipped, nil
+		}
+
 		return outcomeSkipped, fmt.Errorf("fetch the activity: %w", err)
 	}
 
@@ -336,6 +379,18 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 	return outcomeNamed, nil
 }
 
+// gone reports that Strava has nothing to offer for this activity — it was
+// deleted, or it is no longer visible with the granted scopes.
+//
+// A queue entry is retried on every sweep until it succeeds, which is right for
+// a rate limit or a 500 and wrong for a 404: nothing will ever change, and the
+// entry would spend one request every five minutes forever against a budget of
+// a hundred per fifteen minutes. There is nothing left to name or to reconcile,
+// so the entry is finished with rather than failed.
+func gone(err error) bool {
+	return errors.Is(err, strava.ErrNotFound)
+}
+
 // recordHumanTitle remembers a title the athlete wrote, when that is why a
 // sport ride was skipped.
 //
@@ -359,13 +414,14 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 // filter the import applies, because a row recorded here teaches style and is
 // never revisited.
 //
-// The row is the dedup record, so a ride recorded here is final: this service
-// is the last writer and never overwrites a person, and a title later reverted
-// to a Strava default is not reconsidered. The title recorded is the one the
-// sweep saw; an edit the athlete makes afterwards is not tracked, because the
-// update event it causes is dropped at intake as already named. Nothing is
-// sent to Strava — this runs on the skip path, which never reaches the writer,
-// so neither the title nor the attribution line can follow.
+// The row is the dedup record, so a ride recorded here is final *for naming*:
+// this service is the last writer and never overwrites a person, and a title
+// later reverted to a Strava default is not reconsidered. The row itself still
+// follows the athlete — an edit they make afterwards arrives as an update
+// event, which is queued and reconciled against Strava; see
+// [Processor.reconcileOne]. Nothing is sent to Strava from here: this runs on
+// the skip path, which never reaches the writer, so neither the title nor the
+// attribution line can follow.
 //
 // It records in dry run too. Dry run withholds writes to Strava and leaves
 // activities queued so that turning writes on still names them; a human title

@@ -231,13 +231,13 @@ func (m *Memory) RecentTitles(_ context.Context, athleteID int64, limit int) ([]
 }
 
 // Named implements [NamedLog].
-func (m *Memory) Named(_ context.Context, athleteID, activityID int64) (string, bool, error) {
+func (m *Memory) Named(_ context.Context, athleteID, activityID int64) (NamedTitle, bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	entry, ok := m.named[key{athleteID: athleteID, activityID: activityID}]
 
-	return entry.Title, ok, nil
+	return entry, ok, nil
 }
 
 // Place implements [GeocodeCache].
