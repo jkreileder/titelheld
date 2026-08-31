@@ -40,6 +40,18 @@ is told to imitate.
   records a title that is not on Strava.
   **A second rename is recorded**, which the intake design documented as a limit it could not
   lift. And the 256-rune bound stops being load-bearing, because the title's provenance is Strava.
+- **An imported row is still structurally unable to become an example.**
+  The title follows the rename like any other — the row would otherwise record a title that is not
+  on Strava — but the source stays `imported`. Tidying up a ten-year-old ride does not make its
+  title current voice, and promoting the row would put the bare town names and private shorthand
+  the import exists to keep out of `EXAMPLES` straight back into them. `RECENT` takes every source
+  and sees the new title regardless.
+- **A deleted activity leaves the queue.**
+  A `404` from Strava is a finished entry rather than a failed one, on the naming path as well as
+  the reconcile path. An activity that was deleted cannot come back, and the entry would otherwise
+  spend one request every five minutes forever against a budget of a hundred per fifteen minutes.
+  The reconcile path made this newly reachable — a rename queues work, and the delete that follows
+  is ignored at intake — but the naming path had it too.
 - **A title Strava holds is still not automatically a person's.**
   A Strava default the athlete reverted to, another tool's overwrite, and this service's own
   commute templates are recognized and not recorded — the filter the history import already

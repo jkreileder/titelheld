@@ -138,8 +138,10 @@
   `reconcile.go` handles an activity already in the log: it re-reads the
   activity and records the title *Strava* holds, never one an event claimed.
   Three endings - the recorded title, in which case nothing changed; a title a
-  person typed, which the row becomes under `SourceHuman` whatever it said
-  before and dated by the ride; and anything else, which is not recorded,
+  person typed, which the row becomes under `SourceHuman` and dated by the
+  ride, except that a `SourceImported` row keeps its source so a rename cannot
+  promote a decade of shorthand into EXAMPLES; and anything else, which is not
+  recorded,
   because `SourceHuman` feeds the few-shot examples and a row claiming the
   athlete named a ride "Morning Ride" would teach exactly that. The filter is
   the import's, minus the tier: a renamed commute's template row has to follow

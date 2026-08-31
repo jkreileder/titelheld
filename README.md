@@ -204,6 +204,13 @@ holds**, never the one the event claimed:
 | Something a person typed | The row becomes that title, source `human`, dated by the ride      |
 | Something else           | Nothing recorded — see below                                       |
 
+One exception to the source, and it is structural: an **imported** row stays imported. The title
+follows Strava either way, because the row would otherwise record a title that is not there — but
+imported rows are barred from the few-shot examples on purpose, and tidying up a ten-year-old ride
+is still an act on a ten-year-old ride. Letting the rename promote the row would put the bare town
+names and private shorthand the import exists to keep out of the examples straight back into them.
+The no-repeat list takes every source, so it sees the new title regardless.
+
 Re-reading rather than comparing against a claim is what makes the rest fall out. There is no
 stale echo to suppress: an event delivered twice, out of order, or minutes late resolves
 against the same current Strava state. A second rename is recorded like the first, because
