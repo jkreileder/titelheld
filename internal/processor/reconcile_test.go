@@ -1,7 +1,11 @@
 package processor
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +14,7 @@ import (
 
 	"github.com/jkreileder/titelheld/internal/naming"
 	"github.com/jkreileder/titelheld/internal/store"
+	"github.com/jkreileder/titelheld/internal/strava"
 	"github.com/jkreileder/titelheld/internal/webhook"
 )
 
@@ -613,5 +618,142 @@ func TestARenameWithNoRideDateIsDatedByTheSweep(t *testing.T) {
 
 	if got := h.row(t); !got.NamedAt.Equal(h.now) {
 		t.Errorf("row dated %v, want the sweep's clock %v", got.NamedAt, h.now)
+	}
+}
+
+// An imported row keeps its source when the athlete renames the ride.
+//
+// The title has to follow Strava or the row records something that is not
+// there — but an imported row is barred from the few-shot examples on purpose,
+// and tidying up a ten-year-old ride does not make its title current voice.
+// Promoting the row would put the bare town names the import exists to keep out
+// of EXAMPLES straight back into them.
+func TestRenamingAnImportedRideKeepsItOutOfTheExamples(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	h.named(t, "Regensburg", store.SourceImported)
+	h.renamedTo("Regensburg und zurück")
+	h.enqueue(t, "update")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	got := h.row(t)
+	if got.Title != "Regensburg und zurück" {
+		t.Errorf("row title = %q, want the rename recorded", got.Title)
+	}
+
+	if got.Source != store.SourceImported {
+		t.Errorf("row source = %q, want it to stay %q", got.Source, store.SourceImported)
+	}
+
+	// The property the source is protecting, asserted through the filter that
+	// enforces it rather than through the field alone.
+	if kept := teachesStyle([]store.NamedTitle{got}); len(kept) != 0 {
+		t.Errorf("the renamed imported row became a style example: %+v", kept)
+	}
+}
+
+// Every other source becomes the athlete's.
+func TestEveryOtherSourceBecomesTheAthletes(t *testing.T) {
+	t.Parallel()
+
+	for _, source := range []string{store.SourceService, store.SourceTemplate, store.SourceHuman} {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, true, nil)
+			h.named(t, serviceTitle, source)
+			h.renamedTo(athleteTitle)
+			h.enqueue(t, "update")
+
+			if _, err := h.proc.Sweep(t.Context()); err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+
+			if got := h.row(t); got.Title != athleteTitle || got.Source != store.SourceHuman {
+				t.Errorf("row = %+v, want the rename recorded as the athlete's", got)
+			}
+		})
+	}
+}
+
+// A deleted activity is finished with, not retried forever. Nothing will ever
+// change, and a queue entry retried every five minutes spends a Strava request
+// each time against a budget of a hundred per fifteen minutes.
+func TestADeletedActivityLeavesTheQueue(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		row  bool
+	}{
+		{name: "queued to be reconciled", row: true},
+		{name: "queued to be named", row: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, true, nil)
+
+			if tt.row {
+				h.named(t, serviceTitle, store.SourceService)
+			}
+
+			h.strava.getErr = fmt.Errorf("strava: get activity 777: %w", strava.ErrNotFound)
+			h.enqueue(t, "update")
+
+			result, err := h.proc.Sweep(t.Context())
+			if err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+
+			if result.Failed != 0 {
+				t.Errorf("result = %+v, want no failure for an activity that cannot come back", result)
+			}
+
+			if n, _ := h.store.Len(t.Context()); n != 0 {
+				t.Errorf("%d entries queued, want the deleted activity dropped", n)
+			}
+		})
+	}
+}
+
+// A cancelled sweep reports how far it got, and a reconciliation counts as
+// having got somewhere.
+func TestACancelledSweepCountsReconciliations(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
+	})
+	h.named(t, serviceTitle, store.SourceService)
+	h.renamedTo(serviceTitle)
+	h.enqueue(t, "update")
+
+	// A context cancelled after the first activity: the sweep reconciles it,
+	// then stops at the boundary before the second.
+	ctx, cancel := context.WithCancel(t.Context())
+
+	if _, err := h.store.Enqueue(ctx, store.Pending{
+		AthleteID: 4242, ActivityID: 778, Aspect: "update",
+		EnqueuedAt:   time.Date(2026, 8, 15, 15, 0, 0, 0, time.UTC),
+		ProcessAfter: time.Date(2026, 8, 15, 15, 10, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	h.strava.getHook = func() { cancel() }
+
+	if _, err := h.proc.Sweep(ctx); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if !strings.Contains(logged.String(), `"finished":1`) {
+		t.Errorf("the cancelled sweep did not count the reconciliation:\n%s", logged.String())
 	}
 }

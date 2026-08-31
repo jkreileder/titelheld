@@ -211,7 +211,7 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			p.deps.Logger.Warn("sweep cancelled; the rest stays queued",
 				"due", result.Due,
-				"finished", result.Named+result.Skipped+result.Failed,
+				"finished", result.Named+result.Reconciled+result.Skipped+result.Failed,
 				"error", err)
 
 			result.Cancelled = true
@@ -262,7 +262,7 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 	return result, nil
 }
 
-// outcome distinguishes the two non-error endings.
+// outcome distinguishes the non-error endings.
 type outcome int
 
 const (
@@ -336,6 +336,12 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 
 	activity, err := p.deps.Activities.GetActivity(ctx, pending.ActivityID)
 	if err != nil {
+		if gone(err) {
+			logger.Info("dropping the event", "reason", "strava has no such activity")
+
+			return outcomeSkipped, nil
+		}
+
 		return outcomeSkipped, fmt.Errorf("fetch the activity: %w", err)
 	}
 
@@ -373,6 +379,18 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 	return outcomeNamed, nil
 }
 
+// gone reports that Strava has nothing to offer for this activity — it was
+// deleted, or it is no longer visible with the granted scopes.
+//
+// A queue entry is retried on every sweep until it succeeds, which is right for
+// a rate limit or a 500 and wrong for a 404: nothing will ever change, and the
+// entry would spend one request every five minutes forever against a budget of
+// a hundred per fifteen minutes. There is nothing left to name or to reconcile,
+// so the entry is finished with rather than failed.
+func gone(err error) bool {
+	return errors.Is(err, strava.ErrNotFound)
+}
+
 // recordHumanTitle remembers a title the athlete wrote, when that is why a
 // sport ride was skipped.
 //
@@ -396,13 +414,14 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 // filter the import applies, because a row recorded here teaches style and is
 // never revisited.
 //
-// The row is the dedup record, so a ride recorded here is final: this service
-// is the last writer and never overwrites a person, and a title later reverted
-// to a Strava default is not reconsidered. The title recorded is the one the
-// sweep saw; an edit the athlete makes afterwards is not tracked, because the
-// update event it causes is dropped at intake as already named. Nothing is
-// sent to Strava — this runs on the skip path, which never reaches the writer,
-// so neither the title nor the attribution line can follow.
+// The row is the dedup record, so a ride recorded here is final *for naming*:
+// this service is the last writer and never overwrites a person, and a title
+// later reverted to a Strava default is not reconsidered. The row itself still
+// follows the athlete — an edit they make afterwards arrives as an update
+// event, which is queued and reconciled against Strava; see
+// [Processor.reconcileOne]. Nothing is sent to Strava from here: this runs on
+// the skip path, which never reaches the writer, so neither the title nor the
+// attribution line can follow.
 //
 // It records in dry run too. Dry run withholds writes to Strava and leaves
 // activities queued so that turning writes on still names them; a human title

@@ -57,6 +57,12 @@ func (p *Processor) reconcileOne(
 
 	activity, err := p.deps.Activities.GetActivity(ctx, pending.ActivityID)
 	if err != nil {
+		if gone(err) {
+			logger.Info("reconciled: strava has no such activity; nothing left to record")
+
+			return outcomeReconciled, nil
+		}
+
 		return outcomeSkipped, fmt.Errorf("re-read the activity to reconcile it: %w", err)
 	}
 
@@ -70,23 +76,42 @@ func (p *Processor) reconcileOne(
 			"strava_title", logsafe.String(activity.Name),
 			"reason", p.notTheAthletesTitle(activity.Name))
 	default:
-		if err := p.recordRename(ctx, pending.AthleteID, activity, logger); err != nil {
+		source = renamedSource(recorded.Source)
+
+		if err := p.recordRename(ctx, pending.AthleteID, activity, source, logger); err != nil {
 			return outcomeSkipped, err
 		}
-
-		source = store.SourceHuman
 	}
 
 	return p.removeAttribution(ctx, activity, source, logger)
 }
 
-// recordRename replaces the row with the title Strava holds.
+// renamedSource says what a row's source becomes when the athlete renames the
+// activity.
 //
-// [store.SourceHuman] regardless of what the row said before. The source
-// records how a title was produced, and this one was produced by the athlete
-// typing it — that is as true of a ride this service named as of one it
-// declined, and as true of the second rename as of the first. Strava is the
-// ground truth for the title, so there is nothing here to gate on.
+// [store.SourceHuman] for almost everything: the source records how a title was
+// produced, and this one was produced by the athlete typing it — as true of a
+// ride this service named as of a commute it titled from a template, and as
+// true of the second rename as of the first.
+//
+// [store.SourceImported] is the exception, and it is structural. An imported
+// row is barred from the few-shot examples on purpose: a decade of the
+// athlete's own shorthand is bare town names and private jokes, and an example
+// set built from it teaches a model to answer with the name of a town. Tidying
+// up a ten-year-old ride is still an act on a ten-year-old ride; it does not
+// make that title current voice, and letting the rename promote the row would
+// put exactly the material the import exists to keep out of EXAMPLES back into
+// it. The title still follows Strava — the row would otherwise record a title
+// that is not there — and RECENT, which takes every source, still sees it.
+func renamedSource(recorded string) string {
+	if recorded == store.SourceImported {
+		return store.SourceImported
+	}
+
+	return store.SourceHuman
+}
+
+// recordRename replaces the row with the title Strava holds.
 //
 // Dated by the ride rather than the sweep, as an import and a skip-gate
 // recording are: RECENT is ordered by this date, and a rename made days later
@@ -95,7 +120,8 @@ func (p *Processor) reconcileOne(
 // It records in dry run. Dry run withholds writes to Strava; the athlete's
 // rename already happened and the record of it is not a write to Strava.
 func (p *Processor) recordRename(
-	ctx context.Context, athleteID int64, activity *strava.Activity, logger *slog.Logger,
+	ctx context.Context, athleteID int64, activity *strava.Activity,
+	source string, logger *slog.Logger,
 ) error {
 	at := activity.StartDate
 	if at.IsZero() {
@@ -107,14 +133,14 @@ func (p *Processor) recordRename(
 		ActivityID: activity.ID,
 		Title:      activity.Name,
 		Language:   string(naming.GuessLanguage(activity.Name)),
-		Source:     store.SourceHuman,
+		Source:     source,
 		At:         at,
 	}); err != nil {
 		return fmt.Errorf("record the athlete's rename: %w", err)
 	}
 
 	logger.Info("reconciled: the athlete renamed the activity; the record is now theirs",
-		"strava_title", logsafe.String(activity.Name))
+		"strava_title", logsafe.String(activity.Name), "source", source)
 
 	return nil
 }

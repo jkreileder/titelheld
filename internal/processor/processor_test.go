@@ -54,6 +54,10 @@ type fakeStrava struct {
 	// with the one shared activity, so naming any of them retitles all of
 	// them and the classifier declines the rest.
 	byID map[int64]strava.Activity
+
+	// getHook runs on every fetch, so a test can make something happen partway
+	// through a sweep — cancelling its context, for one.
+	getHook func()
 }
 
 type put struct {
@@ -72,6 +76,10 @@ func (f *fakeStrava) GetActivity(_ context.Context, id int64) (*strava.Activity,
 	defer f.mu.Unlock()
 
 	f.getCalls++
+
+	if f.getHook != nil {
+		f.getHook()
+	}
 
 	if f.getErr != nil {
 		return nil, f.getErr
