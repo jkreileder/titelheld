@@ -16,14 +16,14 @@ it does not.
 
 Six collections, and nothing else. Adding a seventh means changing this document.
 
-| Collection  | Document ID               | Contents                                         | Re-derivable?           |
-| ----------- | ------------------------- | ------------------------------------------------ | ----------------------- |
-| `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes   | **No**                  |
-| `pending`   | `{athleteID}-{activity}`  | Queued activity and its `process_after` deadline | Yes                     |
-| `named`     | `{athleteID}-{activity}`  | Title written, its language and source, and when | Mostly, from Strava     |
-| `geocache`  | rounded coordinate key    | Verified place names from Nominatim              | Yes, by refetching      |
-| `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series              | In principle, painfully |
-| `config`    | `{athleteID}`             | The athlete's configuration: franchise series    | **No** — hand-written   |
+| Collection  | Document ID               | Contents                                                  | Re-derivable?           |
+| ----------- | ------------------------- | --------------------------------------------------------- | ----------------------- |
+| `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes            | **No**                  |
+| `pending`   | `{athleteID}-{activity}`  | Queued activity, its `process_after` deadline, the aspect | Yes                     |
+| `named`     | `{athleteID}-{activity}`  | The recorded title, its language and source, and when     | Mostly, from Strava     |
+| `geocache`  | rounded coordinate key    | Verified place names from Nominatim                       | Yes, by refetching      |
+| `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series                       | In principle, painfully |
+| `config`    | `{athleteID}`             | The athlete's configuration: franchise series             | **No** — hand-written   |
 
 `pending` holds an athlete, an activity and a deadline — and, as provenance nothing reads, the
 webhook aspect that queued it, which is `create` or `update` and is checked against those two
