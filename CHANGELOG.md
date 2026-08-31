@@ -10,7 +10,7 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
-## [v0.7.4] – Unreleased
+## [v0.7.4] – 2026-09-01
 
 The newest Flash models are reachable without leaving Europe. A probe on 2026-08-31 found
 `gemini-3.7-flash` and `gemini-3.6-flash` served from the EU multi-region as well as from `global`,
