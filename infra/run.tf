@@ -144,15 +144,17 @@ resource "google_cloud_run_v2_service" "this" {
         value = "titelheld/1.0 (+${var.base_url})"
       }
 
-      # The naming provider, only when one is chosen: an unset variable is
-      # not passed as an empty string, so the binary sees exactly what the
-      # loader's dormancy test sees — nothing — and resolves Vertex.
+      # The naming provider and the Vertex location, each only when one is
+      # chosen: an unset variable is not passed as an empty string, so the
+      # binary sees exactly what the loader's dormancy test sees — nothing —
+      # and resolves Vertex in europe-west3.
       dynamic "env" {
         for_each = {
           for name, value in {
-            LLM_PROVIDER = var.llm_provider
-            LLM_MODEL    = var.llm_model
-            LLM_BASE_URL = var.llm_base_url
+            LLM_PROVIDER    = var.llm_provider
+            LLM_MODEL       = var.llm_model
+            LLM_BASE_URL    = var.llm_base_url
+            VERTEX_LOCATION = var.vertex_location
           } : name => value if value != ""
         }
 

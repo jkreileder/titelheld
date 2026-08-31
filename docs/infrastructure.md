@@ -148,7 +148,10 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
    new version of this secret holding the selected provider's key, the variables
    `llm_provider`, `llm_model` and `llm_base_url` in your tfvars, and an apply.
    The variables reach the container only when set; unset, the binary sees
-   nothing and resolves Vertex, exactly as its dormancy test asserts. A
+   nothing and resolves Vertex, exactly as its dormancy test asserts.
+   `vertex_location` follows the same rule and addresses the Vertex call itself
+   — `eu` or `global` for a model no European region serves, see
+   [Configuration](configuration.md#choosing-the-vertex-model-and-region). A
    deployment applied before this rule carried the mount unconditionally; its
    next plan removes an unused environment variable and nothing else.
 

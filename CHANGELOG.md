@@ -34,6 +34,10 @@ prompt built from the athlete's GPS traces inside Europe.
   spelling on both model generations — `gemini-3.5-flash` honors it exactly.
   Anthropic and OpenRouter share the constant, where it remains what it reads as: a bound on a
   runaway response.
+- **Terraform carries the location.**
+  A `vertex_location` variable reaches the container only when it is set, the same way the three
+  `llm_*` variables do, so a deployment that names none is byte-for-byte what the loader's
+  dormancy test sees.
 
 ## [v0.7.3] – 2026-08-31
 
