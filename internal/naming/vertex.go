@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -73,6 +74,13 @@ type Vertex struct {
 	// BaseURL overrides the endpoint host in tests. Empty means the real
 	// regional host.
 	BaseURL string
+
+	// Logger receives one usage line per call. Nil logs nothing. It exists
+	// because thinking tokens are billed inside maxOutputTokens and Gemini
+	// 3.x decides for itself how many to spend: how close a call came to the
+	// ceiling must be readable from production, not inferred from whether a
+	// truncation happened.
+	Logger *slog.Logger
 }
 
 // Name identifies the provider in logs.
@@ -195,6 +203,12 @@ type vertexResponse struct {
 	PromptFeedback struct {
 		BlockReason string `json:"blockReason"`
 	} `json:"promptFeedback"`
+	UsageMetadata struct {
+		PromptTokenCount     int `json:"promptTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
+		TotalTokenCount      int `json:"totalTokenCount"`
+	} `json:"usageMetadata"`
 }
 
 // Complete sends the prompt to Vertex and returns the model's text.
@@ -243,6 +257,25 @@ func (v *Vertex) Complete(ctx context.Context, prompt Prompt) (string, error) {
 	var decoded vertexResponse
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxVertexResponseBytes)).Decode(&decoded); err != nil {
 		return "", fmt.Errorf("naming: vertex: decode response: %w", err)
+	}
+
+	// Logged before any verdict on the candidate, because the calls where the
+	// ceiling mattered — a truncation, an empty candidate — are exactly the
+	// ones whose token split answers why.
+	if v.Logger != nil {
+		finish := ""
+		if len(decoded.Candidates) > 0 {
+			finish = decoded.Candidates[0].FinishReason
+		}
+
+		v.Logger.Info("vertex usage",
+			"model", v.model(),
+			"prompt_tokens", decoded.UsageMetadata.PromptTokenCount,
+			"thought_tokens", decoded.UsageMetadata.ThoughtsTokenCount,
+			"output_tokens", decoded.UsageMetadata.CandidatesTokenCount,
+			"total_tokens", decoded.UsageMetadata.TotalTokenCount,
+			"max_output_tokens", maxOutputTokens,
+			"finish_reason", finish)
 	}
 
 	if decoded.PromptFeedback.BlockReason != "" {
