@@ -1233,23 +1233,29 @@ func TestExampleSituationsAreNotCutAtTheTitleLimit(t *testing.T) {
 	}
 }
 
-// The callback invitation is active, and bounded by the variety rule.
+// The callback invitation is conditional, and the variety rule outranks it.
 //
-// The rule offers RECENT as material to build on and asks for a callback to be
-// preferred; a rule that merely welcomes one is what the model reads past. It
-// used to spell out a worked instance — "after 'Fünf auf einen Streich', a ride
-// with eight records is 'Acht auf einen Streich'" — and that instance, plus a
-// live copy of the title it named sitting in RECENT, is what produced two
-// number titles in three. The invitation stays; the formula does not.
+// The rule offers RECENT as material to build on, but the invitation is
+// earned rather than standing: a callback needs new material from the ride
+// itself, and a move already visible in the last few titles disqualifies it
+// outright. An unconditional preference for callbacks scored a segment-name
+// copy highest two rides in a row — the callback continued the copy. The
+// subordination is the rule now, so a rewrite that restores "prefer it to a
+// fresh idea" must fail here.
 func TestSystemPromptOffersRecentAsMaterial(t *testing.T) {
 	t.Parallel()
 
 	rule := ruleMentioning(t, "RECENT", "Never repeat")
 
+	if strings.Contains(rule, "prefer it to a fresh idea") {
+		t.Errorf("the RECENT rule still prefers a callback unconditionally:\n- %s", rule)
+	}
+
 	for _, want := range []string{
-		"Build on them",
-		"material",
-		"prefer it to a fresh idea",
+		"material to build on",
+		"outranks the callback",
+		"disqualifies it",
+		"new material to carry it",
 		"a formula, not a voice",
 	} {
 		if !strings.Contains(rule, want) {
@@ -1344,9 +1350,9 @@ func TestDataGuardsAreVerbatim(t *testing.T) {
 		"Never a title from the athlete's franchise lists — the named works a " +
 			"bike or a series is drawn from — those are the athlete's to spend, " +
 			"not yours.",
-		"But a move already visible in the last few titles under RECENT is a " +
-			"reason to choose a different angle: a pattern repeated is a " +
-			"formula, not a voice.",
+		"the variety rule outranks the callback: a move already visible in " +
+			"the last few titles under RECENT disqualifies it, because a " +
+			"pattern repeated is a formula, not a voice.",
 	} {
 		if !strings.Contains(text, guard) {
 			t.Errorf("a data guard was reworded or lost: %q", guard)

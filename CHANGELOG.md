@@ -29,6 +29,11 @@ what a callback may build on all change.
   rule: a candidate normalized-equal to any ACHIEVEMENTS name — or to its article-dropped core —
   is refused, the activity stays queued, and the next sweep draws again at temperature. Equality
   and not containment, deliberately: a title *about* the stretch is the invited angle and stands.
+- **The variety rule outranks the callback.**
+  The prompt no longer prefers a callback to a fresh idea. A move already visible in the last
+  few titles under RECENT disqualifies it, and a callback is invited only where the ride's own
+  data supplies new material to carry it — an unconditional preference scored the segment-name
+  copy highest two rides in a row, because continuing the copy *was* the callback.
 
 ## [v0.7.4] – 2026-09-01
 
