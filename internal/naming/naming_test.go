@@ -317,9 +317,10 @@ func TestVertexLogsUsage(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name     string
-		response string
-		wantErr  bool
+		name       string
+		response   string
+		wantLogged []string
+		wantErr    bool
 	}{
 		{
 			name: "complete",
@@ -327,12 +328,32 @@ func TestVertexLogsUsage(t *testing.T) {
 				`"finishReason":"STOP"}],` +
 				`"usageMetadata":{"promptTokenCount":1500,"candidatesTokenCount":30,` +
 				`"thoughtsTokenCount":320,"totalTokenCount":1850}}`,
+			wantLogged: []string{
+				"vertex usage",
+				"model=gemini-3.5-flash",
+				"prompt_tokens=1500",
+				"thought_tokens=320",
+				"output_tokens=30",
+				"total_tokens=1850",
+				"max_output_tokens=1024",
+				"finish_reason=STOP",
+			},
 		},
 		{
 			name: "truncated",
 			response: `{"candidates":[{"content":{"parts":[]},"finishReason":"MAX_TOKENS"}],` +
 				`"usageMetadata":{"promptTokenCount":1500,"candidatesTokenCount":0,` +
 				`"thoughtsTokenCount":1024,"totalTokenCount":2524}}`,
+			wantLogged: []string{
+				"vertex usage",
+				"model=gemini-3.5-flash",
+				"prompt_tokens=1500",
+				"thought_tokens=1024",
+				"output_tokens=0",
+				"total_tokens=2524",
+				"max_output_tokens=1024",
+				"finish_reason=MAX_TOKENS",
+			},
 			wantErr: true,
 		},
 	} {
@@ -363,15 +384,7 @@ func TestVertexLogsUsage(t *testing.T) {
 
 			line := logged.String()
 
-			for _, want := range []string{
-				"vertex usage",
-				"prompt_tokens=1500",
-				"thought_tokens=",
-				"output_tokens=",
-				"total_tokens=",
-				"max_output_tokens=1024",
-				"finish_reason=",
-			} {
+			for _, want := range test.wantLogged {
 				if !strings.Contains(line, want) {
 					t.Errorf("the usage line lacks %q:\n%s", want, line)
 				}
