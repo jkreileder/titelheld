@@ -332,7 +332,7 @@ func TestFewShotExamplesAreDerivedFromHistory(t *testing.T) {
 
 		// The source is what admits it as an example. Left empty, this fixture
 		// is not one, and everything below would be testing the fallback.
-		Source: store.SourceService,
+		Source: store.SourceHuman,
 		At:     h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
@@ -383,6 +383,61 @@ func TestFewShotExamplesFallBackToTheSyntheticSet(t *testing.T) {
 	}
 }
 
+// A title this service wrote never becomes an example.
+//
+// The pipeline's own output is the floor the model produced under this same
+// prompt, and an example set carrying it would teach the model to imitate
+// its weakest habits — a segment name written once became the next ride's
+// teacher. The row still reaches RECENT: repeating it stays forbidden.
+func TestServiceTitlesDoNotTeach(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, nil)
+	capture := withCapture(h)
+
+	const serviceWritten = "Schotter am Musterwehr"
+
+	const humanWritten = "Feierabend im Mustertal"
+
+	for _, row := range []store.Naming{
+		{
+			AthleteID: 4242, ActivityID: 901,
+			Title: serviceWritten, Language: "de",
+			Source: store.SourceService, At: h.now.Add(-time.Hour),
+		},
+		{
+			AthleteID: 4242, ActivityID: 902,
+			Title: humanWritten, Language: "de",
+			Source: store.SourceHuman, At: h.now.Add(-2 * time.Hour),
+		},
+	} {
+		if err := h.store.MarkNamed(t.Context(), row); err != nil {
+			t.Fatalf("MarkNamed: %v", err)
+		}
+	}
+
+	h.enqueue(t, "create")
+
+	if _, err := h.proc.Sweep(t.Context()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	examples := section(t, capture.prompt.User, "EXAMPLES")
+
+	if strings.Contains(examples, serviceWritten) {
+		t.Errorf("a service title reached the examples:\n%s", examples)
+	}
+
+	if !strings.Contains(examples, humanWritten) {
+		t.Errorf("the athlete's title is not among the examples:\n%s", examples)
+	}
+
+	if !strings.Contains(section(t, capture.prompt.User, "RECENT"), serviceWritten) {
+		t.Errorf("the service title left RECENT with the examples:\n%s",
+			capture.prompt.User)
+	}
+}
+
 // Deriving examples is paid for once, not on every sweep.
 //
 // Dry run leaves the activity queued and reruns the whole pipeline every five
@@ -397,7 +452,7 @@ func TestDerivedExamplesAreNotRefetchedEverySweep(t *testing.T) {
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 901,
 		Title: "Gegenwind bis Musterdorf", Language: "de",
-		Source: store.SourceService, At: h.now.Add(-time.Hour),
+		Source: store.SourceHuman, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -464,7 +519,7 @@ func TestDerivedExamplesAreBounded(t *testing.T) {
 
 			// Admitted as examples, or nothing is derived at all and the
 			// count below is the synthetic set's rather than the bound's.
-			Source: store.SourceService,
+			Source: store.SourceHuman,
 		}); err != nil {
 			t.Fatalf("MarkNamed: %v", err)
 		}
@@ -494,13 +549,13 @@ func TestUnreadableHistoryFallsBackToSyntheticExamples(t *testing.T) {
 
 	h.strava.getErrFor = map[int64]error{901: errors.New("strava: 404 deleted")}
 
-	// Marked as this service's own, so the row reaches the derivation and the
+	// Marked as the athlete's own, so the row reaches the derivation and the
 	// fallback below is reached because the activity cannot be re-read — not
 	// because the history was filtered away before anything was attempted.
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 901,
 		Title: "Eine gelöschte Runde", Language: "de",
-		Source: store.SourceService, At: h.now.Add(-time.Hour),
+		Source: store.SourceHuman, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -561,7 +616,7 @@ func TestExamplesSurviveTheHistoryChangingMidSweep(t *testing.T) {
 			ActivityID: int64(900 + index),
 			Title:      title,
 			Language:   "de",
-			Source:     store.SourceService,
+			Source:     store.SourceHuman,
 			At:         h.now.Add(-time.Duration(index+1) * time.Hour),
 		}); err != nil {
 			t.Fatalf("MarkNamed: %v", err)
@@ -641,7 +696,7 @@ func TestTemplateTitlesAreKeptOutOfThePrompt(t *testing.T) {
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 900,
 		Title: "Gegenwind bis Musterdorf", Language: "de",
-		Source: store.SourceService, At: h.now.Add(-time.Hour),
+		Source: store.SourceHuman, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -729,7 +784,7 @@ func TestAnExampleWithoutALanguageFallsBack(t *testing.T) {
 
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 901,
-		Title: "Eine alte Runde", Source: store.SourceService, At: h.now.Add(-time.Hour),
+		Title: "Eine alte Runde", Source: store.SourceHuman, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}
@@ -1330,7 +1385,7 @@ func TestServiceWrittenTitlesDoTeachStyle(t *testing.T) {
 	if err := h.store.MarkNamed(t.Context(), store.Naming{
 		AthleteID: 4242, ActivityID: 901,
 		Title: written, Language: "de",
-		Source: store.SourceService, At: h.now.Add(-time.Hour),
+		Source: store.SourceHuman, At: h.now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("MarkNamed: %v", err)
 	}

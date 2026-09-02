@@ -187,14 +187,16 @@ three blocks carries the prohibition. The two lists are
 filtered differently, and that difference is the rule. RECENT drops only
 templates - a commute name is meant to repeat, so listing it forbids the right
 answer - and keeps imported titles, because repeating one is exactly what to
-avoid. EXAMPLES admits two sources and no other: `SourceService`, a title this
-service's own pipeline wrote, and `SourceHuman`, a title the athlete wrote on a
-sport ride the skip gate declined - recorded by the processor on that skip,
-never written to Strava, and the best style data there will ever be. An
-imported row is structurally unable to become an example, which is the point -
-a decade of the athlete's shorthand says what not to write twice and nothing
-about what a title should sound like, and no pattern has to be maintained to
-keep a bare town name out. Until a title from either source exists the
+avoid. EXAMPLES admits one source and no other: `SourceHuman`, a title the
+athlete wrote on a sport ride - recorded by the reconcile on a rename, or by
+the processor on a skip-gate decline, and the best style data there will ever
+be. The service's own titles stay out: a `SourceService` row is the floor the
+model produced under this same prompt, and admitting it closes the style loop
+on itself - a title written once becomes the next ride's teacher. An imported
+row is structurally unable to become an example, which is the point - a decade
+of the athlete's shorthand says what not to write twice and nothing about what
+a title should sound like, and no pattern has to be maintained to keep a bare
+town name out. Until a human title exists the
 synthetic set is what the prompt carries, which is its purpose rather than a
 cold-start stopgap. Only the title history is worth
 failing an activity for - the realistic cause is the composite index missing.
