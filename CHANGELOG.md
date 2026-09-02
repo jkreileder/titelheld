@@ -10,7 +10,7 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
-## [v0.7.5] – Unreleased
+## [v0.7.5] – 2026-09-02
 
 The segment-copy loop is closed. Within two days of going live on a new narrator, a segment name
 was written verbatim as a title, recycled into the few-shot examples as the service's own row,
