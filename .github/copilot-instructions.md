@@ -173,9 +173,10 @@ and the prompt states only figures consistent across Strava's surfaces. No
 count of what a ride achieved qualifies - web, mobile and the API report three
 different numbers for one ride, and a local legend is absent from segment
 efforts entirely - so RIDE and a derived example's situation carry none, and
-`countEfforts` is gone. RECENT's callback invitation is bounded by the variety
-rule: a move already visible in the last few titles is a reason to choose a
-different angle. Both replaced a worked escalation instance in the system
+`countEfforts` is gone. RECENT's callback invitation is subordinate to the
+variety rule: a move already visible in the last few titles disqualifies the
+callback, and one is invited only where the ride's own data supplies new
+material to carry it. Both replaced a worked escalation instance in the system
 prompt that named a title permanently in RECENT, which was the operator's
 specification and produced two number titles in three. Segment names are the
 least trusted text in the prompt - a segment is named by whoever created it,
