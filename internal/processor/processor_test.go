@@ -766,6 +766,70 @@ func TestInvalidTitleIsNotWritten(t *testing.T) {
 	}
 }
 
+// A title that is a segment name taken whole is refused, not written.
+//
+// The prompt asks for what the ride did on the stretch; this is the request
+// made binding. The refusal leaves the activity queued, so the next sweep
+// draws again at temperature.
+func TestSegmentNameAsTitleIsNotWritten(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Provider = &fakeProvider{
+			response: `{"title":"Anstieg zur Musterhöhe","language":"de"}`,
+		}
+	})
+
+	h.strava.activity.SegmentEfforts = []strava.SegmentEffort{
+		{Name: "Anstieg zur Musterhöhe", PRRank: 1},
+	}
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Failed != 1 {
+		t.Errorf("result = %+v, want a failure", result)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 0 {
+		t.Errorf("a segment-name title was written: %+v", writes)
+	}
+}
+
+// A title about the stretch stands: the refusal is equality, not containment.
+func TestTitleAboutASegmentIsWritten(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Provider = &fakeProvider{
+			response: `{"title":"Bestzeit am Anstieg zur Musterhöhe","language":"de"}`,
+		}
+	})
+
+	h.strava.activity.SegmentEfforts = []strava.SegmentEffort{
+		{Name: "Anstieg zur Musterhöhe", PRRank: 1},
+	}
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Named != 1 {
+		t.Errorf("result = %+v, want one naming", result)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs, want 1: a title about the stretch must stand", len(writes))
+	}
+}
+
 // The named log alone must stop a second write.
 //
 // In the replay test the classifier also declines, because the activity now
