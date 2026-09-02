@@ -186,7 +186,7 @@ func (p *Processor) complete(
 	// series has been offered at all.
 	guard := gathered.Series.Guard(entry)
 
-	title, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), guard, logger)
+	title, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, logger)
 	if err != nil {
 		return naming.Title{}, false, err
 	}
@@ -209,7 +209,7 @@ func (p *Processor) complete(
 			"entry", logsafe.String(entry),
 			"title", logsafe.String(title.Text))
 
-		retry, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), guard, logger)
+		retry, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, logger)
 		if err != nil {
 			// The title in hand is a good one that simply ignored the series.
 			// Losing it because a second call failed would leave the ride at
@@ -236,7 +236,7 @@ func (p *Processor) complete(
 	// guard. Without that, a title from this call could still claim it — and
 	// this call's title is written with the position left where it was, so
 	// the entry would be spent on the feed and offered again on the next ride.
-	plainTitle, err := p.ask(ctx, naming.BuildPrompt(ride, plain), gathered.Series.Guard(""), logger)
+	plainTitle, err := p.ask(ctx, naming.BuildPrompt(ride, plain), gathered.Series.Guard(""), ride.Achievements, logger)
 	if err != nil {
 		logger.Warn("naming without the series failed; keeping the title that ignored it",
 			"error", err)
@@ -254,8 +254,14 @@ func (p *Processor) complete(
 // claims an entry is refused here — the same place a banned word or an
 // over-long title is refused, and with the same consequence: the activity
 // fails and stays queued, so the next sweep draws again.
+//
+// The achievements get the same treatment: the prompt says a segment's name
+// is never the title itself, and a candidate that is one taken whole is
+// refused here. The consequence is the same re-roll — the model is sampled
+// at temperature, so the next sweep's draw is a real second chance.
 func (p *Processor) ask(
-	ctx context.Context, prompt naming.Prompt, guard naming.Guarded, logger *slog.Logger,
+	ctx context.Context, prompt naming.Prompt, guard naming.Guarded,
+	achievements []string, logger *slog.Logger,
 ) (naming.Title, error) {
 	p.logPrompt(prompt, logger)
 
@@ -284,6 +290,13 @@ func (p *Processor) ask(
 			"llm %s returned an unusable title: %w: %q claims %q",
 			p.deps.Provider.Name(), naming.ErrTitleClaimsEntry,
 			logsafe.String(title.Text), logsafe.String(entry))
+	}
+
+	if name, copied := naming.CopiesAchievement(title.Text, achievements); copied {
+		return naming.Title{}, fmt.Errorf(
+			"llm %s returned an unusable title: %w: %q copies %q",
+			p.deps.Provider.Name(), naming.ErrTitleCopiesSegment,
+			logsafe.String(title.Text), logsafe.String(name))
 	}
 
 	return title, nil

@@ -101,6 +101,10 @@ var (
 	// not this service's to spend: one the athlete reserved, one the rotation
 	// has already spent, or one it has yet to offer.
 	ErrTitleClaimsEntry = errors.New("naming: title claims a franchise entry")
+
+	// ErrTitleCopiesSegment means the title is one of the ride's achievement
+	// names taken whole — somebody else's words as the entire title.
+	ErrTitleCopiesSegment = errors.New("naming: title copies a segment name")
 )
 
 // DefaultBannedWords is the list the spec ships with. It is configuration, not

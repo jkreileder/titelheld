@@ -24,6 +24,11 @@ what a callback may build on all change.
   and admitting it taught the model its own weakest habit within 48 hours. Service titles stay
   in RECENT — repeating one is still the thing to avoid — and the human channel grows the
   corpus: every rename the reconcile records, every skip-gate decline.
+- **A segment's name is never the title itself.**
+  The prompt says so, and the pipeline makes it binding the way the franchise guard binds its
+  rule: a candidate normalized-equal to any ACHIEVEMENTS name — or to its article-dropped core —
+  is refused, the activity stays queued, and the next sweep draws again at temperature. Equality
+  and not containment, deliberately: a title *about* the stretch is the invited angle and stands.
 
 ## [v0.7.4] – 2026-09-01
 
