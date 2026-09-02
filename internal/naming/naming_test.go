@@ -1,10 +1,12 @@
 package naming
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -301,6 +303,93 @@ func TestVertexComplete(t *testing.T) {
 
 	if !strings.Contains(gotBody, "systemInstruction") {
 		t.Errorf("request does not carry the system instruction: %s", gotBody)
+	}
+}
+
+// Every Vertex call logs its token split, truncated calls included.
+//
+// Thinking tokens are billed inside maxOutputTokens and Gemini 3.x decides
+// for itself how many to spend, so cap headroom has to be readable from
+// production. The truncation case matters most: it is the call whose token
+// split answers why, and an early return that skipped the line would hide
+// exactly that call.
+func TestVertexLogsUsage(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		response   string
+		wantLogged []string
+		wantErr    bool
+	}{
+		{
+			name: "complete",
+			response: `{"candidates":[{"content":{"parts":[{"text":"{}"}]},` +
+				`"finishReason":"STOP"}],` +
+				`"usageMetadata":{"promptTokenCount":1500,"candidatesTokenCount":30,` +
+				`"thoughtsTokenCount":320,"totalTokenCount":1850}}`,
+			wantLogged: []string{
+				"vertex usage",
+				"model=gemini-3.5-flash",
+				"prompt_tokens=1500",
+				"thought_tokens=320",
+				"output_tokens=30",
+				"total_tokens=1850",
+				"max_output_tokens=1024",
+				"finish_reason=STOP",
+			},
+		},
+		{
+			name: "truncated",
+			response: `{"candidates":[{"content":{"parts":[]},"finishReason":"MAX_TOKENS"}],` +
+				`"usageMetadata":{"promptTokenCount":1500,"candidatesTokenCount":0,` +
+				`"thoughtsTokenCount":1024,"totalTokenCount":2524}}`,
+			wantLogged: []string{
+				"vertex usage",
+				"model=gemini-3.5-flash",
+				"prompt_tokens=1500",
+				"thought_tokens=1024",
+				"output_tokens=0",
+				"total_tokens=2524",
+				"max_output_tokens=1024",
+				"finish_reason=MAX_TOKENS",
+			},
+			wantErr: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(
+				func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, test.response)
+				}))
+			defer server.Close()
+
+			var logged bytes.Buffer
+
+			provider := &Vertex{
+				Client:    server.Client(),
+				ProjectID: "titelheld-test",
+				Location:  "europe-west4",
+				BaseURL:   server.URL,
+				Logger:    slog.New(slog.NewTextHandler(&logged, nil)),
+			}
+
+			_, err := provider.Complete(t.Context(), Prompt{System: "sys", User: "usr"})
+			if test.wantErr != (err != nil) {
+				t.Fatalf("Complete error = %v, wantErr %v", err, test.wantErr)
+			}
+
+			line := logged.String()
+
+			for _, want := range test.wantLogged {
+				if !strings.Contains(line, want) {
+					t.Errorf("the usage line lacks %q:\n%s", want, line)
+				}
+			}
+		})
 	}
 }
 

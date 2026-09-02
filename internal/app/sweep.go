@@ -120,7 +120,9 @@ func buildGeographer(
 // ambient credentials are the authentication, which is why there is no sixth
 // secret for it. The two keyed providers share LLM_API_KEY; which of them the
 // key belongs to is whatever LLM_PROVIDER says.
-func buildProvider(ctx context.Context, cfg config.Config) (naming.Provider, error) {
+func buildProvider(
+	ctx context.Context, cfg config.Config, logger *slog.Logger,
+) (naming.Provider, error) {
 	switch cfg.LLM.Provider {
 	case config.ProviderAnthropic:
 		return &naming.Anthropic{APIKey: cfg.LLM.APIKey, Model: cfg.LLM.Model}, nil
@@ -145,6 +147,7 @@ func buildProvider(ctx context.Context, cfg config.Config) (naming.Provider, err
 		ProjectID: cfg.LLM.VertexProject,
 		Location:  cfg.LLM.VertexLocation,
 		Model:     cfg.LLM.Model,
+		Logger:    logger,
 	}, nil
 }
 
@@ -171,7 +174,7 @@ func sweepDeps(
 		return processor.Deps{}, err
 	}
 
-	provider, err := buildProvider(ctx, cfg)
+	provider, err := buildProvider(ctx, cfg, logger)
 	if err != nil {
 		return processor.Deps{}, err
 	}

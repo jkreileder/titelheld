@@ -414,7 +414,7 @@ func TestProviderDispatchIsVertexUnlessAsked(t *testing.T) {
 		t.Fatalf("provider = %q, want %q", cfg.LLM.Provider, config.ProviderVertex)
 	}
 
-	provider, err := buildProvider(t.Context(), cfg)
+	provider, err := buildProvider(t.Context(), cfg, slog.New(slog.DiscardHandler))
 
 	switch {
 	case err != nil && strings.Contains(err.Error(), "build Vertex credentials"):
@@ -437,7 +437,7 @@ func TestProviderDispatchIsVertexUnlessAsked(t *testing.T) {
 		t.Fatalf("config.Load with openrouter: %v", err)
 	}
 
-	provider, err = buildProvider(t.Context(), cfg)
+	provider, err = buildProvider(t.Context(), cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("buildProvider with openrouter: %v", err)
 	}

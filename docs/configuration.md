@@ -260,3 +260,8 @@ all, while Gemini 3.x cannot be stopped and reads it as a floor, spending a few 
 regardless. The ceiling is 1024 tokens for that reason — naming a ride needs no chain of
 reasoning, but paying for one is not optional. Any hand-run `curl` needs both the field and the
 headroom, or it reproduces the original failure.
+
+How close a call actually comes to the ceiling is logged rather than inferred: every Vertex call
+emits a `vertex usage` line with the prompt, thought, output and total token counts beside the
+configured ceiling and the finish reason — truncated calls included, because the call that hit
+`MAX_TOKENS` is exactly the one whose token split says why.

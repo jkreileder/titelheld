@@ -34,6 +34,11 @@ what a callback may build on all change.
   few titles under RECENT disqualifies it, and a callback is invited only where the ride's own
   data supplies new material to carry it — an unconditional preference scored the segment-name
   copy highest two rides in a row, because continuing the copy *was* the callback.
+- **Every Vertex call logs its token split.**
+  A `vertex usage` line carries the prompt, thought, output and total token counts beside the
+  configured ceiling and the finish reason — truncated calls included, because the call that hit
+  `MAX_TOKENS` is exactly the one whose split says why. Cap headroom is now read from
+  production, not inferred from whether a truncation happened.
 
 ## [v0.7.4] – 2026-09-01
 
