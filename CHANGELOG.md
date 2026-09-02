@@ -10,6 +10,21 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.5] – Unreleased
+
+The segment-copy loop is closed. Within two days of going live on a new narrator, a segment name
+was written verbatim as a title, recycled into the few-shot examples as the service's own row,
+and the next ride's title was the sibling segment — the prompt's callback invitation scoring the
+copy highest. Model-independent, so the fix is structural: what teaches, what is refused, and
+what a callback may build on all change.
+
+- **Few-shot examples come from the athlete only.**
+  EXAMPLES admits `SourceHuman` rows and no other; the synthetic set remains the fallback until
+  one exists. A title this service wrote is the floor the model produced under this same prompt,
+  and admitting it taught the model its own weakest habit within 48 hours. Service titles stay
+  in RECENT — repeating one is still the thing to avoid — and the human channel grows the
+  corpus: every rename the reconcile records, every skip-gate decline.
+
 ## [v0.7.4] – 2026-09-01
 
 The newest Flash models are reachable without leaving Europe. A probe on 2026-08-31 found
@@ -590,6 +605,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.5]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.5
 [v0.7.4]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.4
 [v0.7.3]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.3
 [v0.7.2]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.2

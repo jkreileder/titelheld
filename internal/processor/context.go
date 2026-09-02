@@ -305,11 +305,11 @@ func FranchisesToStored(franchises []naming.Franchise) []store.Franchise {
 func (p *Processor) examplesFrom(
 	ctx context.Context, history []store.NamedTitle, logger *slog.Logger,
 ) []naming.Example {
-	// Only what teaches: a title this service wrote, or one the athlete wrote
-	// by hand since. Not a filter over titles that might be unsuitable — an
-	// admitted source, which no imported row carries, so a decade of the
-	// athlete's own shorthand is structurally unable to become an example
-	// rather than pattern-matched out of one.
+	// Only what teaches: a title the athlete wrote by hand. Not a filter over
+	// titles that might be unsuitable — an admitted source, which neither an
+	// imported row nor the service's own rows carry, so a decade of shorthand
+	// and the pipeline's own output are structurally unable to become examples
+	// rather than pattern-matched out of them.
 	history = teachesStyle(history)
 
 	if len(history) == 0 {
@@ -426,14 +426,20 @@ func worthNotRepeating(history []store.NamedTitle) []store.NamedTitle {
 
 // teachesStyle keeps the titles a few-shot example may be built from.
 //
-// Two sources and no other: [store.SourceService], a title this service's
-// pipeline wrote, and [store.SourceHuman], one the athlete wrote on a sport
-// ride since the recorder existed. The athlete's current hand-namings are the
-// best style data there will ever be, and admitting only the service's own
-// titles closed the style loop on itself — cold-start blandness would have
-// become its own teacher.
+// One source and no other: [store.SourceHuman], a title the athlete wrote on
+// a sport ride since the recorder existed. The athlete's hand-namings are the
+// best style data there will ever be, and they are the only titles here that
+// carry a judgment: writing one is a choice, while leaving a service title
+// standing is not approval of it — it is the athlete not editing a feed.
 //
-// [store.SourceImported] stays out. That rule's target was a decade of
+// [store.SourceService] stays out because admitting it closes the style loop
+// on itself: a title this pipeline wrote is the floor the model produced under
+// this same prompt, and an example set carrying it teaches the model to
+// imitate its own weakest habits. The human channel is what grows the corpus
+// — the reconcile records every rename and every skip-gate decline — and it
+// grows it at the quality an example needs.
+//
+// [store.SourceImported] stays out too. That rule's target was a decade of
 // shorthand — bare town names, private jokes, whatever a tool left behind —
 // and an example set built from it teaches a model to answer "Regensburg".
 // Which rows those are is decided by the source they carry, not by what the
@@ -441,16 +447,15 @@ func worthNotRepeating(history []store.NamedTitle) []store.NamedTitle {
 // last week's title from one from years ago.
 //
 // The opposite default to [worthNotRepeating], and deliberately so: this one
-// admits sources rather than excluding one, so a row whose source is unknown,
-// misspelled, or added later is not an example. An example teaches the model
-// what a title should sound like, and the cost of a wrong one is every title
-// afterwards.
+// admits a source rather than excluding some, so a row whose source is
+// unknown, misspelled, or added later is not an example. An example teaches
+// the model what a title should sound like, and the cost of a wrong one is
+// every title afterwards.
 func teachesStyle(history []store.NamedTitle) []store.NamedTitle {
 	kept := make([]store.NamedTitle, 0, len(history))
 
 	for _, entry := range history {
-		switch entry.Source {
-		case store.SourceService, store.SourceHuman:
+		if entry.Source == store.SourceHuman {
 			kept = append(kept, entry)
 		}
 	}
