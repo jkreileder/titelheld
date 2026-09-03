@@ -27,15 +27,14 @@ import (
 // points that near each other resolve to the same settlement.
 const cachePrecision = 3
 
-// DefaultSampleCount is how many points along the route are sampled between
-// the start and the farthest point.
+// DefaultSampleCount is how many interior points along the route are sampled.
 const DefaultSampleCount = 6
 
 // MaxSampleCount bounds that count.
 //
-// The start and the farthest point are sampled on top of it, so this is what
-// keeps one activity to at most eight reverse-geocoding requests — eight
-// seconds of the rate-limit budget, spent while an athlete waits for a title.
+// The farthest point is sampled on top of it, so this is what keeps one
+// activity to at most seven reverse-geocoding requests — seven seconds of the
+// rate-limit budget, spent while an athlete waits for a title.
 const MaxSampleCount = 6
 
 // earthRadiusMeters is the mean radius the haversine distance is scaled by.
@@ -44,12 +43,14 @@ const earthRadiusMeters = 6371000
 // Summary is the verified geography of one route.
 //
 // Every field is a name. There is deliberately nowhere to put a coordinate.
+//
+// Neither endpoint of the track is in here. A title is public, and a name
+// resolved at km 0 or km end is the address the ride starts and finishes at,
+// so the endpoints are never geocoded at all — see [SamplePoints].
 type Summary struct {
-	// Start is where the route began.
-	Start store.Place
-
-	// Along holds the other resolved places, in sample order, deduplicated by
-	// name. Every entry has a name: a sample that resolved only to a country
+	// Along holds the resolved places, in sample order: the interior samples
+	// in track order, then the farthest point. It is deduplicated by name, and
+	// every entry has a name — a sample that resolved only to a country
 	// contributes to Country and Region and is not listed here.
 	Along []store.Place
 
@@ -64,16 +65,16 @@ type Summary struct {
 // resolves to a country and nothing else. Callers that need names should use
 // [Summary.Names] and check its length rather than inferring it from here.
 func (s Summary) Empty() bool {
-	return s.Start.Empty() && len(s.Along) == 0 && s.Region == "" && s.Country == ""
+	return len(s.Along) == 0 && s.Region == "" && s.Country == ""
 }
 
-// Names returns every distinct place name, start first. This is what a prompt
-// builder passes to an LLM.
+// Names returns every distinct place name, in sample order. This is what a
+// prompt builder passes to an LLM.
 func (s Summary) Names() []string {
-	names := make([]string, 0, len(s.Along)+1)
-	seen := make(map[string]struct{}, len(s.Along)+1)
+	names := make([]string, 0, len(s.Along))
+	seen := make(map[string]struct{}, len(s.Along))
 
-	for _, place := range append([]store.Place{s.Start}, s.Along...) {
+	for _, place := range s.Along {
 		if place.Name == "" {
 			continue
 		}
@@ -142,8 +143,9 @@ type DescriberConfig struct {
 	// Logger defaults to [slog.Default].
 	Logger *slog.Logger
 
-	// SampleCount is how many points between the start and the farthest
-	// point are geocoded. Zero means [DefaultSampleCount], and anything
+	// SampleCount is how many interior points along the route are geocoded;
+	// the farthest point is asked about on top of them, and the track's own
+	// endpoints never are. Zero means [DefaultSampleCount], and anything
 	// above [MaxSampleCount] is refused rather than clamped: the request
 	// budget per activity is a property of the code, not of the
 	// configuration that happens to be deployed.
@@ -201,7 +203,7 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 		seenNames = make(map[string]struct{}, len(samples))
 	)
 
-	for index, point := range samples {
+	for _, point := range samples {
 		key := CacheKey(point)
 
 		// Dedupe on the cache key, not on the raw coordinate: an out-and-back
@@ -241,17 +243,10 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 			continue
 		}
 
-		if index == 0 {
-			summary.Start = place
-			seenNames[place.Name] = struct{}{}
-
-			continue
-		}
-
-		// Deduplicate on the resolved name, not just on the cache key. Eight
-		// samples 110 m apart are eight distinct keys that routinely resolve to
+		// Deduplicate on the resolved name, not just on the cache key. Seven
+		// samples 110 m apart are seven distinct keys that routinely resolve to
 		// one town, and a caller iterating Along would otherwise render it
-		// eight times.
+		// seven times.
 		if _, ok := seenNames[place.Name]; ok {
 			continue
 		}
@@ -351,18 +346,22 @@ func round(value float64) float64 {
 	return rounded
 }
 
-// SamplePoints picks the points worth geocoding: the start, count points at
-// equal arc length along the track, and the point farthest from the start.
-// A count of zero or less means [DefaultSampleCount].
+// SamplePoints picks the points worth geocoding: count points at equal arc
+// length inside the track, and the point farthest from the start. A count of
+// zero or less means [DefaultSampleCount], so one activity costs at most
+// count+1 reverse-geocoding requests.
+//
+// Neither endpoint is ever sampled. Titles are public, and a place resolved at
+// km 0 or km end names where the athlete lives; the interior points at
+// k*L/(count+1) are interior by construction, and the farthest point is
+// dropped — not replaced — when it sits on an endpoint, which on a one-way
+// ride it does.
 //
 // Spacing is by distance traveled rather than by index. A summary polyline
 // carries its vertices wherever the track bends, so index spacing follows the
 // shape of the simplification and not the shape of the ride: a loop with a
 // dense section puts every index-spaced sample inside it, and the rest of the
 // route is never asked about.
-//
-// The start comes first because it is the only sample whose position in the
-// result matters.
 func SamplePoints(points []Point, count int) []Point {
 	if len(points) == 0 {
 		return nil
@@ -372,8 +371,7 @@ func SamplePoints(points []Point, count int) []Point {
 		count = DefaultSampleCount
 	}
 
-	start := points[0]
-	samples := []Point{start}
+	samples := make([]Point, 0, count+1)
 
 	cumulative, total := arcLengths(points)
 
@@ -385,9 +383,32 @@ func SamplePoints(points []Point, count int) []Point {
 		}
 	}
 
-	samples = append(samples, farthestFrom(start, points))
+	samples = append(samples, farthestFrom(points[0], points))
 
-	return dedupePoints(samples)
+	return dedupePoints(withoutEndpoints(points, samples))
+}
+
+// withoutEndpoints drops every sample sitting exactly on the track's first or
+// last point.
+//
+// This is the privacy rule of [SamplePoints] in code, applied to the whole set
+// rather than to the one sample expected to need it: whatever produced a
+// sample, an endpoint's name may not reach a public title. A track of one
+// point, or one that never moved, is therefore sampled nowhere at all — its
+// only point is both endpoints.
+func withoutEndpoints(track, samples []Point) []Point {
+	first, last := track[0], track[len(track)-1]
+	kept := samples[:0]
+
+	for _, sample := range samples {
+		if sample == first || sample == last {
+			continue
+		}
+
+		kept = append(kept, sample)
+	}
+
+	return kept
 }
 
 // arcLengths returns the cumulative distance to each point and the total.
@@ -482,8 +503,9 @@ func farthestFrom(start Point, points []Point) Point {
 	return farthest
 }
 
-// dedupePoints drops repeats while keeping the first occurrence, so the start
-// of a loop is not geocoded twice as its own farthest point.
+// dedupePoints drops repeats while keeping the first occurrence: the farthest
+// point can fall on an interior sample, and geocoding it twice spends a second
+// of the rate-limit budget for nothing.
 func dedupePoints(points []Point) []Point {
 	seen := make(map[Point]struct{}, len(points))
 	unique := points[:0]

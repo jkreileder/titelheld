@@ -37,6 +37,13 @@ const (
 
 	// legBoundary is the latitude a point is read as homeward above.
 	legBoundary = 0.005
+
+	// startLon is where both fixture tracks begin, and where the loop ends.
+	startLon = 0.0010
+
+	// oneWayFinishLon is where the one-way track stops, far enough east that
+	// it is also its farthest point from the start.
+	oneWayFinishLon = 0.150
 )
 
 // The names each band answers with. Each appears in exactly one recorded
@@ -51,20 +58,37 @@ const (
 	suburbUnionName  = "Musterverbund"
 	municipalityName = "Musterverband"
 	villageName      = "Musterdorf"
+
+	// The names the endpoint cells answer with. Nothing else in the fixture
+	// resolves to either, so their absence from a summary is a claim about the
+	// two points a public title may never carry: km 0 and km end.
+	startCellName  = "Musterheim"
+	finishCellName = "Musterende"
 )
+
+// endpointCells maps a rounded cell to the name it answers with. The cells are
+// where the fixture tracks begin and end.
+//
+// The answer is a village, which is an allow-listed kind the finest-first
+// order asks for first: a sampler that asked about an endpoint would put the
+// name straight into the summary, which is what makes its absence evidence.
+var endpointCells = map[[2]float64]string{
+	{round(outwardLat), round(startLon)}:        startCellName,
+	{round(outwardLat), round(oneWayFinishLon)}: finishCellName,
+}
+
+// cellOf is the rounded cell a point falls in — the same rounding the cache
+// key uses, so the fixture speaks about points the way the sampler does.
+func cellOf(point Point) [2]float64 {
+	return [2]float64{round(point.Lat), round(point.Lon)}
+}
 
 // loopTrack is the synthetic ride: a cluster at the start, an outward leg east
 // through the bands, and a homeward leg to the north of it.
 func loopTrack() []Point {
 	points := make([]Point, 0, clusterVertices+16)
 
-	// The cluster: a twisting start inside one town, a few hundred meters of
-	// track and most of the vertices.
-	for index := range clusterVertices {
-		wiggle := float64(index%4) * 0.00005
-
-		points = append(points, Point{Lat: outwardLat + wiggle/4, Lon: 0.0010 + wiggle})
-	}
+	points = append(points, startCluster()...)
 
 	// Outward, east, with a vertex only where the track would bend.
 	for _, lon := range []float64{0.010, 0.040, 0.075, 0.100, turnLon} {
@@ -72,16 +96,48 @@ func loopTrack() []Point {
 	}
 
 	// Homeward, north of the outward leg, back to the start.
-	for _, lon := range []float64{turnLon, 0.100, 0.075, 0.040, 0.010, 0.0010} {
+	for _, lon := range []float64{turnLon, 0.100, 0.075, 0.040, 0.010, startLon} {
 		points = append(points, Point{Lat: homewardLat, Lon: lon})
 	}
 
 	return append(points, points[0])
 }
 
+// oneWayTrack is the ride that ends where it turned around on the loop: a
+// point-to-point track whose farthest point from the start is its last point.
+func oneWayTrack() []Point {
+	points := startCluster()
+
+	for _, lon := range []float64{0.010, 0.040, 0.075, 0.100, turnLon, oneWayFinishLon} {
+		points = append(points, Point{Lat: outwardLat, Lon: lon})
+	}
+
+	return points
+}
+
+// startCluster is the twisting start inside one settlement: a few hundred
+// meters of track and most of the vertices.
+func startCluster() []Point {
+	points := make([]Point, 0, clusterVertices)
+
+	for index := range clusterVertices {
+		wiggle := float64(index%4) * 0.00005
+
+		points = append(points, Point{Lat: outwardLat + wiggle/4, Lon: startLon + wiggle})
+	}
+
+	return points
+}
+
 // bandResponse is the recorded Nominatim reply for the band a point falls in.
 // Hand-written: no test here has ever spoken to a live geocoder.
 func bandResponse(point Point) string {
+	// The endpoints answer for themselves, before any band.
+	if name, ok := endpointCells[cellOf(point)]; ok {
+		return `{"category":"place","type":"village","name":"` + name + `",
+			"address":{"village":"` + name + `","state":"Musterregion","country":"Testland"}}`
+	}
+
 	// The cluster and the closing stretch: one town, whichever leg.
 	if point.Lon < 0.020 {
 		return `{"category":"place","type":"town","name":"` + townName + `",
@@ -173,6 +229,15 @@ func (r *recordingGeocoder) recorded() []url.Values {
 func describeLoop(t *testing.T, nominatim NominatimConfig, sampleCount int) (Summary, *recordingGeocoder) {
 	t.Helper()
 
+	return describeTrack(t, nominatim, sampleCount, loopTrack())
+}
+
+// describeTrack is describeLoop over any of the fixture tracks.
+func describeTrack(
+	t *testing.T, nominatim NominatimConfig, sampleCount int, track []Point,
+) (Summary, *recordingGeocoder) {
+	t.Helper()
+
 	recorder := newRecordingGeocoder(t)
 
 	nominatim.UserAgent = "titelheld-test/1.0 (test@example.invalid)"
@@ -195,7 +260,7 @@ func describeLoop(t *testing.T, nominatim NominatimConfig, sampleCount int) (Sum
 		t.Fatalf("NewDescriber: %v", err)
 	}
 
-	summary, err := describer.Describe(t.Context(), encodeForTest(loopTrack()))
+	summary, err := describer.Describe(t.Context(), encodeForTest(track))
 	if err != nil {
 		t.Fatalf("Describe: %v", err)
 	}
@@ -215,20 +280,80 @@ func TestPlacesSpreadOverTheRoute(t *testing.T) {
 		t.Fatalf("Names() = %v, want at least three distinct settlements", names)
 	}
 
-	if summary.Start.Name != townName {
-		t.Errorf("Start = %q, want the town the ride started in", summary.Start.Name)
-	}
-
-	for _, want := range []string{townName, hamletName, suburbName, municipalityName, villageName} {
+	for _, want := range []string{hamletName, suburbName, municipalityName, villageName} {
 		if !slices.Contains(names, want) {
 			t.Errorf("Names() = %v, missing %q", names, want)
 		}
 	}
 
 	// The budget the equal-arc scheme is bounded by: the athlete waits a
-	// second per request.
-	if calls := len(recorder.recorded()); calls > 8 {
-		t.Errorf("one activity cost %d reverse-geocoding requests, want at most 8", calls)
+	// second per request. The loop's farthest point is interior, so this is
+	// the expensive shape — the interior samples plus that one.
+	if calls := len(recorder.recorded()); calls != DefaultSampleCount+1 {
+		t.Errorf("one activity cost %d reverse-geocoding requests, want %d",
+			calls, DefaultSampleCount+1)
+	}
+}
+
+// The two endpoints leave the candidate set entirely: a title is public, and a
+// settlement at km 0 or km end is where the athlete lives.
+//
+// The loop begins and ends in the same cell, and that cell answers with a name
+// no other point in the fixture reports. Both the summary and the wire are
+// asserted, so neither a name filtered on the way out nor a request that was
+// nevertheless sent passes.
+func TestTheEndpointsAreNeverGeocoded(t *testing.T) {
+	t.Parallel()
+
+	summary, recorder := describeLoop(t, NominatimConfig{}, 0)
+
+	if slices.Contains(summary.Names(), startCellName) {
+		t.Errorf("Names() = %v, carries %q — the name of the cell the ride started and finished in",
+			summary.Names(), startCellName)
+	}
+
+	assertNoRequestInCell(t, recorder, cellOf(Point{Lat: outwardLat, Lon: startLon}))
+}
+
+// On a one-way ride the farthest point from the start is the last point, and
+// it is dropped rather than replaced: the finish is an endpoint like any other.
+func TestAOneWayRideNeverNamesItsFinish(t *testing.T) {
+	t.Parallel()
+
+	summary, recorder := describeTrack(t, NominatimConfig{}, 0, oneWayTrack())
+
+	for _, unwanted := range []string{startCellName, finishCellName} {
+		if slices.Contains(summary.Names(), unwanted) {
+			t.Errorf("Names() = %v, carries %q — an endpoint of a one-way ride",
+				summary.Names(), unwanted)
+		}
+	}
+
+	assertNoRequestInCell(t, recorder, cellOf(Point{Lat: outwardLat, Lon: oneWayFinishLon}))
+
+	// The ride still has geography: dropping the endpoints costs the finish,
+	// not the route.
+	if len(summary.Names()) < 3 {
+		t.Errorf("Names() = %v, want the settlements the ride crossed", summary.Names())
+	}
+}
+
+func assertNoRequestInCell(t *testing.T, recorder *recordingGeocoder, cell [2]float64) {
+	t.Helper()
+
+	queries := recorder.recorded()
+	if len(queries) == 0 {
+		t.Fatal("nothing was asked of the geocoder")
+	}
+
+	for index, query := range queries {
+		lat, _ := strconv.ParseFloat(query.Get("lat"), 64)
+		lon, _ := strconv.ParseFloat(query.Get("lon"), 64)
+
+		if cellOf(Point{Lat: lat, Lon: lon}) == cell {
+			t.Errorf("request %d asked about %v, which is the cell the ride began or ended in",
+				index, cell)
+		}
 	}
 }
 
@@ -257,7 +382,7 @@ func TestTheFinestSettlementWins(t *testing.T) {
 
 	// The kind travels with the name, so the allow-list check on the way out
 	// of the cache knows what it is looking at.
-	for _, place := range append([]store.Place{summary.Start}, summary.Along...) {
+	for _, place := range summary.Along {
 		if place.Name == hamletName && place.Kind != "hamlet" {
 			t.Errorf("%q was recorded as a %q, want a hamlet", place.Name, place.Kind)
 		}
@@ -361,9 +486,9 @@ func TestSampleCountReachesTheRequests(t *testing.T) {
 
 	_, recorder := describeLoop(t, NominatimConfig{}, 2)
 
-	// The start, two samples along the way, and the far side of the loop.
-	if calls := len(recorder.recorded()); calls != 4 {
-		t.Errorf("a sample count of 2 cost %d requests, want 4", calls)
+	// Two samples along the way, and the far side of the loop.
+	if calls := len(recorder.recorded()); calls != 3 {
+		t.Errorf("a sample count of 2 cost %d requests, want 3", calls)
 	}
 }
 

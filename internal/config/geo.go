@@ -23,8 +23,9 @@ const (
 // package resolves. The defaults themselves live there, next to the code that
 // applies them, so there is one owner for each of them.
 type Geo struct {
-	// SampleCount is how many points between the start and the farthest
-	// point are geocoded. Zero means the shipped default.
+	// SampleCount is how many interior points along the route are geocoded.
+	// The farthest point is asked about on top of them; the track's endpoints
+	// never are. Zero means the shipped default.
 	SampleCount int
 
 	// Zoom is the granularity Nominatim is asked for. Zero means the

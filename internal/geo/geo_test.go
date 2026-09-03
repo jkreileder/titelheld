@@ -149,12 +149,14 @@ func TestCacheKeyRounds(t *testing.T) {
 	}
 }
 
-// The samples are spread by distance traveled, not by vertex index.
+// The samples are spread by distance traveled, not by vertex index, and both
+// endpoints are left out.
 //
 // The fixture is a straight synthetic track whose vertices are deliberately
 // bunched at one end: index spacing would put five of the six interior samples
 // inside the bunch, and equal-arc spacing puts them at even fractions of the
-// length whatever the vertices do.
+// length whatever the vertices do. Its farthest point from the start is its
+// last point, so the endpoint rule applies to that sample too.
 func TestSamplePoints(t *testing.T) {
 	t.Parallel()
 
@@ -174,17 +176,17 @@ func TestSamplePoints(t *testing.T) {
 
 	samples := SamplePoints(points, 0)
 
-	// The start, six interior samples, and the far end.
-	if len(samples) != 8 {
-		t.Fatalf("sampled %d points, want 8: %+v", len(samples), samples)
+	// The six interior samples and nothing else: the farthest point from the
+	// start is the last point here, and an endpoint is dropped rather than
+	// replaced.
+	if len(samples) != DefaultSampleCount {
+		t.Fatalf("sampled %d points, want %d: %+v", len(samples), DefaultSampleCount, samples)
 	}
 
-	if samples[0] != points[0] {
-		t.Errorf("samples[0] = %+v, want the start", samples[0])
-	}
-
-	if last := samples[len(samples)-1]; last != points[len(points)-1] {
-		t.Errorf("the last sample = %+v, want the point farthest from the start", last)
+	for index, sample := range samples {
+		if sample == points[0] || sample == points[len(points)-1] {
+			t.Errorf("sample %d = %+v, which is an endpoint of the track", index, sample)
+		}
 	}
 
 	// A straight track along the equator, so the fraction of the length is
@@ -192,7 +194,7 @@ func TestSamplePoints(t *testing.T) {
 	for step := 1; step <= DefaultSampleCount; step++ {
 		want := 0.07 * float64(step) / float64(DefaultSampleCount+1)
 
-		if got := samples[step].Lon; math.Abs(got-want) > 1e-6 {
+		if got := samples[step-1].Lon; math.Abs(got-want) > 1e-6 {
 			t.Errorf("sample %d is at lon %.6f, want %.6f — the samples are not equally spaced by arc length",
 				step, got, want)
 		}
@@ -215,8 +217,10 @@ func TestSampleAcrossTheAntimeridian(t *testing.T) {
 	// fix that only handles the delta and not the wrap is still caught.
 	samples := SamplePoints(points, 3)
 
-	if len(samples) != 5 {
-		t.Fatalf("sampled %d points, want 5: %+v", len(samples), samples)
+	// Three interior samples: the farthest point is the segment's own end, and
+	// an endpoint is never sampled.
+	if len(samples) != 3 {
+		t.Fatalf("sampled %d points, want 3: %+v", len(samples), samples)
 	}
 
 	for index, sample := range samples {
@@ -241,45 +245,49 @@ func TestSampleAcrossTheAntimeridian(t *testing.T) {
 func TestSampleCountIsBounded(t *testing.T) {
 	t.Parallel()
 
+	// A straight track: its farthest point is its last point, so the count is
+	// the interior samples alone.
 	points := []Point{{Lat: 0, Lon: 0}, {Lat: 0, Lon: 0.05}, {Lat: 0, Lon: 0.1}}
 
-	if got := len(SamplePoints(points, 2)); got != 4 {
-		t.Errorf("a count of 2 sampled %d points, want 4", got)
+	if got := len(SamplePoints(points, 2)); got != 2 {
+		t.Errorf("a count of 2 sampled %d points, want 2", got)
 	}
 
-	if got := len(SamplePoints(points, 0)); got != DefaultSampleCount+2 {
-		t.Errorf("the default sampled %d points, want %d", got, DefaultSampleCount+2)
+	if got := len(SamplePoints(points, 0)); got != DefaultSampleCount {
+		t.Errorf("the default sampled %d points, want %d", got, DefaultSampleCount)
 	}
 
-	if got := len(SamplePoints(points, MaxSampleCount)); got > 8 {
-		t.Errorf("the maximum count sampled %d points, want at most 8", got)
+	// The ceiling holds wherever the farthest point falls: it is one request
+	// on top of the interior samples, and never more.
+	loop := []Point{
+		{Lat: 0, Lon: 0}, {Lat: 0.01, Lon: 0.05}, {Lat: 0.02, Lon: 0.1},
+		{Lat: 0.05, Lon: 0.04}, {Lat: 0, Lon: 0},
+	}
+
+	if got := len(SamplePoints(loop, MaxSampleCount)); got > MaxSampleCount+1 {
+		t.Errorf("the maximum count sampled %d points, want at most %d", got, MaxSampleCount+1)
 	}
 }
 
+// A track of one point is a track that is nothing but its own endpoints, and
+// an endpoint is never geocoded.
 func TestSampleSinglePoint(t *testing.T) {
 	t.Parallel()
 
-	samples := SamplePoints([]Point{{Lat: 1, Lon: 2}}, 0)
-	if len(samples) != 1 {
-		t.Fatalf("sampled %d points for a track of one, want 1: %+v", len(samples), samples)
-	}
-
-	for _, sample := range samples {
-		if sample != (Point{Lat: 1, Lon: 2}) {
-			t.Errorf("sample = %+v, want the only point", sample)
-		}
+	if samples := SamplePoints([]Point{{Lat: 1, Lon: 2}}, 0); len(samples) != 0 {
+		t.Errorf("a track of one point sampled %+v, want nothing", samples)
 	}
 }
 
-// A track that never moves has no arc to spread samples along, and the start
-// is also its own farthest point.
+// A track that never moves has no arc to spread samples along, and its only
+// point is where the athlete started and finished.
 func TestSampleStandstill(t *testing.T) {
 	t.Parallel()
 
 	standstill := []Point{{Lat: 1, Lon: 2}, {Lat: 1, Lon: 2}, {Lat: 1, Lon: 2}}
 
-	if samples := SamplePoints(standstill, 0); len(samples) != 1 {
-		t.Errorf("a standstill sampled %+v, want the start alone", samples)
+	if samples := SamplePoints(standstill, 0); len(samples) != 0 {
+		t.Errorf("a standstill sampled %+v, want nothing", samples)
 	}
 }
 
@@ -475,7 +483,12 @@ func TestDescribeUsesAndFillsTheCache(t *testing.T) {
 	}
 
 	// The cache holds places, and the coordinates survive only as rounded keys.
-	place, ok, err := memory.Place(t.Context(), CacheKey(Point{Lat: 38.5, Lon: -120.2}))
+	points, err := DecodePolyline(encoded)
+	if err != nil {
+		t.Fatalf("DecodePolyline: %v", err)
+	}
+
+	place, ok, err := memory.Place(t.Context(), CacheKey(SamplePoints(points, 0)[0]))
 	if err != nil || !ok {
 		t.Fatalf("cache lookup = %+v, %v, %v", place, ok, err)
 	}
@@ -486,16 +499,21 @@ func TestDescribeUsesAndFillsTheCache(t *testing.T) {
 func TestEmptyAnswersAreCached(t *testing.T) {
 	t.Parallel()
 
+	points := []Point{{Lat: 38.5, Lon: -120.2}, {Lat: 38.6, Lon: -120.3}}
+	sampled := SamplePoints(points, 0)
+
 	reverser := &fakeReverser{places: map[string]store.Place{}}
-	reverser.places["38.500,-120.200"] = store.Place{}
+	for _, sample := range sampled {
+		reverser.places[CacheKey(sample)] = store.Place{}
+	}
 
 	describer, memory := newDescriber(t, reverser)
 
-	if _, err := describer.Describe(t.Context(), "_p~iF~ps|U"); err != nil {
+	if _, err := describer.Describe(t.Context(), encodeForTest(points)); err != nil {
 		t.Fatalf("Describe: %v", err)
 	}
 
-	_, ok, err := memory.Place(t.Context(), "38.500,-120.200")
+	_, ok, err := memory.Place(t.Context(), CacheKey(sampled[0]))
 	if err != nil {
 		t.Fatalf("cache lookup: %v", err)
 	}
@@ -540,7 +558,8 @@ func TestDescribeReportsFailures(t *testing.T) {
 		wantErr := errors.New("nominatim unreachable")
 		describer, _ := newDescriber(t, &fakeReverser{err: wantErr})
 
-		if _, err := describer.Describe(t.Context(), "_p~iF~ps|U"); !errors.Is(err, wantErr) {
+		// Three points, so the track has interior samples to fail on.
+		if _, err := describer.Describe(t.Context(), "_p~iF~ps|U_ulLnnqC_mqNvxq`@"); !errors.Is(err, wantErr) {
 			t.Errorf("Describe = %v, want %v", err, wantErr)
 		}
 	})
@@ -550,8 +569,8 @@ func TestSummaryNamesAreDistinct(t *testing.T) {
 	t.Parallel()
 
 	summary := Summary{
-		Start: store.Place{Name: "Musterdorf"},
 		Along: []store.Place{
+			{Name: "Musterdorf"},
 			{Name: "Musterstadt"},
 			{Name: "Musterdorf"},
 			{Name: ""},
@@ -650,7 +669,7 @@ func TestDecodePolylineRejectsImpossibleCoordinates(t *testing.T) {
 	}
 }
 
-// Eight samples 110 m apart are eight distinct cache keys that routinely
+// Seven samples 110 m apart are seven distinct cache keys that routinely
 // resolve to one town. Along must list it once.
 func TestAlongIsDeduplicatedByName(t *testing.T) {
 	t.Parallel()
@@ -670,9 +689,9 @@ func TestAlongIsDeduplicatedByName(t *testing.T) {
 		t.Fatalf("Describe: %v", err)
 	}
 
-	// The fake resolves everything to Musterdorf, which is also the start.
-	if len(summary.Along) != 0 {
-		t.Errorf("Along = %+v, want empty — every sample resolved to the start's name", summary.Along)
+	// The fake resolves every sample to Musterdorf.
+	if len(summary.Along) != 1 {
+		t.Errorf("Along = %+v, want one entry — every sample resolved to the same name", summary.Along)
 	}
 
 	if names := summary.Names(); len(names) != 1 || names[0] != "Musterdorf" {
@@ -995,7 +1014,7 @@ func TestDescribeNormalizesResolvedNames(t *testing.T) {
 	}
 
 	if names[0] != "Ruhstorf a. d. Rott" {
-		t.Errorf("start name = %q, want the spaced form", names[0])
+		t.Errorf("resolved name = %q, want the spaced form", names[0])
 	}
 
 	// The region and the country travel to the prompt too, on their own
