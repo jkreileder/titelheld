@@ -49,17 +49,40 @@ func RepeatsTitle(candidate string, titles []string) (string, bool) {
 // and told not to repeat, so they are what [RepeatsTitle] measures against; a
 // title the prompt never carried is a fresh one.
 //
-// The RECENT lines are the ones [BuildPrompt] writes, truncation included: the
-// refusal and the prompt read the same list through the same cap, so a title
+// Each title contributes two forms where they differ: the line the prompt shows
+// and the title as it is stored. [BuildPrompt] writes every RECENT line and
+// every example title through [OneLine], so a title longer than
+// [MaxPromptFieldRunes] reaches the model cut to its first 60 runes, and that
+// prefix is what the model can hand back. Measuring against the stored title
+// alone would take the prefix for a fresh title; the stored form stays in the
+// list because it is the title itself, whatever the prompt had room for. The
+// shown form comes first, so a match names the line the model actually read.
+//
+// The list of RECENT lines is the one BuildPrompt writes, cap included: the
+// refusal and the prompt read the same history through the same cap, so a title
 // beyond the cap is neither shown nor refused.
 func (c Context) ForbiddenTitles() []string {
 	recent := capTitles(c.RecentTitles)
 
-	titles := make([]string, 0, len(recent)+len(c.Examples))
-	titles = append(titles, recent...)
+	stored := make([]string, 0, len(recent)+len(c.Examples))
+	stored = append(stored, recent...)
 
 	for _, example := range c.Examples {
-		titles = append(titles, example.Title)
+		stored = append(stored, example.Title)
+	}
+
+	titles := make([]string, 0, 2*len(stored))
+	seen := make(map[string]struct{}, 2*len(stored))
+
+	for _, title := range stored {
+		for _, form := range [...]string{OneLine(title), title} {
+			if _, known := seen[form]; form == "" || known {
+				continue
+			}
+
+			seen[form] = struct{}{}
+			titles = append(titles, form)
+		}
 	}
 
 	return titles
@@ -75,6 +98,12 @@ func (c Context) ForbiddenTitles() []string {
 // a word does not split it; everything else that is not a letter or a digit
 // becomes a space, and whitespace runs collapse.
 //
+// Format characters are removed the same way and for the same reason as the
+// emoji pieces: a soft hyphen, a zero-width space or joiner, a word joiner or a
+// byte-order mark is invisible, so it tells no two German or English titles
+// apart, while turning one into a space would split "Bade[soft hyphen]see" into
+// two words and make a repeat read as a fresh title.
+//
 // Nonspacing marks are removed rather than spaced, and that is bounded by the
 // languages this service writes in. [Language] admits German and English only,
 // and NFKC has already composed every mark either of them spells a letter with,
@@ -88,7 +117,7 @@ func normalizeForRepeat(text string) string {
 
 	mapped := strings.Map(func(r rune) rune {
 		switch {
-		case isEmojiPart(r) || unicode.Is(unicode.Mn, r):
+		case isEmojiPart(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Cf, r):
 			return -1
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			return r

@@ -49,8 +49,10 @@ type Ride struct {
 	// GearName is the bike, which some franchises key on.
 	GearName string
 
-	// Places are verified place names along the route, start first. The prompt
-	// states these are the only geography the model may use.
+	// Places are verified place names along the route, in sample order. The
+	// track's endpoints are excluded, so a title cannot name where the ride
+	// began or ended. The prompt states these are the only geography the model
+	// may use.
 	Places []string
 
 	// Region and Country are the coarsest containers the route touched.
