@@ -14,8 +14,10 @@ import (
 // here: the rule does not care which block a title came from, only that the
 // model was shown it and told not to repeat it.
 //
-// The place names are invented, as everywhere in this repository: a real one
-// locates a real road.
+// The place names that could locate the athlete are invented, as everywhere
+// in this repository. İstanbul appears by name because the dotted capital is
+// the case under test and no invented word carries it as naturally; a world
+// city on another continent locates nobody's front door.
 func TestRepeatsTitle(t *testing.T) {
 	t.Parallel()
 
