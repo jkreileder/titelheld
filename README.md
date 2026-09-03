@@ -457,8 +457,9 @@ which is what the earlier versions of both did.
 ## Geography
 
 A route becomes place names, never coordinates. `internal/geo` decodes Strava's summary
-polyline, samples the start, the four bounding-box extremes and three evenly spaced waypoints,
-and reverse-geocodes them through Nominatim.
+polyline, samples points at equal arc length along the track plus the point farthest from the
+start — never the track's endpoints, whose names would localize the athlete's home — and
+reverse-geocodes them through Nominatim.
 
 Two properties are enforced in code rather than documented and hoped for:
 

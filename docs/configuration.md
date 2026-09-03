@@ -7,19 +7,43 @@ is wired. -->
 All configuration comes from the environment. Nothing is read from a file, so secrets have no
 route into the working tree; on Cloud Run they are injected from Secret Manager.
 
-| Variable               | Required | Default | Purpose                                      |
-| ---------------------- | -------- | ------- | -------------------------------------------- |
-| `STRAVA_CLIENT_ID`     | yes      | —       | Strava API application ID                    |
-| `STRAVA_CLIENT_SECRET` | yes      | —       | Strava API application secret                |
-| `STRAVA_VERIFY_TOKEN`  | yes      | —       | Shared secret for the subscription handshake |
-| `WEBHOOK_PATH_SECRET`  | yes      | —       | Unguessable segment of the webhook path      |
-| `BASE_URL`             | yes      | —       | Public base URL, used for the OAuth redirect |
-| `MAX_INSTANCES`        | yes      | —       | Must be `1`; Terraform sets it — see below   |
-| `STRAVA_ATHLETE_ID`    | no       | any     | Restrict processing to one athlete           |
-| `PROCESS_DELAY`        | no       | `10m`   | How long to wait before naming               |
-| `DRY_RUN`              | no       | on      | Set to `0` to permit writes                  |
-| `LOG_PROMPT`           | no       | on      | Set to `0` to stop logging the whole prompt  |
-| `PORT`                 | no       | `8080`  | Listen port; Cloud Run sets this             |
+| Variable                 | Required | Default                      | Purpose                                         |
+| ------------------------ | -------- | ---------------------------- | ----------------------------------------------- |
+| `STRAVA_CLIENT_ID`       | yes      | —                            | Strava API application ID                       |
+| `STRAVA_CLIENT_SECRET`   | yes      | —                            | Strava API application secret                   |
+| `STRAVA_VERIFY_TOKEN`    | yes      | —                            | Shared secret for the subscription handshake    |
+| `WEBHOOK_PATH_SECRET`    | yes      | —                            | Unguessable segment of the webhook path         |
+| `BASE_URL`               | yes      | —                            | Public base URL, used for the OAuth redirect    |
+| `MAX_INSTANCES`          | yes      | —                            | Must be `1`; Terraform sets it — see below      |
+| `STRAVA_ATHLETE_ID`      | no       | any                          | Restrict processing to one athlete              |
+| `PROCESS_DELAY`          | no       | `10m`                        | How long to wait before naming                  |
+| `DRY_RUN`                | no       | on                           | Set to `0` to permit writes                     |
+| `LOG_PROMPT`             | no       | on                           | Set to `0` to stop logging the whole prompt     |
+| `PORT`                   | no       | `8080`                       | Listen port; Cloud Run sets this                |
+| `NOMINATIM_USER_AGENT`   | no       | derived                      | Identifies the service to Nominatim — see below |
+| `GEO_SAMPLE_COUNT`       | no       | `6`                          | Interior track samples geocoded per activity    |
+| `NOMINATIM_ZOOM`         | no       | `16`                         | Reverse-geocoding zoom — see below              |
+| `NOMINATIM_PLACE_FIELDS` | no       | `hamlet,village,suburb,town` | Settlement fields tried in order                |
+
+## Geography
+
+Place names come from at most `GEO_SAMPLE_COUNT` + 1 reverse-geocoding calls per activity: the
+interior samples at equal arc length along the track, plus the point farthest from the start.
+The track's two endpoints are never geocoded — a title is public, and a settlement at km 0 or
+km end is where the athlete lives. `GEO_SAMPLE_COUNT` accepts 1 to 6; the ceiling keeps one
+activity within Nominatim's usage budget at the enforced one request per second.
+
+`NOMINATIM_ZOOM` (3 to 18, default 16) sets the granularity Nominatim answers at; 16 is the
+level at which hamlet and village names appear in the response. `NOMINATIM_PLACE_FIELDS` is the
+comma-separated order in which those address fields are tried per point — the first present
+wins, and the coarser fields (town, municipality, county) serve only where nothing finer
+resolved. `NOMINATIM_USER_AGENT` identifies the service per Nominatim's usage policy and is
+derived from `BASE_URL` when unset.
+
+Every cached answer is keyed by the query shape that produced it: a version, the zoom, a token
+for the field order, and the rounded coordinate (`v2_z16_hvst_48.123,11.456`). Changing the
+zoom or the field order therefore orphans previously cached entries rather than reusing answers
+of a different shape; orphaned entries stay in place, unread.
 
 ## One instance, and the binary knows it
 
