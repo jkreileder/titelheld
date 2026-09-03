@@ -501,6 +501,11 @@ func dedupePoints(points []Point) []Point {
 }
 
 // Distance is the great-circle distance between two points, in meters.
+//
+// classifier.distanceMeters is the same haversine, duplicated because
+// classifier must stay dependency-free and this package must not be its
+// import. A fix to either formula belongs in both places; this one clamps
+// the asin operand against rounding, the classifier's copy does not yet.
 func Distance(from, to Point) float64 {
 	const degreesToRadians = math.Pi / 180
 
