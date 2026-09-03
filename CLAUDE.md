@@ -100,8 +100,11 @@ Stop and ask before any of these; none may be done on an assumption.
   with it. No HTTP, no Firestore, no Strava SDK — pure rules over an `Activity` value.
   `activity.go` is the transport-neutral input, `defaults.go` the Strava default-title table and
   `IsDefaultTitle`, `classifier.go` the `Config`, tiers, actions, and `Classify`.
-- `internal/config/` reads every setting from the environment and nothing else, so a secret has
-  no route into the working tree. `DRY_RUN` is parsed here and defaults to on. `MAX_INSTANCES` is
+- `internal/config/` reads every **deployment** setting from the environment and nothing else,
+  so a secret has no route into the working tree. Per-athlete configuration — franchises today,
+  the rest as it follows — lives in the Firestore `config` document and reaches the sweep through
+  the store, not through this package; `config.LoadStore` reads nothing but where Firestore is.
+  `DRY_RUN` is parsed here and defaults to on. `MAX_INSTANCES` is
   parsed here too and is *required* to serve: it must be `1`, because four pieces of in-process
   state — the OAuth state map, the first-bind lock, token-refresh serialization and the sweep
   lock — are correct only while one instance serves. Terraform feeds the same local to
@@ -381,7 +384,8 @@ not a directory in the tree — while implementing it.
   start at a front door.
 - Titles are never derived from reverse-geocoded points of interest. Errand titles come from a
   template pool that consults no geography at all. Sport-ride titles may use only place names the
-  geocoder verified and segment names as they stand.
+  geocoder verified, plus segment names as the name of a stretch — never as a source of place
+  names, and never as the entire title.
 - The geocode cache and any future route cell sets are plaintext location data, accepted for the
   single-athlete deployment. Multi-user is the trigger to key them or drop them.
 
