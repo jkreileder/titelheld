@@ -458,8 +458,9 @@ which is what the earlier versions of both did.
 
 A route becomes place names, never coordinates. `internal/geo` decodes Strava's summary
 polyline, samples points at equal arc length along the track plus the point farthest from the
-start — never the track's endpoints, whose names would localize the athlete's home — and
-reverse-geocodes them through Nominatim.
+start, and reverse-geocodes them through Nominatim. No sample in the endpoints' cache cells is
+ever geocoded — a name at km 0 or km end would localize the athlete's home — and on a very
+short ride that rule can leave no geography at all, which is the rule working.
 
 Two properties are enforced in code rather than documented and hoped for:
 
@@ -478,9 +479,10 @@ Two properties are enforced in code rather than documented and hoped for:
   itself so no caller can exceed it by looping. The configured interval is clamped *up* to one
   second; a config file may not relax the policy.
 
-Results are cached in the store under a coordinate rounded to three decimals (~110 m), which is
-also the only place a coordinate is persisted. Samples are deduplicated by that key, so an
-out-and-back does not spend the budget geocoding its start twice.
+Results are cached in the store under a key made of a version, the query shape (zoom, field
+order, and the geocoding endpoint when it is not the public one) and a coordinate rounded to
+three decimals (~110 m) — the only place a coordinate is persisted. Samples are deduplicated by
+that key, so a route crossing one cell twice spends the budget once.
 
 The naming layer receives a `geo.Summary`, whose fields are all names. There is nowhere in it to
 put a coordinate.
