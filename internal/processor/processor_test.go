@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
@@ -248,8 +249,20 @@ func (f *fakeProvider) Complete(_ context.Context, prompt naming.Prompt) (string
 		return `{"title":"` + entry + `","language":"en"}`, nil
 	}
 
-	return `{"title":"Musterrunde am Musterbach","language":"de"}`, nil
+	// A model that does what it is told about repetition too: a candidate equal
+	// to a title the prompt already carries is refused, so the fake varies its
+	// usual answer once that title is on the list — which is what naming
+	// several activities in one sweep puts there.
+	title := defaultFakeTitle
+	if strings.Contains(prompt.User, defaultFakeTitle) {
+		title = fmt.Sprintf("%s %d", defaultFakeTitle, f.calls)
+	}
+
+	return `{"title":"` + title + `","language":"de"}`, nil
 }
+
+// defaultFakeTitle is what the fake model answers when nothing steers it.
+const defaultFakeTitle = "Musterrunde am Musterbach"
 
 // franchiseEntryOf reads back the entry a prompt offers, if it offers one.
 //
@@ -827,6 +840,113 @@ func TestTitleAboutASegmentIsWritten(t *testing.T) {
 
 	if writes := h.strava.writes(); len(writes) != 1 {
 		t.Errorf("%d PUTs, want 1: a title about the stretch must stand", len(writes))
+	}
+}
+
+// A title the prompt already carried under RECENT is refused, not written.
+//
+// The prompt says never to repeat one; this is the request made binding. The
+// refusal leaves the activity queued, so the next sweep draws again at
+// temperature.
+func TestARepeatedRecentTitleIsNotWritten(t *testing.T) {
+	t.Parallel()
+
+	const repeated = "Nebel über der Musterhöhe"
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Provider = &fakeProvider{
+			response: `{"title":"` + repeated + `","language":"de"}`,
+		}
+	})
+
+	// A previous naming, on another activity: this is what puts the title into
+	// RECENT, and any source but a template survives that filter.
+	if err := h.store.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 4242, ActivityID: 901,
+		Title: repeated, Language: "de", At: h.now, Source: store.SourceService,
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Failed != 1 {
+		t.Errorf("result = %+v, want a failure", result)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 0 {
+		t.Errorf("a repeated title was written: %+v", writes)
+	}
+}
+
+// A few-shot example's title is forbidden too, and by the same rule.
+//
+// Asserted with no history row on purpose: with nothing named yet the prompt
+// carries the synthetic examples, so this fails if only RECENT reaches the
+// refusal — which a test that plants a history row cannot tell apart.
+func TestARepeatedExampleTitleIsNotWritten(t *testing.T) {
+	t.Parallel()
+
+	repeated := naming.SyntheticExamples()[0].Title
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Provider = &fakeProvider{
+			response: `{"title":"` + repeated + `","language":"de"}`,
+		}
+	})
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Failed != 1 {
+		t.Errorf("result = %+v, want a failure", result)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 0 {
+		t.Errorf("an example's title was written: %+v", writes)
+	}
+}
+
+// A title that is neither a RECENT line nor an example stands.
+func TestAFreshTitleIsWrittenBesideTheHistory(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Provider = &fakeProvider{
+			response: `{"title":"Nebel am Musterbach","language":"de"}`,
+		}
+	})
+
+	if err := h.store.MarkNamed(t.Context(), store.Naming{
+		AthleteID: 4242, ActivityID: 901,
+		Title:    "Nebel über der Musterhöhe",
+		Language: "de", At: h.now, Source: store.SourceService,
+	}); err != nil {
+		t.Fatalf("MarkNamed: %v", err)
+	}
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Named != 1 {
+		t.Errorf("result = %+v, want one naming", result)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs, want 1: a fresh title must stand", len(writes))
 	}
 }
 
