@@ -17,6 +17,16 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// testScope is the query shape the fakes below answer in. They answer from a
+// table whatever they are asked, so any stable scope will do; the shapes that
+// matter are asserted against the real client in TestCacheKeyCarriesTheQueryShape.
+const testScope = "test"
+
+// stubScope gives a fake Reverser the query shape the interface requires.
+type stubScope struct{}
+
+func (stubScope) CacheScope() string { return testScope }
+
 // TestDecodePolyline uses the worked example from Google's specification, which
 // is the only fixture whose expected output is independently known.
 func TestDecodePolyline(t *testing.T) {
@@ -132,20 +142,109 @@ func TestCacheKeyRounds(t *testing.T) {
 		point Point
 		want  string
 	}{
-		{point: Point{Lat: 0, Lon: 0}, want: "0.000,0.000"},
-		{point: Point{Lat: 0.0503, Lon: 0.0002}, want: "0.050,0.000"},
-		{point: Point{Lat: 1.23456, Lon: 6.78901}, want: "1.235,6.789"},
-		{point: Point{Lat: -1.23456, Lon: -6.78949}, want: "-1.235,-6.789"},
+		{point: Point{Lat: 0, Lon: 0}, want: "v2_test_0.000,0.000"},
+		{point: Point{Lat: 0.0503, Lon: 0.0002}, want: "v2_test_0.050,0.000"},
+		{point: Point{Lat: 1.23456, Lon: 6.78901}, want: "v2_test_1.235,6.789"},
+		{point: Point{Lat: -1.23456, Lon: -6.78949}, want: "v2_test_-1.235,-6.789"},
 		// Two points 50 m apart share a key, which is the whole point.
-		{point: Point{Lat: 1.23451, Lon: 6.78912}, want: "1.235,6.789"},
+		{point: Point{Lat: 1.23451, Lon: 6.78912}, want: "v2_test_1.235,6.789"},
 		// A negative that rounds to zero must not become "-0.000".
-		{point: Point{Lat: -0.0001, Lon: -0.0002}, want: "0.000,0.000"},
+		{point: Point{Lat: -0.0001, Lon: -0.0002}, want: "v2_test_0.000,0.000"},
 	}
 
 	for _, tt := range tests {
-		if got := CacheKey(tt.point); got != tt.want {
+		if got := CacheKey(testScope, tt.point); got != tt.want {
 			t.Errorf("CacheKey(%+v) = %q, want %q", tt.point, got, tt.want)
 		}
+	}
+}
+
+// The key carries the query shape that produced the answer, so two shapes
+// cannot share an entry and one shape cannot lose its entries to a rebuild.
+//
+// The scopes come from the real client here rather than from a fixture: the
+// key is only as trustworthy as what [Nominatim] reports about itself.
+func TestCacheKeyCarriesTheQueryShape(t *testing.T) {
+	t.Parallel()
+
+	point := Point{Lat: 48.123, Lon: 11.456}
+
+	key := func(t *testing.T, cfg NominatimConfig) string {
+		t.Helper()
+
+		cfg.UserAgent = "titelheld-test/1.0 (test@example.invalid)"
+
+		client, err := NewNominatim(cfg)
+		if err != nil {
+			t.Fatalf("NewNominatim: %v", err)
+		}
+
+		return CacheKey(client.CacheScope(), point)
+	}
+
+	shipped := key(t, NominatimConfig{})
+
+	// The shipped shape, spelled out: a reader of a Firestore document ID can
+	// tell which question it answers.
+	if want := "v2_z16_hvst_48.123,11.456"; shipped != want {
+		t.Errorf("the shipped key = %q, want %q", shipped, want)
+	}
+
+	// Stable for identical configuration: an unstable key empties the cache on
+	// every restart and spends the rate-limit budget re-asking.
+	if again := key(t, NominatimConfig{}); again != shipped {
+		t.Errorf("the same configuration produced %q and %q", shipped, again)
+	}
+
+	// A coarser zoom reports coarser address fields, so its answer for this
+	// cell is a different answer.
+	if coarse := key(t, NominatimConfig{Zoom: 12}); coarse == shipped {
+		t.Errorf("zoom 12 and zoom %d share the key %q", DefaultZoom, coarse)
+	}
+
+	// The order decides which of a response's fields becomes the name.
+	reordered := key(t, NominatimConfig{
+		PlaceFields: []string{"village", "hamlet", "suburb", "town"},
+	})
+	if reordered == shipped {
+		t.Errorf("two resolution orders share the key %q", reordered)
+	}
+
+	// An explicit order that is the shipped one is the shipped question.
+	if explicit := key(t, NominatimConfig{
+		PlaceFields: []string{"hamlet", "village", "suburb", "town"},
+	}); explicit != shipped {
+		t.Errorf("the shipped order spelled out = %q, want %q", explicit, shipped)
+	}
+
+	// A key becomes a Firestore document ID, which may not contain a slash.
+	for _, candidate := range []string{shipped, reordered, key(t, NominatimConfig{Zoom: 12})} {
+		if strings.ContainsRune(candidate, '/') {
+			t.Errorf("key %q contains a slash, which no document ID may carry", candidate)
+		}
+	}
+}
+
+// The order token is one letter per key, and two orders may not share one:
+// "city", "city_district" and "county" all begin with the same letter, so the
+// tokens are assigned rather than derived.
+func TestEveryAddressFieldHasItsOwnToken(t *testing.T) {
+	t.Parallel()
+
+	seen := make(map[byte]string, len(addressFields))
+
+	for _, field := range addressFields {
+		if field.token == 0 {
+			t.Errorf("address key %q has no cache-key token", field.key)
+
+			continue
+		}
+
+		if other, ok := seen[field.token]; ok {
+			t.Errorf("address keys %q and %q share the token %q", other, field.key, field.token)
+		}
+
+		seen[field.token] = field.key
 	}
 }
 
@@ -217,7 +316,7 @@ func TestSampleAcrossTheAntimeridian(t *testing.T) {
 	// fix that only handles the delta and not the wrap is still caught.
 	samples := SamplePoints(points, 3)
 
-	// Three interior samples: the farthest point is the segment's own end, and
+	// Three, and only three: the farthest point is the segment's own end, and
 	// an endpoint is never sampled.
 	if len(samples) != 3 {
 		t.Fatalf("sampled %d points, want 3: %+v", len(samples), samples)
@@ -318,6 +417,8 @@ func TestDistance(t *testing.T) {
 
 // fakeReverser records what it was asked and answers from a table.
 type fakeReverser struct {
+	stubScope
+
 	calls  []Point
 	places map[string]store.Place
 	err    error
@@ -330,7 +431,7 @@ func (f *fakeReverser) Reverse(_ context.Context, point Point) (store.Place, err
 		return store.Place{}, f.err
 	}
 
-	if place, ok := f.places[CacheKey(point)]; ok {
+	if place, ok := f.places[CacheKey(testScope, point)]; ok {
 		return place, nil
 	}
 
@@ -440,7 +541,7 @@ func TestDescribeDeduplicatesByCacheKey(t *testing.T) {
 
 	keys := make(map[string]struct{}, len(samples))
 	for _, sample := range samples {
-		keys[CacheKey(sample)] = struct{}{}
+		keys[CacheKey(testScope, sample)] = struct{}{}
 	}
 
 	summary, err := describer.Describe(t.Context(), encodeForTest(points))
@@ -488,7 +589,7 @@ func TestDescribeUsesAndFillsTheCache(t *testing.T) {
 		t.Fatalf("DecodePolyline: %v", err)
 	}
 
-	place, ok, err := memory.Place(t.Context(), CacheKey(SamplePoints(points, 0)[0]))
+	place, ok, err := memory.Place(t.Context(), CacheKey(testScope, SamplePoints(points, 0)[0]))
 	if err != nil || !ok {
 		t.Fatalf("cache lookup = %+v, %v, %v", place, ok, err)
 	}
@@ -504,7 +605,7 @@ func TestEmptyAnswersAreCached(t *testing.T) {
 
 	reverser := &fakeReverser{places: map[string]store.Place{}}
 	for _, sample := range sampled {
-		reverser.places[CacheKey(sample)] = store.Place{}
+		reverser.places[CacheKey(testScope, sample)] = store.Place{}
 	}
 
 	describer, memory := newDescriber(t, reverser)
@@ -513,7 +614,7 @@ func TestEmptyAnswersAreCached(t *testing.T) {
 		t.Fatalf("Describe: %v", err)
 	}
 
-	_, ok, err := memory.Place(t.Context(), CacheKey(sampled[0]))
+	_, ok, err := memory.Place(t.Context(), CacheKey(testScope, sampled[0]))
 	if err != nil {
 		t.Fatalf("cache lookup: %v", err)
 	}
@@ -712,7 +813,7 @@ func TestCountryOnlyAnswersAreNotListedAsPlaces(t *testing.T) {
 
 	points := []Point{{Lat: 0, Lon: 0}, {Lat: 0.01, Lon: 0.01}}
 	for _, p := range SamplePoints(points, 0) {
-		reverser.places[CacheKey(p)] = store.Place{Country: "Testland"}
+		reverser.places[CacheKey(testScope, p)] = store.Place{Country: "Testland"}
 	}
 
 	summary, err := describer.Describe(t.Context(), encodeForTest(points))
@@ -772,7 +873,7 @@ func TestACachedPlaceIsRecheckedAgainstTheAllowList(t *testing.T) {
 	}
 
 	describer, err := NewDescriber(DescriberConfig{
-		Reverser: refusingReverser{t}, Cache: cache, Logger: quietLogger(),
+		Reverser: refusingReverser{t: t}, Cache: cache, Logger: quietLogger(),
 	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
@@ -806,7 +907,11 @@ func TestACachedPlaceIsRecheckedAgainstTheAllowList(t *testing.T) {
 
 // refusingReverser fails if it is called, so the test can only be exercising
 // the cache path.
-type refusingReverser struct{ t *testing.T }
+type refusingReverser struct {
+	stubScope
+
+	t *testing.T
+}
 
 func (r refusingReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
 	r.t.Error("the geocoder was called for a cached key")
@@ -862,7 +967,7 @@ func TestAGeocoderCannotIntroduceAPointOfInterest(t *testing.T) {
 	cache := store.NewMemory()
 
 	describer, err := NewDescriber(DescriberConfig{
-		Reverser: fixedReverser{poi}, Cache: cache, Logger: quietLogger(),
+		Reverser: fixedReverser{place: poi}, Cache: cache, Logger: quietLogger(),
 	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
@@ -901,7 +1006,7 @@ func TestAGeocodersAllowedNameSurvives(t *testing.T) {
 	village := store.Place{Name: "Musterdorf", Kind: "village", Region: "Musterregion"}
 
 	describer, err := NewDescriber(DescriberConfig{
-		Reverser: fixedReverser{village}, Cache: store.NewMemory(), Logger: quietLogger(),
+		Reverser: fixedReverser{place: village}, Cache: store.NewMemory(), Logger: quietLogger(),
 	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
@@ -918,7 +1023,11 @@ func TestAGeocodersAllowedNameSurvives(t *testing.T) {
 }
 
 // fixedReverser answers with the same place every time.
-type fixedReverser struct{ place store.Place }
+type fixedReverser struct {
+	stubScope
+
+	place store.Place
+}
 
 func (f fixedReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
 	return f.place, nil
@@ -1031,7 +1140,7 @@ func TestDescribeNormalizesResolvedNames(t *testing.T) {
 
 // dottedReverser answers every point with a name in the compact official form
 // Nominatim returns for these places.
-type dottedReverser struct{}
+type dottedReverser struct{ stubScope }
 
 func (dottedReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
 	return store.Place{

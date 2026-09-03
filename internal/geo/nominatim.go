@@ -64,11 +64,18 @@ const (
 // where nothing finer is reported.
 var defaultPlaceFields = []string{"hamlet", "village", "suburb", "town"}
 
-// addressField is one allow-listed Nominatim address key and the Kind a name
-// taken from it is reported as.
+// addressField is one allow-listed Nominatim address key, the Kind a name
+// taken from it is reported as, and the letter that stands for it in a cache
+// key.
+//
+// The tokens are assigned here rather than derived from the key, and a test
+// holds them to being pairwise distinct: three of these keys begin with "c",
+// and a resolution order that changed without changing its token would read
+// back answers resolved under the order it replaced.
 type addressField struct {
-	key  string
-	kind string
+	key   string
+	kind  string
+	token byte
 }
 
 // addressFields are the only Nominatim address keys that may reach a title.
@@ -82,14 +89,14 @@ type addressField struct {
 // configured resolution order, and the order here only settles what is left
 // over once that order is exhausted.
 var addressFields = []addressField{
-	{key: "village", kind: "village"},
-	{key: "hamlet", kind: "hamlet"},
-	{key: "town", kind: "town"},
-	{key: "city", kind: "city"},
-	{key: "municipality", kind: "municipality"},
-	{key: "suburb", kind: "suburb"},
-	{key: "city_district", kind: "district"},
-	{key: "county", kind: "county"},
+	{key: "village", kind: "village", token: 'v'},
+	{key: "hamlet", kind: "hamlet", token: 'h'},
+	{key: "town", kind: "town", token: 't'},
+	{key: "city", kind: "city", token: 'c'},
+	{key: "municipality", kind: "municipality", token: 'm'},
+	{key: "suburb", kind: "suburb", token: 's'},
+	{key: "city_district", kind: "district", token: 'd'},
+	{key: "county", kind: "county", token: 'y'},
 }
 
 // regionFields name the coarser container, most specific first.
@@ -225,22 +232,26 @@ func placeFieldKeys() []string {
 }
 
 // orderFields resolves a configured order into the full sequence a name is
-// looked up in: the configured keys first, then everything the allow-list
-// carries that the order did not name.
+// looked up in — the configured keys first, then everything the allow-list
+// carries that the order did not name — and the token that stands for the
+// configured order in a cache key.
 //
 // The remainder is appended rather than dropped, so a point that reports only
 // a coarse container still gets a name; it comes last, so a coarse name can
-// never win over one the order asked for.
-func orderFields(order []string) ([]addressField, error) {
+// never win over one the order asked for. The token covers the configured keys
+// alone, because the remainder is a function of them: two orders with the same
+// token ask the same question.
+func orderFields(order []string) ([]addressField, string, error) {
 	if len(order) == 0 {
 		order = defaultPlaceFields
 	}
 
 	if err := ValidatePlaceFields(order); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	fields := make([]addressField, 0, len(addressFields))
+	token := make([]byte, 0, len(order))
 	taken := make(map[string]struct{}, len(addressFields))
 
 	for _, key := range order {
@@ -250,6 +261,7 @@ func orderFields(order []string) ([]addressField, error) {
 
 		taken[key] = struct{}{}
 		fields = append(fields, addressFields[index])
+		token = append(token, addressFields[index].token)
 	}
 
 	for _, field := range addressFields {
@@ -258,7 +270,7 @@ func orderFields(order []string) ([]addressField, error) {
 		}
 	}
 
-	return fields, nil
+	return fields, string(token), nil
 }
 
 // reverseResponse is the subset of Nominatim's jsonv2 reply that is read.
@@ -358,6 +370,10 @@ type Nominatim struct {
 	limiter     *limiter
 	zoom        int
 	placeFields []addressField
+
+	// scope is the query shape this client asks in, built once at
+	// construction because it cannot change afterwards.
+	scope string
 }
 
 // NominatimConfig configures a [Nominatim] client.
@@ -412,7 +428,7 @@ func NewNominatim(cfg NominatimConfig) (*Nominatim, error) {
 		return nil, fmt.Errorf("geo: zoom %d is outside %d to %d", zoom, MinZoom, MaxZoom)
 	}
 
-	fields, err := orderFields(cfg.PlaceFields)
+	fields, token, err := orderFields(cfg.PlaceFields)
 	if err != nil {
 		return nil, err
 	}
@@ -428,6 +444,7 @@ func NewNominatim(cfg NominatimConfig) (*Nominatim, error) {
 		},
 		zoom:        zoom,
 		placeFields: fields,
+		scope:       "z" + strconv.Itoa(zoom) + keySeparator + token,
 	}
 
 	if client.baseURL == "" {
@@ -444,6 +461,14 @@ func NewNominatim(cfg NominatimConfig) (*Nominatim, error) {
 	}
 
 	return client, nil
+}
+
+// CacheScope implements [Reverser]: the zoom and the resolution order are what
+// decide which name a coordinate comes back with, so they are what a cached
+// answer belongs to. The shape is "z<zoom>_<order token>" — z16_hvst for the
+// shipped settings — and it is stable for identical configuration.
+func (n *Nominatim) CacheScope() string {
+	return n.scope
 }
 
 // Reverse resolves one coordinate into a [store.Place].

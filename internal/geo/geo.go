@@ -27,6 +27,27 @@ import (
 // points that near each other resolve to the same settlement.
 const cachePrecision = 3
 
+// cacheKeyVersion opens every geocode cache key.
+//
+// A cached answer is only valid for the query shape that produced it: the zoom
+// and the resolution order decide which name a coordinate resolves to, so both
+// travel in the key next to this version — a zoom-12 answer and a zoom-16
+// answer for one cell are two different answers and may not share an entry. A
+// configuration change therefore orphans what was written under the old shape
+// instead of reading it as if it answered the new question, and nothing has to
+// be migrated or wiped. Bump this when the meaning of a stored place changes
+// for a shape that is otherwise unchanged.
+const cacheKeyVersion = "v2"
+
+// keySeparator joins the parts of a cache key.
+//
+// The key becomes a Firestore document ID, and the store hashes any key
+// outside the small character set an ID may carry unescaped. "_" is inside it;
+// ":" is not, and "/" is not a legal document ID character at all. Staying
+// inside the set keeps the stored ID readable, which is what an operator
+// looking at one entry needs.
+const keySeparator = "_"
+
 // DefaultSampleCount is how many interior points along the route are sampled.
 const DefaultSampleCount = 6
 
@@ -121,6 +142,17 @@ func NormalizePlaceName(name string) string {
 // tests substitute their own.
 type Reverser interface {
 	Reverse(ctx context.Context, point Point) (store.Place, error)
+
+	// CacheScope names the query shape every answer of this Reverser belongs
+	// to. It is part of the cache key, so an answer is never read back for a
+	// question it did not answer.
+	//
+	// Required rather than optional: the cache is shared and long-lived, and a
+	// Reverser that cannot state its shape would have its answers filed under
+	// somebody else's. It must stay stable for identical configuration —
+	// otherwise every sweep starts from an empty cache — and it should stay
+	// inside the character set [keySeparator] describes.
+	CacheScope() string
 }
 
 // Describer turns an encoded polyline into verified place names.
@@ -129,6 +161,10 @@ type Describer struct {
 	cache       store.GeocodeCache
 	logger      *slog.Logger
 	sampleCount int
+
+	// scope is the reverser's query shape, read once: a Describer asks one
+	// reverser, so every key it writes belongs to one shape.
+	scope string
 }
 
 // DescriberConfig configures a [Describer].
@@ -173,6 +209,7 @@ func NewDescriber(cfg DescriberConfig) (*Describer, error) {
 		cache:       cfg.Cache,
 		logger:      logger,
 		sampleCount: cfg.SampleCount,
+		scope:       cfg.Reverser.CacheScope(),
 	}, nil
 }
 
@@ -204,7 +241,7 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 	)
 
 	for _, point := range samples {
-		key := CacheKey(point)
+		key := CacheKey(d.scope, point)
 
 		// Dedupe on the cache key, not on the raw coordinate: an out-and-back
 		// puts the outward and the homeward sample within the same rounded
@@ -320,12 +357,15 @@ func (d *Describer) resolve(ctx context.Context, key string, point Point) (store
 	return place, nil
 }
 
-// CacheKey rounds a coordinate into the key its cached place is stored under.
+// CacheKey is the key the place resolved for this point under this query shape
+// is stored under: the version, the scope the [Reverser] reported, and the
+// rounded coordinate.
 //
-// The key is the only place a coordinate is ever persisted, and it is rounded
-// to roughly 110 m.
-func CacheKey(point Point) string {
-	return strconv.FormatFloat(round(point.Lat), 'f', cachePrecision, 64) + "," +
+// The coordinate is the only place one is ever persisted, and it is rounded to
+// roughly 110 m.
+func CacheKey(scope string, point Point) string {
+	return cacheKeyVersion + keySeparator + scope + keySeparator +
+		strconv.FormatFloat(round(point.Lat), 'f', cachePrecision, 64) + "," +
 		strconv.FormatFloat(round(point.Lon), 'f', cachePrecision, 64)
 }
 
