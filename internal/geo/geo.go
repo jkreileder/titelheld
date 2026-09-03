@@ -65,9 +65,10 @@ const earthRadiusMeters = 6371000
 //
 // Every field is a name. There is deliberately nowhere to put a coordinate.
 //
-// Neither endpoint of the track is in here. A title is public, and a name
-// resolved at km 0 or km end is the address the ride starts and finishes at,
-// so the endpoints are never geocoded at all — see [SamplePoints].
+// Neither endpoint of the track is in here, nor anything that would resolve to
+// the same place as one. A title is public, and a name resolved at km 0 or km
+// end is the address the ride starts and finishes at, so the cells the
+// endpoints fall in are never geocoded at all — see [SamplePoints].
 type Summary struct {
 	// Along holds the resolved places, in sample order: the interior samples
 	// in track order, then the farthest point. It is deduplicated by name, and
@@ -180,10 +181,10 @@ type DescriberConfig struct {
 	Logger *slog.Logger
 
 	// SampleCount is how many interior points along the route are geocoded;
-	// the farthest point is asked about on top of them, and the track's own
-	// endpoints never are. Zero means [DefaultSampleCount], and anything
-	// above [MaxSampleCount] is refused rather than clamped: the request
-	// budget per activity is a property of the code, not of the
+	// the farthest point is asked about on top of them, and the cells the
+	// track's endpoints fall in never are. Zero means [DefaultSampleCount],
+	// and anything above [MaxSampleCount] is refused rather than clamped: the
+	// request budget per activity is a property of the code, not of the
 	// configuration that happens to be deployed.
 	SampleCount int
 }
@@ -364,9 +365,11 @@ func (d *Describer) resolve(ctx context.Context, key string, point Point) (store
 // The coordinate is the only place one is ever persisted, and it is rounded to
 // roughly 110 m.
 func CacheKey(scope string, point Point) string {
+	cell := cellOf(point)
+
 	return cacheKeyVersion + keySeparator + scope + keySeparator +
-		strconv.FormatFloat(round(point.Lat), 'f', cachePrecision, 64) + "," +
-		strconv.FormatFloat(round(point.Lon), 'f', cachePrecision, 64)
+		strconv.FormatFloat(cell.lat, 'f', cachePrecision, 64) + "," +
+		strconv.FormatFloat(cell.lon, 'f', cachePrecision, 64)
 }
 
 func round(value float64) float64 {
@@ -383,7 +386,26 @@ func round(value float64) float64 {
 		return 0
 	}
 
+	// -180 and 180 are one meridian, and both are representable: a longitude
+	// that wrapped one way and a longitude that wrapped the other describe the
+	// same place, so they may not become two cache entries for it.
+	if rounded == -180 {
+		return 180
+	}
+
 	return rounded
+}
+
+// cacheCell is the rounded coordinate a point is filed under: the cache's own
+// notion of "the same place", roughly 110 m across.
+type cacheCell struct {
+	lat, lon float64
+}
+
+// cellOf is the cell a point falls in. [CacheKey] files an answer by it, and
+// [withoutEndpoints] excludes by it, so the two agree on what one place is.
+func cellOf(point Point) cacheCell {
+	return cacheCell{lat: round(point.Lat), lon: round(point.Lon)}
 }
 
 // SamplePoints picks the points worth geocoding: count points at equal arc
@@ -391,11 +413,12 @@ func round(value float64) float64 {
 // zero or less means [DefaultSampleCount], so one activity costs at most
 // count+1 reverse-geocoding requests.
 //
-// Neither endpoint is ever sampled. Titles are public, and a place resolved at
-// km 0 or km end names where the athlete lives; the interior points at
-// k*L/(count+1) are interior by construction, and the farthest point is
-// dropped — not replaced — when it sits on an endpoint, which on a one-way
-// ride it does.
+// Neither endpoint is ever sampled, and neither is anything sharing an
+// endpoint's cache cell. Titles are public, and a place resolved at km 0 or km
+// end names where the athlete lives; the interior points at k*L/(count+1) are
+// interior by construction, and the farthest point is dropped — not replaced —
+// when it falls in an endpoint's cell, which on a one-way ride it does, U-turn
+// at the finish or not.
 //
 // Spacing is by distance traveled rather than by index. A summary polyline
 // carries its vertices wherever the track bends, so index spacing follows the
@@ -428,20 +451,27 @@ func SamplePoints(points []Point, count int) []Point {
 	return dedupePoints(withoutEndpoints(points, samples))
 }
 
-// withoutEndpoints drops every sample sitting exactly on the track's first or
-// last point.
+// withoutEndpoints drops every sample falling in the cache cell of the track's
+// first or last point.
 //
 // This is the privacy rule of [SamplePoints] in code, applied to the whole set
 // rather than to the one sample expected to need it: whatever produced a
 // sample, an endpoint's name may not reach a public title. A track of one
 // point, or one that never moved, is therefore sampled nowhere at all — its
 // only point is both endpoints.
+//
+// By cell and not by coordinate, because the cell is what decides which name a
+// point comes back with: two points in one cell share a cache entry and
+// resolve to one settlement, and an endpoint's cell is the settlement the
+// athlete lives in. A ride that overshoots its finish and doubles back has a
+// farthest point that is bit-for-bit unequal to the last vertex and names the
+// same place, which is what exact equality lets through.
 func withoutEndpoints(track, samples []Point) []Point {
-	first, last := track[0], track[len(track)-1]
+	first, last := cellOf(track[0]), cellOf(track[len(track)-1])
 	kept := samples[:0]
 
 	for _, sample := range samples {
-		if sample == first || sample == last {
+		if at := cellOf(sample); at == first || at == last {
 			continue
 		}
 

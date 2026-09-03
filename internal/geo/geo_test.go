@@ -150,6 +150,8 @@ func TestCacheKeyRounds(t *testing.T) {
 		{point: Point{Lat: 1.23451, Lon: 6.78912}, want: "v2_test_1.235,6.789"},
 		// A negative that rounds to zero must not become "-0.000".
 		{point: Point{Lat: -0.0001, Lon: -0.0002}, want: "v2_test_0.000,0.000"},
+		// The antimeridian has two spellings and one cache entry.
+		{point: Point{Lat: 1.2345, Lon: -180}, want: "v2_test_1.235,180.000"},
 	}
 
 	for _, tt := range tests {
@@ -225,6 +227,79 @@ func TestCacheKeyCarriesTheQueryShape(t *testing.T) {
 	}
 }
 
+// A longitude that wrapped east and one that wrapped west describe the same
+// meridian, and a cache holds one entry per place.
+func TestRoundCanonicalizesTheAntimeridian(t *testing.T) {
+	t.Parallel()
+
+	if round(-180) != round(180) {
+		t.Errorf("round(-180) = %v and round(180) = %v are two keys for one meridian",
+			round(-180), round(180))
+	}
+}
+
+// A cached answer is only valid for the service that gave it: two geocoders
+// answer one coordinate with two different names, so a scope that ignores the
+// endpoint hands one service's answer back for the other's question.
+func TestTheCacheScopeCarriesTheEndpoint(t *testing.T) {
+	t.Parallel()
+
+	scope := func(t *testing.T, baseURL string) string {
+		t.Helper()
+
+		client, err := NewNominatim(NominatimConfig{
+			UserAgent: "titelheld-test/1.0 (test@example.invalid)",
+			BaseURL:   baseURL,
+		})
+		if err != nil {
+			t.Fatalf("NewNominatim: %v", err)
+		}
+
+		return client.CacheScope()
+	}
+
+	// The public endpoint keeps the shape it already writes — unset, spelled
+	// out, or with a trailing slash — so the shipped deployment does not start
+	// from an empty cache and re-spend the rate-limit budget.
+	shipped := scope(t, "")
+
+	if want := "z16_hvst"; shipped != want {
+		t.Errorf("the shipped scope = %q, want %q", shipped, want)
+	}
+
+	for _, spelling := range []string{DefaultNominatimBaseURL, DefaultNominatimBaseURL + "/"} {
+		if got := scope(t, spelling); got != shipped {
+			t.Errorf("base URL %q has the scope %q, want the shipped %q", spelling, got, shipped)
+		}
+	}
+
+	self := scope(t, "https://nominatim.example.invalid")
+	other := scope(t, "https://geocoder.example.invalid")
+
+	for _, private := range []string{self, other} {
+		if private == shipped {
+			t.Errorf("a private endpoint shares the public endpoint's scope %q", shipped)
+		}
+	}
+
+	if self == other {
+		t.Errorf("two different geocoding services share the scope %q", self)
+	}
+
+	// Stable for identical configuration: an unstable scope empties the cache
+	// on every restart.
+	if again := scope(t, "https://nominatim.example.invalid"); again != self {
+		t.Errorf("one base URL produced the scopes %q and %q", self, again)
+	}
+
+	// The scope becomes part of a Firestore document ID: a base URL's own
+	// punctuation would have the store hash the whole key instead of leaving it
+	// readable, which is why the endpoint travels as a hash and not as itself.
+	if !regexp.MustCompile(`^[A-Za-z0-9_]+$`).MatchString(self) {
+		t.Errorf("scope %q carries a character a readable document ID may not", self)
+	}
+}
+
 // The order token is one letter per key, and two orders may not share one:
 // "city", "city_district" and "county" all begin with the same letter, so the
 // tokens are assigned rather than derived.
@@ -296,6 +371,37 @@ func TestSamplePoints(t *testing.T) {
 		if got := samples[step-1].Lon; math.Abs(got-want) > 1e-6 {
 			t.Errorf("sample %d is at lon %.6f, want %.6f — the samples are not equally spaced by arc length",
 				step, got, want)
+		}
+	}
+}
+
+// An endpoint is a cell, not a float. A ride that overshoots its finish and
+// doubles back has a farthest point that is not the last vertex and is not
+// equal to it, yet resolves to the same settlement — the cache cell is the
+// cache's own notion of "the same place", and the finish's cell is where the
+// athlete stopped.
+func TestSamplesLeaveTheEndpointCells(t *testing.T) {
+	t.Parallel()
+
+	// Ten kilometers east, 100 m past the finish, and back to it.
+	track := []Point{
+		{Lat: 0, Lon: 0.00000},
+		{Lat: 0, Lon: 0.09000},
+		{Lat: 0, Lon: 0.10045},
+		{Lat: 0, Lon: 0.09955},
+	}
+
+	first, last := cellOf(track[0]), cellOf(track[len(track)-1])
+
+	samples := SamplePoints(track, 0)
+	if len(samples) == 0 {
+		t.Fatal("an 11 km ride was sampled nowhere at all")
+	}
+
+	for index, sample := range samples {
+		if at := cellOf(sample); at == first || at == last {
+			t.Errorf("sample %d at %+v is in %+v, the cell the ride began or ended in",
+				index, sample, at)
 		}
 	}
 }
@@ -529,12 +635,14 @@ func TestDescribeDeduplicatesByCacheKey(t *testing.T) {
 	reverser := &fakeReverser{}
 	describer, _ := newDescriber(t, reverser)
 
-	// A route that returns to its start: several samples collapse onto one key.
+	// An out-and-back: the outward and the homeward sample at the same distance
+	// from the turn collapse onto one key. Long enough that the ride leaves the
+	// cell it started in — one entirely inside that cell is sampled nowhere,
+	// which is the endpoint rule and not a deduplication.
 	points := []Point{
-		{Lat: 0.0000, Lon: 0.0000},
-		{Lat: 0.0001, Lon: 0.0001},
-		{Lat: 0.0002, Lon: 0.0000},
-		{Lat: 0.0000, Lon: 0.0000},
+		{Lat: 0, Lon: 0.000},
+		{Lat: 0, Lon: 0.004},
+		{Lat: 0, Lon: 0.000},
 	}
 
 	samples := SamplePoints(points, 0)

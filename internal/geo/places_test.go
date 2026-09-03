@@ -41,9 +41,21 @@ const (
 	// startLon is where both fixture tracks begin, and where the loop ends.
 	startLon = 0.0010
 
-	// oneWayFinishLon is where the one-way track stops, far enough east that
-	// it is also its farthest point from the start.
-	oneWayFinishLon = 0.150
+	// loopCloseLon and loopCloseLat are where the loop finishes: the cell it
+	// started in, a few meters off the opening vertex. A track that closes on a
+	// bit-identical repeat of its first point is a track no GPS records, and an
+	// endpoint rule tested against one is tested against nothing.
+	loopCloseLon = 0.00094
+	loopCloseLat = 0.00107
+
+	// oneWayFinishLon is where the one-way track stops, and
+	// oneWayOvershootLon is the apex of the U-turn it makes to get there —
+	// about 100 m further east, inside the finish's own cache cell but not the
+	// same point. That overshoot is the track's farthest point from the start,
+	// so a rule that recognizes an endpoint by exact equality geocodes the
+	// finish's cell anyway.
+	oneWayFinishLon    = 0.14955
+	oneWayOvershootLon = 0.15045
 )
 
 // The names each band answers with. Each appears in exactly one recorded
@@ -72,15 +84,9 @@ const (
 // The answer is a village, which is an allow-listed kind the finest-first
 // order asks for first: a sampler that asked about an endpoint would put the
 // name straight into the summary, which is what makes its absence evidence.
-var endpointCells = map[[2]float64]string{
-	{round(outwardLat), round(startLon)}:        startCellName,
-	{round(outwardLat), round(oneWayFinishLon)}: finishCellName,
-}
-
-// cellOf is the rounded cell a point falls in — the same rounding the cache
-// key uses, so the fixture speaks about points the way the sampler does.
-func cellOf(point Point) [2]float64 {
-	return [2]float64{round(point.Lat), round(point.Lon)}
+var endpointCells = map[cacheCell]string{
+	cellOf(Point{Lat: outwardLat, Lon: startLon}):        startCellName,
+	cellOf(Point{Lat: outwardLat, Lon: oneWayFinishLon}): finishCellName,
 }
 
 // loopTrack is the synthetic ride: a cluster at the start, an outward leg east
@@ -100,15 +106,20 @@ func loopTrack() []Point {
 		points = append(points, Point{Lat: homewardLat, Lon: lon})
 	}
 
-	return append(points, points[0])
+	return append(points, Point{Lat: loopCloseLat, Lon: loopCloseLon})
 }
 
 // oneWayTrack is the ride that ends where it turned around on the loop: a
-// point-to-point track whose farthest point from the start is its last point.
+// point-to-point track that overshoots its finish by about 100 m and doubles
+// back, the way a terminal U-turn, a parking loop or a GPS overshoot does. Its
+// farthest point from the start is that apex, which is not the finish and sits
+// in the finish's cache cell.
 func oneWayTrack() []Point {
 	points := startCluster()
 
-	for _, lon := range []float64{0.010, 0.040, 0.075, 0.100, turnLon, oneWayFinishLon} {
+	for _, lon := range []float64{
+		0.010, 0.040, 0.075, 0.100, turnLon, oneWayOvershootLon, oneWayFinishLon,
+	} {
 		points = append(points, Point{Lat: outwardLat, Lon: lon})
 	}
 
@@ -315,8 +326,9 @@ func TestTheEndpointsAreNeverGeocoded(t *testing.T) {
 	assertNoRequestInCell(t, recorder, cellOf(Point{Lat: outwardLat, Lon: startLon}))
 }
 
-// On a one-way ride the farthest point from the start is the last point, and
-// it is dropped rather than replaced: the finish is an endpoint like any other.
+// On a one-way ride the farthest point from the start is the finish, or a few
+// meters past it, and it is dropped rather than replaced: the finish is an
+// endpoint like any other, and so is everything sharing its cell.
 func TestAOneWayRideNeverNamesItsFinish(t *testing.T) {
 	t.Parallel()
 
@@ -338,7 +350,7 @@ func TestAOneWayRideNeverNamesItsFinish(t *testing.T) {
 	}
 }
 
-func assertNoRequestInCell(t *testing.T, recorder *recordingGeocoder, cell [2]float64) {
+func assertNoRequestInCell(t *testing.T, recorder *recordingGeocoder, cell cacheCell) {
 	t.Helper()
 
 	queries := recorder.recorded()
@@ -351,7 +363,7 @@ func assertNoRequestInCell(t *testing.T, recorder *recordingGeocoder, cell [2]fl
 		lon, _ := strconv.ParseFloat(query.Get("lon"), 64)
 
 		if cellOf(Point{Lat: lat, Lon: lon}) == cell {
-			t.Errorf("request %d asked about %v, which is the cell the ride began or ended in",
+			t.Errorf("request %d asked about %+v, which is the cell the ride began or ended in",
 				index, cell)
 		}
 	}

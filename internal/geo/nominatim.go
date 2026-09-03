@@ -2,6 +2,8 @@ package geo
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -433,8 +435,16 @@ func NewNominatim(cfg NominatimConfig) (*Nominatim, error) {
 		return nil, err
 	}
 
+	// Resolved before the scope is built: the endpoint is part of the query
+	// shape, so the scope has to be derived from the URL that will be called
+	// and not from what the configuration happened to spell.
+	baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = DefaultNominatimBaseURL
+	}
+
 	client := &Nominatim{
-		baseURL:    strings.TrimSuffix(cfg.BaseURL, "/"),
+		baseURL:    baseURL,
 		userAgent:  cfg.UserAgent,
 		httpClient: cfg.HTTPClient,
 		limiter: &limiter{
@@ -444,12 +454,9 @@ func NewNominatim(cfg NominatimConfig) (*Nominatim, error) {
 		},
 		zoom:        zoom,
 		placeFields: fields,
-		scope:       "z" + strconv.Itoa(zoom) + keySeparator + token,
+		scope:       cacheScope(zoom, token, baseURL),
 	}
 
-	if client.baseURL == "" {
-		client.baseURL = DefaultNominatimBaseURL
-	}
 	if client.httpClient == nil {
 		client.httpClient = &http.Client{Timeout: 20 * time.Second}
 	}
@@ -463,12 +470,37 @@ func NewNominatim(cfg NominatimConfig) (*Nominatim, error) {
 	return client, nil
 }
 
-// CacheScope implements [Reverser]: the zoom and the resolution order are what
-// decide which name a coordinate comes back with, so they are what a cached
-// answer belongs to. The shape is "z<zoom>_<order token>" — z16_hvst for the
-// shipped settings — and it is stable for identical configuration.
+// CacheScope implements [Reverser]: the zoom, the resolution order and the
+// endpoint are what decide which name a coordinate comes back with, so they
+// are what a cached answer belongs to. The shape is "z<zoom>_<order token>" —
+// z16_hvst for the shipped settings — with the endpoint's token appended where
+// [cacheScope] adds one, and it is stable for identical configuration.
 func (n *Nominatim) CacheScope() string {
 	return n.scope
+}
+
+// cacheScope is the query shape one client's answers are filed under.
+//
+// A cached answer is only valid for the service that gave it: two geocoders
+// answer one coordinate with two different names, and a self-hosted instance
+// is a different service from the public one even when it runs the same
+// software over a different extract. The endpoint therefore travels in the
+// scope beside the zoom and the resolution order.
+//
+// The public endpoint contributes no token, so the shipped configuration keeps
+// the keys it already wrote; any other base URL adds eight hex digits of its
+// SHA-256, which separates two services without putting a URL — with its
+// slashes and colons — into a Firestore document ID.
+func cacheScope(zoom int, orderToken, baseURL string) string {
+	scope := "z" + strconv.Itoa(zoom) + keySeparator + orderToken
+
+	if baseURL == DefaultNominatimBaseURL {
+		return scope
+	}
+
+	sum := sha256.Sum256([]byte(baseURL))
+
+	return scope + keySeparator + "h" + hex.EncodeToString(sum[:4])
 }
 
 // Reverse resolves one coordinate into a [store.Place].
