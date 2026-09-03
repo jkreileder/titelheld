@@ -3,8 +3,6 @@ package config
 import (
 	"strings"
 	"testing"
-
-	"github.com/jkreileder/titelheld/internal/geo"
 )
 
 // Unset means the shipped defaults, which live in the geo package. This
@@ -90,7 +88,8 @@ func TestGeoZoomIsBounded(t *testing.T) {
 }
 
 // A key the geo package does not read would be dropped where it is used, so it
-// is refused where it is set.
+// is refused where it is set. The rules are the geo package's; what this layer
+// adds is the name of the variable that carried the order.
 func TestGeoPlaceFieldsAreValidated(t *testing.T) {
 	t.Parallel()
 
@@ -103,6 +102,10 @@ func TestGeoPlaceFieldsAreValidated(t *testing.T) {
 		t.Errorf("error %v does not name the key it rejected", err)
 	}
 
+	if !strings.Contains(err.Error(), EnvNominatimPlaceFields) {
+		t.Errorf("error %v does not name the variable the order came from", err)
+	}
+
 	if cfg.Geo.PlaceFields != nil {
 		t.Errorf("a rejected order was still returned: %v", cfg.Geo.PlaceFields)
 	}
@@ -112,12 +115,24 @@ func TestGeoPlaceFieldsAreValidated(t *testing.T) {
 	})); err == nil {
 		t.Error("a duplicated key was accepted")
 	}
+}
 
-	// Every key the geo package reads is accepted here, so the two lists
-	// cannot drift into disagreeing about the set.
-	if _, err := Load(env(map[string]string{
-		"NOMINATIM_PLACE_FIELDS": strings.Join(geo.PlaceFields(), ","),
-	})); err != nil {
-		t.Errorf("the full set of address keys was refused: %v", err)
+// One pass reports everything wrong at once, which the loader's own comment
+// promises: an operator correcting an order one key per restart learns the
+// rules a keystroke at a time.
+func TestGeoPlaceFieldsReportEveryBadKey(t *testing.T) {
+	t.Parallel()
+
+	_, err := Load(env(map[string]string{
+		"NOMINATIM_PLACE_FIELDS": "hamlet,road,house_number",
+	}))
+	if err == nil {
+		t.Fatal("a road and a house number were accepted as place fields")
+	}
+
+	for _, want := range []string{"road", "house_number"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v does not name %q", err, want)
+		}
 	}
 }

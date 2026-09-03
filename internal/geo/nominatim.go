@@ -64,14 +64,6 @@ const (
 // where nothing finer is reported.
 var defaultPlaceFields = []string{"hamlet", "village", "suburb", "town"}
 
-// DefaultPlaceFields returns the shipped resolution order.
-//
-// A copy, so a caller holding it cannot reorder what every other caller
-// resolves by.
-func DefaultPlaceFields() []string {
-	return slices.Clone(defaultPlaceFields)
-}
-
 // addressField is one allow-listed Nominatim address key and the Kind a name
 // taken from it is reported as.
 type addressField struct {
@@ -172,19 +164,57 @@ func IsAllowedKind(kind string) bool {
 	return ok
 }
 
-// IsPlaceField reports whether a Nominatim address key may appear in a
-// resolution order. Configuration validates against this rather than against
-// its own copy of the names, so a key this package cannot read is refused
-// where it is set instead of being silently skipped where it is used.
-func IsPlaceField(key string) bool {
-	return slices.ContainsFunc(addressFields, func(field addressField) bool {
-		return field.key == key
-	})
+// ValidatePlaceFields reports what is wrong with a resolution order: every
+// entry must be an address key this package reads, and no key may appear
+// twice.
+//
+// This is the only copy of those rules. Configuration calls it rather than
+// checking against its own list of the names, so a key this package cannot
+// read is refused where it is set instead of being silently skipped where it
+// is used, and the two cannot disagree about the set.
+//
+// Every offending key is reported, not the first: an order is set as one
+// string, and a caller correcting it one key per restart learns the set a
+// keystroke at a time.
+func ValidatePlaceFields(order []string) error {
+	var unknown, duplicated []string
+
+	seen := make(map[string]struct{}, len(order))
+
+	for _, key := range order {
+		if _, ok := seen[key]; ok {
+			duplicated = append(duplicated, key)
+
+			continue
+		}
+
+		seen[key] = struct{}{}
+
+		if !slices.ContainsFunc(addressFields, func(field addressField) bool {
+			return field.key == key
+		}) {
+			unknown = append(unknown, key)
+		}
+	}
+
+	var errs []error
+
+	if len(unknown) > 0 {
+		errs = append(errs, fmt.Errorf("geo: not an address key this service reads: %s; the keys are %s",
+			strings.Join(unknown, ", "), strings.Join(placeFieldKeys(), ", ")))
+	}
+
+	if len(duplicated) > 0 {
+		errs = append(errs, fmt.Errorf("geo: address key listed twice: %s",
+			strings.Join(duplicated, ", ")))
+	}
+
+	return errors.Join(errs...)
 }
 
-// PlaceFields returns every address key that may appear in a resolution
-// order, so an error message can name the set it rejected against.
-func PlaceFields() []string {
+// placeFieldKeys is every address key an order may name, so an error can state
+// the set it rejected against.
+func placeFieldKeys() []string {
 	keys := make([]string, 0, len(addressFields))
 
 	for _, field := range addressFields {
@@ -206,6 +236,10 @@ func orderFields(order []string) ([]addressField, error) {
 		order = defaultPlaceFields
 	}
 
+	if err := ValidatePlaceFields(order); err != nil {
+		return nil, err
+	}
+
 	fields := make([]addressField, 0, len(addressFields))
 	taken := make(map[string]struct{}, len(addressFields))
 
@@ -213,14 +247,6 @@ func orderFields(order []string) ([]addressField, error) {
 		index := slices.IndexFunc(addressFields, func(field addressField) bool {
 			return field.key == key
 		})
-
-		if index < 0 {
-			return nil, fmt.Errorf("geo: %q is not an address key this service reads", key)
-		}
-
-		if _, ok := taken[key]; ok {
-			return nil, fmt.Errorf("geo: address key %q is listed twice", key)
-		}
 
 		taken[key] = struct{}{}
 		fields = append(fields, addressFields[index])
@@ -354,9 +380,10 @@ type NominatimConfig struct {
 	// [DefaultZoom]; anything outside [MinZoom] to [MaxZoom] is refused.
 	Zoom int
 
-	// PlaceFields is the order a point's name is resolved in. Empty means
-	// [DefaultPlaceFields]. Every entry must be an address key this package
-	// reads, and no key may appear twice.
+	// PlaceFields is the order a point's name is resolved in. Empty means the
+	// shipped order. Every entry must be an address key this package reads,
+	// and no key may appear twice, which is what [ValidatePlaceFields] holds
+	// callers to.
 	PlaceFields []string
 
 	// Now and Sleep are injected so the rate limit is testable without

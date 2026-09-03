@@ -68,34 +68,20 @@ func loadGeo(getenv func(string) string, errs *[]error) Geo {
 
 // loadPlaceFields reads the resolution order.
 //
-// Validated here as well as in the geo package: a key nothing reads would
-// otherwise be dropped where it is used, and a deployment would run with an
-// order it never got. A startup error names the key and the set it was
-// rejected against.
+// The rules belong to the geo package, which owns the keys; this adds the name
+// of the variable the order came from, so a startup error points at the
+// setting to change. A rejected order is reported as nil and the error refuses
+// the start, so nothing runs on a partly applied order.
 func loadPlaceFields(getenv func(string) string, errs *[]error) []string {
 	fields := splitList(getenv(EnvNominatimPlaceFields))
 	if len(fields) == 0 {
 		return nil
 	}
 
-	seen := make(map[string]struct{}, len(fields))
+	if err := geo.ValidatePlaceFields(fields); err != nil {
+		*errs = append(*errs, fmt.Errorf("config: %s: %w", EnvNominatimPlaceFields, err))
 
-	for _, field := range fields {
-		if !geo.IsPlaceField(field) {
-			*errs = append(*errs, fmt.Errorf("config: %s names %q, which is not one of %s",
-				EnvNominatimPlaceFields, field, strings.Join(geo.PlaceFields(), ", ")))
-
-			return nil
-		}
-
-		if _, ok := seen[field]; ok {
-			*errs = append(*errs, fmt.Errorf("config: %s lists %q twice",
-				EnvNominatimPlaceFields, field))
-
-			return nil
-		}
-
-		seen[field] = struct{}{}
+		return nil
 	}
 
 	return fields

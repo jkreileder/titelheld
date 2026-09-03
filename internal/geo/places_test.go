@@ -367,6 +367,72 @@ func TestSampleCountReachesTheRequests(t *testing.T) {
 	}
 }
 
+// The rules a resolution order is held to live here, once, and a bad order is
+// refused before it reaches a request.
+func TestValidatePlaceFields(t *testing.T) {
+	t.Parallel()
+
+	if err := ValidatePlaceFields(nil); err != nil {
+		t.Errorf("ValidatePlaceFields(nil) = %v, want nil — an empty order means the shipped one", err)
+	}
+
+	// Every key the allow-list carries is an order this service accepts, so
+	// the validator and the table it validates against cannot disagree.
+	if err := ValidatePlaceFields(placeFieldKeys()); err != nil {
+		t.Errorf("the full set of address keys was refused: %v", err)
+	}
+
+	// The shipped order passes its own validator.
+	if err := ValidatePlaceFields(defaultPlaceFields); err != nil {
+		t.Errorf("the shipped order was refused: %v", err)
+	}
+
+	// An order is set as one string, so every offending key is named at once.
+	err := ValidatePlaceFields([]string{"hamlet", "road", "house_number"})
+	if err == nil {
+		t.Fatal("a road and a house number were accepted as place fields")
+	}
+
+	for _, want := range []string{"road", "house_number"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v does not name %q", err, want)
+		}
+	}
+
+	// A duplicate and an unknown key in one order are both reported. The
+	// duplicate is asserted through the phrase that names it: the error lists
+	// every valid key, so the name alone appears in it either way.
+	err = ValidatePlaceFields([]string{"hamlet", "road", "hamlet"})
+	if err == nil {
+		t.Fatal("a duplicated key alongside an unknown one was accepted")
+	}
+
+	for _, want := range []string{"road", "listed twice: hamlet"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v does not report %q", err, want)
+		}
+	}
+}
+
+// A bad order refuses the client rather than being silently skipped where the
+// order is applied.
+func TestNewNominatimRefusesABadOrder(t *testing.T) {
+	t.Parallel()
+
+	for name, order := range map[string][]string{
+		"unknown key": {"hamlet", "road"},
+		"duplicate":   {"hamlet", "village", "hamlet"},
+	} {
+		_, err := NewNominatim(NominatimConfig{
+			UserAgent:   "titelheld-test/1.0 (test@example.invalid)",
+			PlaceFields: order,
+		})
+		if err == nil {
+			t.Errorf("an order with a %s was accepted", name)
+		}
+	}
+}
+
 // Nominatim has no parameter for the resolution order — the order is applied
 // to the response, not asked for — so the request carries the zoom and nothing
 // else about naming. Pinned here so a future parameter is a deliberate change.

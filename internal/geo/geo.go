@@ -355,7 +355,7 @@ func round(value float64) float64 {
 // equal arc length along the track, and the point farthest from the start.
 // A count of zero or less means [DefaultSampleCount].
 //
-// Spacing is by distance travelled rather than by index. A summary polyline
+// Spacing is by distance traveled rather than by index. A summary polyline
 // carries its vertices wherever the track bends, so index spacing follows the
 // shape of the simplification and not the shape of the ride: a loop with a
 // dense section puts every index-spaced sample inside it, and the rest of the
@@ -423,11 +423,48 @@ func pointAtArc(points []Point, cumulative []float64, target float64) Point {
 
 		return Point{
 			Lat: from.Lat + (to.Lat-from.Lat)*fraction,
-			Lon: from.Lon + (to.Lon-from.Lon)*fraction,
+			Lon: wrapLongitude(from.Lon + shortestLonDelta(from.Lon, to.Lon)*fraction),
 		}
 	}
 
 	return points[len(points)-1]
+}
+
+// shortestLonDelta is the signed longitude difference along the shorter way
+// around the globe.
+//
+// A segment is the track between two vertices, and the track takes the shorter
+// way: a raw delta past 180° describes the longer one, which crosses every
+// meridian the ride never saw. [Distance] measures the same segment the same
+// way, so an arc length and the position it resolves to agree.
+func shortestLonDelta(from, to float64) float64 {
+	delta := to - from
+
+	if delta > 180 {
+		return delta - 360
+	}
+
+	if delta < -180 {
+		return delta + 360
+	}
+
+	return delta
+}
+
+// wrapLongitude brings a longitude back into [-180, 180].
+//
+// One adjustment is enough: the inputs are a longitude already in range and a
+// delta of at most 180°.
+func wrapLongitude(lon float64) float64 {
+	if lon > 180 {
+		return lon - 360
+	}
+
+	if lon < -180 {
+		return lon + 360
+	}
+
+	return lon
 }
 
 // farthestFrom returns the track point farthest from the start, which is the

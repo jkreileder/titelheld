@@ -149,7 +149,7 @@ func TestCacheKeyRounds(t *testing.T) {
 	}
 }
 
-// The samples are spread by distance travelled, not by vertex index.
+// The samples are spread by distance traveled, not by vertex index.
 //
 // The fixture is a straight synthetic track whose vertices are deliberately
 // bunched at one end: index spacing would put five of the six interior samples
@@ -195,6 +195,44 @@ func TestSamplePoints(t *testing.T) {
 		if got := samples[step].Lon; math.Abs(got-want) > 1e-6 {
 			t.Errorf("sample %d is at lon %.6f, want %.6f — the samples are not equally spaced by arc length",
 				step, got, want)
+		}
+	}
+}
+
+// A segment across the antimeridian is 11 km long, and every sample on it
+// belongs in that 11 km.
+//
+// The two vertices are 0.1° apart the short way and 359.9° apart as raw
+// numbers, so an interpolation over the raw difference walks the whole globe
+// and puts the middle sample off West Africa — a coordinate the ride never
+// visited, handed to the geocoder and cached under its own key.
+func TestSampleAcrossTheAntimeridian(t *testing.T) {
+	t.Parallel()
+
+	points := []Point{{Lat: 0, Lon: 179.95}, {Lat: 0, Lon: -179.95}}
+
+	// Three interior samples: one short of 180°, one on it, one past it, so a
+	// fix that only handles the delta and not the wrap is still caught.
+	samples := SamplePoints(points, 3)
+
+	if len(samples) != 5 {
+		t.Fatalf("sampled %d points, want 5: %+v", len(samples), samples)
+	}
+
+	for index, sample := range samples {
+		if math.Abs(sample.Lon) <= 179 {
+			t.Errorf("sample %d is at lon %.4f, want the segment's own neighborhood (|lon| > 179)",
+				index, sample.Lon)
+		}
+
+		if math.Abs(sample.Lon) > 180 {
+			t.Errorf("sample %d is at lon %.4f, which is not a longitude", index, sample.Lon)
+		}
+
+		// Every sample is on the segment, so none is farther from either end
+		// than the segment is long.
+		if d := Distance(points[0], sample); d > 12000 {
+			t.Errorf("sample %d is %.0f m from the start of an 11 km segment", index, d)
 		}
 	}
 }
