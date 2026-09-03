@@ -27,9 +27,19 @@ import (
 // points that near each other resolve to the same settlement.
 const cachePrecision = 3
 
-// waypointCount is how many evenly spaced points along the route are sampled,
-// on top of the start and the bounding-box extremes.
-const waypointCount = 3
+// DefaultSampleCount is how many points along the route are sampled between
+// the start and the farthest point.
+const DefaultSampleCount = 6
+
+// MaxSampleCount bounds that count.
+//
+// The start and the farthest point are sampled on top of it, so this is what
+// keeps one activity to at most eight reverse-geocoding requests — eight
+// seconds of the rate-limit budget, spent while an athlete waits for a title.
+const MaxSampleCount = 6
+
+// earthRadiusMeters is the mean radius the haversine distance is scaled by.
+const earthRadiusMeters = 6371000
 
 // Summary is the verified geography of one route.
 //
@@ -114,23 +124,54 @@ type Reverser interface {
 
 // Describer turns an encoded polyline into verified place names.
 type Describer struct {
-	reverser Reverser
-	cache    store.GeocodeCache
-	logger   *slog.Logger
+	reverser    Reverser
+	cache       store.GeocodeCache
+	logger      *slog.Logger
+	sampleCount int
 }
 
-// NewDescriber builds a describer. The cache is required: Nominatim's usage
-// policy expects results to be cached rather than refetched.
-func NewDescriber(reverser Reverser, cache store.GeocodeCache, logger *slog.Logger) (*Describer, error) {
-	if reverser == nil || cache == nil {
+// DescriberConfig configures a [Describer].
+type DescriberConfig struct {
+	// Reverser resolves one coordinate. Required.
+	Reverser Reverser
+
+	// Cache is required: Nominatim's usage policy expects results to be
+	// cached rather than refetched.
+	Cache store.GeocodeCache
+
+	// Logger defaults to [slog.Default].
+	Logger *slog.Logger
+
+	// SampleCount is how many points between the start and the farthest
+	// point are geocoded. Zero means [DefaultSampleCount], and anything
+	// above [MaxSampleCount] is refused rather than clamped: the request
+	// budget per activity is a property of the code, not of the
+	// configuration that happens to be deployed.
+	SampleCount int
+}
+
+// NewDescriber builds a describer.
+func NewDescriber(cfg DescriberConfig) (*Describer, error) {
+	if cfg.Reverser == nil || cfg.Cache == nil {
 		return nil, errors.New("geo: a reverser and a cache are required")
 	}
 
+	if cfg.SampleCount < 0 || cfg.SampleCount > MaxSampleCount {
+		return nil, fmt.Errorf("geo: sample count %d is outside 1 to %d (0 means %d)",
+			cfg.SampleCount, MaxSampleCount, DefaultSampleCount)
+	}
+
+	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return &Describer{reverser: reverser, cache: cache, logger: logger}, nil
+	return &Describer{
+		reverser:    cfg.Reverser,
+		cache:       cfg.Cache,
+		logger:      logger,
+		sampleCount: cfg.SampleCount,
+	}, nil
 }
 
 // Describe resolves the geography of an encoded polyline.
@@ -152,7 +193,7 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 		return Summary{}, nil
 	}
 
-	samples := SamplePoints(points)
+	samples := SamplePoints(points, d.sampleCount)
 
 	var (
 		summary   Summary
@@ -164,8 +205,9 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 		key := CacheKey(point)
 
 		// Dedupe on the cache key, not on the raw coordinate: an out-and-back
-		// puts two bounding-box extremes on the same spot, and geocoding it
-		// twice spends a second of the rate-limit budget for nothing.
+		// puts the outward and the homeward sample within the same rounded
+		// key, and geocoding it twice spends a second of the rate-limit
+		// budget for nothing.
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -309,49 +351,131 @@ func round(value float64) float64 {
 	return rounded
 }
 
-// SamplePoints picks the points worth geocoding: the start, the four
-// bounding-box extremes, and [waypointCount] evenly spaced points along the
-// route.
+// SamplePoints picks the points worth geocoding: the start, count points at
+// equal arc length along the track, and the point farthest from the start.
+// A count of zero or less means [DefaultSampleCount].
+//
+// Spacing is by distance travelled rather than by index. A summary polyline
+// carries its vertices wherever the track bends, so index spacing follows the
+// shape of the simplification and not the shape of the ride: a loop with a
+// dense section puts every index-spaced sample inside it, and the rest of the
+// route is never asked about.
 //
 // The start comes first because it is the only sample whose position in the
 // result matters.
-func SamplePoints(points []Point) []Point {
+func SamplePoints(points []Point, count int) []Point {
 	if len(points) == 0 {
 		return nil
+	}
+
+	if count <= 0 {
+		count = DefaultSampleCount
 	}
 
 	start := points[0]
 	samples := []Point{start}
 
-	// The extremes are carried as values rather than indices, so there is no
-	// index whose range has to be argued about.
-	minLat, maxLat, minLon, maxLon := start, start, start, start
+	cumulative, total := arcLengths(points)
+
+	// A track that stands still has no arc to spread samples along, and
+	// dividing by its length would put every sample on the start anyway.
+	if total > 0 {
+		for step := 1; step <= count; step++ {
+			samples = append(samples, pointAtArc(points, cumulative, float64(step)*total/float64(count+1)))
+		}
+	}
+
+	samples = append(samples, farthestFrom(start, points))
+
+	return dedupePoints(samples)
+}
+
+// arcLengths returns the cumulative distance to each point and the total.
+func arcLengths(points []Point) ([]float64, float64) {
+	cumulative := make([]float64, len(points))
+
+	var total float64
+
+	for index := 1; index < len(points); index++ {
+		total += Distance(points[index-1], points[index])
+		cumulative[index] = total
+	}
+
+	return cumulative, total
+}
+
+// pointAtArc returns the position at the given arc length, interpolated within
+// the segment that contains it.
+//
+// Interpolated rather than snapped to the nearer vertex: a simplified track
+// has long straight segments, and snapping would collapse several samples onto
+// one vertex and leave whole stretches of the ride unsampled. Every point on
+// the segment is on the track the polyline describes.
+func pointAtArc(points []Point, cumulative []float64, target float64) Point {
+	for index := 1; index < len(points); index++ {
+		span := cumulative[index] - cumulative[index-1]
+		if cumulative[index] < target || span <= 0 {
+			continue
+		}
+
+		fraction := (target - cumulative[index-1]) / span
+		from, to := points[index-1], points[index]
+
+		return Point{
+			Lat: from.Lat + (to.Lat-from.Lat)*fraction,
+			Lon: from.Lon + (to.Lon-from.Lon)*fraction,
+		}
+	}
+
+	return points[len(points)-1]
+}
+
+// farthestFrom returns the track point farthest from the start, which is the
+// turning point of an out-and-back and the far side of a loop. Ties go to the
+// first, so the result does not depend on iteration order.
+func farthestFrom(start Point, points []Point) Point {
+	farthest, distance := start, 0.0
 
 	for _, point := range points {
-		if point.Lat < minLat.Lat {
-			minLat = point
-		}
-		if point.Lat > maxLat.Lat {
-			maxLat = point
-		}
-		if point.Lon < minLon.Lon {
-			minLon = point
-		}
-		if point.Lon > maxLon.Lon {
-			maxLon = point
+		if d := Distance(start, point); d > distance {
+			farthest, distance = point, d
 		}
 	}
 
-	samples = append(samples, minLat, maxLat, minLon, maxLon)
+	return farthest
+}
 
-	for step := 1; step <= waypointCount; step++ {
-		index := len(points) * step / (waypointCount + 1)
-		if index >= len(points) {
-			index = len(points) - 1
+// dedupePoints drops repeats while keeping the first occurrence, so the start
+// of a loop is not geocoded twice as its own farthest point.
+func dedupePoints(points []Point) []Point {
+	seen := make(map[Point]struct{}, len(points))
+	unique := points[:0]
+
+	for _, point := range points {
+		if _, ok := seen[point]; ok {
+			continue
 		}
 
-		samples = append(samples, points[index])
+		seen[point] = struct{}{}
+		unique = append(unique, point)
 	}
 
-	return samples
+	return unique
+}
+
+// Distance is the great-circle distance between two points, in meters.
+func Distance(from, to Point) float64 {
+	const degreesToRadians = math.Pi / 180
+
+	lat1 := from.Lat * degreesToRadians
+	lat2 := to.Lat * degreesToRadians
+	deltaLat := (to.Lat - from.Lat) * degreesToRadians
+	deltaLon := (to.Lon - from.Lon) * degreesToRadians
+
+	sinLat := math.Sin(deltaLat / 2)
+	sinLon := math.Sin(deltaLon / 2)
+
+	a := sinLat*sinLat + math.Cos(lat1)*math.Cos(lat2)*sinLon*sinLon
+
+	return 2 * earthRadiusMeters * math.Asin(math.Min(1, math.Sqrt(a)))
 }

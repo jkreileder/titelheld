@@ -149,77 +149,124 @@ func TestCacheKeyRounds(t *testing.T) {
 	}
 }
 
+// The samples are spread by distance travelled, not by vertex index.
+//
+// The fixture is a straight synthetic track whose vertices are deliberately
+// bunched at one end: index spacing would put five of the six interior samples
+// inside the bunch, and equal-arc spacing puts them at even fractions of the
+// length whatever the vertices do.
 func TestSamplePoints(t *testing.T) {
 	t.Parallel()
 
-	if got := SamplePoints(nil); got != nil {
+	if got := SamplePoints(nil, 0); got != nil {
 		t.Errorf("SamplePoints(nil) = %v, want nil", got)
 	}
 
-	// A synthetic out-and-back around Null Island.
 	points := []Point{
-		{Lat: 0.000, Lon: 0.000},
-		{Lat: 0.010, Lon: 0.005},
-		{Lat: 0.020, Lon: -0.005},
-		{Lat: 0.030, Lon: 0.010},
-		{Lat: 0.010, Lon: 0.005},
-		{Lat: 0.000, Lon: 0.000},
+		{Lat: 0, Lon: 0.0000},
+		{Lat: 0, Lon: 0.0002},
+		{Lat: 0, Lon: 0.0004},
+		{Lat: 0, Lon: 0.0006},
+		{Lat: 0, Lon: 0.0008},
+		{Lat: 0, Lon: 0.0010},
+		{Lat: 0, Lon: 0.0700},
 	}
 
-	samples := SamplePoints(points)
+	samples := SamplePoints(points, 0)
 
-	// Start, four extremes, three waypoints.
+	// The start, six interior samples, and the far end.
 	if len(samples) != 8 {
-		t.Fatalf("sampled %d points, want 8", len(samples))
+		t.Fatalf("sampled %d points, want 8: %+v", len(samples), samples)
 	}
 
 	if samples[0] != points[0] {
 		t.Errorf("samples[0] = %+v, want the start", samples[0])
 	}
 
-	// The extremes must actually be extreme.
-	var minLat, maxLat, minLon, maxLon = points[0], points[0], points[0], points[0]
-
-	for _, p := range points {
-		if p.Lat < minLat.Lat {
-			minLat = p
-		}
-		if p.Lat > maxLat.Lat {
-			maxLat = p
-		}
-		if p.Lon < minLon.Lon {
-			minLon = p
-		}
-		if p.Lon > maxLon.Lon {
-			maxLon = p
-		}
+	if last := samples[len(samples)-1]; last != points[len(points)-1] {
+		t.Errorf("the last sample = %+v, want the point farthest from the start", last)
 	}
 
-	for _, want := range []Point{minLat, maxLat, minLon, maxLon} {
-		found := false
+	// A straight track along the equator, so the fraction of the length is
+	// the fraction of the longitude span.
+	for step := 1; step <= DefaultSampleCount; step++ {
+		want := 0.07 * float64(step) / float64(DefaultSampleCount+1)
 
-		for _, sample := range samples {
-			if sample == want {
-				found = true
-
-				break
-			}
+		if got := samples[step].Lon; math.Abs(got-want) > 1e-6 {
+			t.Errorf("sample %d is at lon %.6f, want %.6f — the samples are not equally spaced by arc length",
+				step, got, want)
 		}
+	}
+}
 
-		if !found {
-			t.Errorf("the extreme %+v was not sampled", want)
-		}
+// The count is configuration, and the request budget per activity is not.
+func TestSampleCountIsBounded(t *testing.T) {
+	t.Parallel()
+
+	points := []Point{{Lat: 0, Lon: 0}, {Lat: 0, Lon: 0.05}, {Lat: 0, Lon: 0.1}}
+
+	if got := len(SamplePoints(points, 2)); got != 4 {
+		t.Errorf("a count of 2 sampled %d points, want 4", got)
+	}
+
+	if got := len(SamplePoints(points, 0)); got != DefaultSampleCount+2 {
+		t.Errorf("the default sampled %d points, want %d", got, DefaultSampleCount+2)
+	}
+
+	if got := len(SamplePoints(points, MaxSampleCount)); got > 8 {
+		t.Errorf("the maximum count sampled %d points, want at most 8", got)
 	}
 }
 
 func TestSampleSinglePoint(t *testing.T) {
 	t.Parallel()
 
-	samples := SamplePoints([]Point{{Lat: 1, Lon: 2}})
+	samples := SamplePoints([]Point{{Lat: 1, Lon: 2}}, 0)
+	if len(samples) != 1 {
+		t.Fatalf("sampled %d points for a track of one, want 1: %+v", len(samples), samples)
+	}
+
 	for _, sample := range samples {
 		if sample != (Point{Lat: 1, Lon: 2}) {
 			t.Errorf("sample = %+v, want the only point", sample)
 		}
+	}
+}
+
+// A track that never moves has no arc to spread samples along, and the start
+// is also its own farthest point.
+func TestSampleStandstill(t *testing.T) {
+	t.Parallel()
+
+	standstill := []Point{{Lat: 1, Lon: 2}, {Lat: 1, Lon: 2}, {Lat: 1, Lon: 2}}
+
+	if samples := SamplePoints(standstill, 0); len(samples) != 1 {
+		t.Errorf("a standstill sampled %+v, want the start alone", samples)
+	}
+}
+
+// Distance is the haversine over the two axes, so a sample placed by arc
+// length is placed by the ride's own geometry.
+func TestDistance(t *testing.T) {
+	t.Parallel()
+
+	// A tenth of a degree of longitude at the equator is about 11.1 km.
+	if got := Distance(Point{}, Point{Lon: 0.1}); math.Abs(got-11119.5) > 5 {
+		t.Errorf("Distance over 0.1° of longitude = %.1f m, want about 11119.5", got)
+	}
+
+	// The same span of latitude is the same distance, anywhere.
+	if got := Distance(Point{Lat: 48}, Point{Lat: 48.1}); math.Abs(got-11119.5) > 5 {
+		t.Errorf("Distance over 0.1° of latitude = %.1f m, want about 11119.5", got)
+	}
+
+	// Longitude converges toward the pole; the same span is shorter there.
+	if got := Distance(Point{Lat: 60}, Point{Lat: 60, Lon: 0.1}); math.Abs(got-5560) > 20 {
+		t.Errorf("Distance over 0.1° of longitude at 60° = %.1f m, want about 5560", got)
+	}
+
+	if got := Distance(Point{Lat: 1, Lon: 2}, Point{Lat: 1, Lon: 2}); got != 0 {
+		t.Errorf("Distance to the same point = %v, want 0", got)
 	}
 }
 
@@ -249,7 +296,9 @@ func newDescriber(t *testing.T, reverser Reverser) (*Describer, *store.Memory) {
 
 	memory := store.NewMemory()
 
-	describer, err := NewDescriber(reverser, memory, quietLogger())
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: reverser, Cache: memory, Logger: quietLogger(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
@@ -260,19 +309,43 @@ func newDescriber(t *testing.T, reverser Reverser) (*Describer, *store.Memory) {
 func TestNewDescriberRequiresItsCollaborators(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewDescriber(nil, store.NewMemory(), nil); err == nil {
+	if _, err := NewDescriber(DescriberConfig{Cache: store.NewMemory()}); err == nil {
 		t.Error("NewDescriber without a reverser = nil error, want error")
 	}
-	if _, err := NewDescriber(&fakeReverser{}, nil, nil); err == nil {
+	if _, err := NewDescriber(DescriberConfig{Reverser: &fakeReverser{}}); err == nil {
 		t.Error("NewDescriber without a cache = nil error, want error")
 	}
 
-	describer, err := NewDescriber(&fakeReverser{}, store.NewMemory(), nil)
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: &fakeReverser{}, Cache: store.NewMemory(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
 	if describer.logger == nil {
 		t.Error("NewDescriber left the logger unset")
+	}
+}
+
+// A sample count above the maximum is refused rather than clamped: the
+// per-activity request budget is the reason the bound exists, and a
+// deployment that asked for more must hear about it at startup.
+func TestNewDescriberBoundsTheSampleCount(t *testing.T) {
+	t.Parallel()
+
+	for _, count := range []int{-1, MaxSampleCount + 1} {
+		_, err := NewDescriber(DescriberConfig{
+			Reverser: &fakeReverser{}, Cache: store.NewMemory(), SampleCount: count,
+		})
+		if err == nil {
+			t.Errorf("NewDescriber with a sample count of %d = nil error, want error", count)
+		}
+	}
+
+	if _, err := NewDescriber(DescriberConfig{
+		Reverser: &fakeReverser{}, Cache: store.NewMemory(), SampleCount: MaxSampleCount,
+	}); err != nil {
+		t.Errorf("NewDescriber with a sample count of %d = %v", MaxSampleCount, err)
 	}
 }
 
@@ -317,7 +390,7 @@ func TestDescribeDeduplicatesByCacheKey(t *testing.T) {
 		{Lat: 0.0000, Lon: 0.0000},
 	}
 
-	samples := SamplePoints(points)
+	samples := SamplePoints(points, 0)
 
 	keys := make(map[string]struct{}, len(samples))
 	for _, sample := range samples {
@@ -581,7 +654,7 @@ func TestCountryOnlyAnswersAreNotListedAsPlaces(t *testing.T) {
 	reverser.places = map[string]store.Place{}
 
 	points := []Point{{Lat: 0, Lon: 0}, {Lat: 0.01, Lon: 0.01}}
-	for _, p := range SamplePoints(points) {
+	for _, p := range SamplePoints(points, 0) {
 		reverser.places[CacheKey(p)] = store.Place{Country: "Testland"}
 	}
 
@@ -641,7 +714,9 @@ func TestACachedPlaceIsRecheckedAgainstTheAllowList(t *testing.T) {
 		}
 	}
 
-	describer, err := NewDescriber(refusingReverser{t}, cache, quietLogger())
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: refusingReverser{t}, Cache: cache, Logger: quietLogger(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
@@ -729,7 +804,9 @@ func TestAGeocoderCannotIntroduceAPointOfInterest(t *testing.T) {
 
 	cache := store.NewMemory()
 
-	describer, err := NewDescriber(fixedReverser{poi}, cache, quietLogger())
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: fixedReverser{poi}, Cache: cache, Logger: quietLogger(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
@@ -766,7 +843,9 @@ func TestAGeocodersAllowedNameSurvives(t *testing.T) {
 
 	village := store.Place{Name: "Musterdorf", Kind: "village", Region: "Musterregion"}
 
-	describer, err := NewDescriber(fixedReverser{village}, store.NewMemory(), quietLogger())
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: fixedReverser{village}, Cache: store.NewMemory(), Logger: quietLogger(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}

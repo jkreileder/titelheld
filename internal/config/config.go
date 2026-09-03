@@ -113,6 +113,10 @@ type Config struct {
 	// name plus BaseURL, which is contactable enough for a single-athlete
 	// deployment; override it to point at a mailbox.
 	NominatimUserAgent string
+
+	// Geo configures how a route is sampled and how the geocoder's answer is
+	// read. See geo.go.
+	Geo Geo
 }
 
 // PersistentStore reports whether state will survive a restart.
@@ -415,6 +419,8 @@ func load(getenv func(string) string, serving bool) (Config, error) {
 	cfg.Sweep = loadSweep(getenv, &errs)
 
 	cfg.LLM = loadLLM(getenv, cfg.FirestoreProject, &errs)
+
+	cfg.Geo = loadGeo(getenv, &errs)
 
 	if raw := strings.TrimSpace(getenv(EnvPort)); raw != "" {
 		port, err := strconv.Atoi(raw)

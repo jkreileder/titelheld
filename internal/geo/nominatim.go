@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,17 +45,51 @@ var (
 // from growing the decode until the process runs out of memory.
 const maxResponseBytes = 256 << 10
 
-// addressFields are the only Nominatim address keys that may reach a title,
-// most specific first.
+// Zoom levels. [DefaultZoom] asks Nominatim for settlement granularity: the
+// finer address fields a resolution order prefers are absent from a coarser
+// response, so a hamlet cannot be preferred over a town at a zoom that never
+// reports one.
+//
+// The zoom is not a privacy control. What keeps a road, a house number or the
+// nearest surgery out of a title is [addressFields] and [naturalFeatures], and
+// they apply to every response whatever it was asked for.
+const (
+	DefaultZoom = 16
+	MinZoom     = 3
+	MaxZoom     = 18
+)
+
+// defaultPlaceFields is the order a point's name is resolved in: the finest
+// settlement first, and a municipality — which spans several of them — only
+// where nothing finer is reported.
+var defaultPlaceFields = []string{"hamlet", "village", "suburb", "town"}
+
+// DefaultPlaceFields returns the shipped resolution order.
+//
+// A copy, so a caller holding it cannot reorder what every other caller
+// resolves by.
+func DefaultPlaceFields() []string {
+	return slices.Clone(defaultPlaceFields)
+}
+
+// addressField is one allow-listed Nominatim address key and the Kind a name
+// taken from it is reported as.
+type addressField struct {
+	key  string
+	kind string
+}
+
+// addressFields are the only Nominatim address keys that may reach a title.
 //
 // This list is the privacy rule in code. Nominatim happily reports the amenity,
 // shop, office or healthcare facility nearest a coordinate, and a title naming
 // the athlete's doctor is exactly what must never happen. `road` and
 // `house_number` are excluded for the same reason: rides start at a front door.
-var addressFields = []struct {
-	key  string
-	kind string
-}{
+//
+// This is a set, not a preference: which key wins for a point is the
+// configured resolution order, and the order here only settles what is left
+// over once that order is exhausted.
+var addressFields = []addressField{
 	{key: "village", kind: "village"},
 	{key: "hamlet", kind: "hamlet"},
 	{key: "town", kind: "town"},
@@ -135,6 +170,69 @@ func IsAllowedKind(kind string) bool {
 	_, ok := allowedKinds[kind]
 
 	return ok
+}
+
+// IsPlaceField reports whether a Nominatim address key may appear in a
+// resolution order. Configuration validates against this rather than against
+// its own copy of the names, so a key this package cannot read is refused
+// where it is set instead of being silently skipped where it is used.
+func IsPlaceField(key string) bool {
+	return slices.ContainsFunc(addressFields, func(field addressField) bool {
+		return field.key == key
+	})
+}
+
+// PlaceFields returns every address key that may appear in a resolution
+// order, so an error message can name the set it rejected against.
+func PlaceFields() []string {
+	keys := make([]string, 0, len(addressFields))
+
+	for _, field := range addressFields {
+		keys = append(keys, field.key)
+	}
+
+	return keys
+}
+
+// orderFields resolves a configured order into the full sequence a name is
+// looked up in: the configured keys first, then everything the allow-list
+// carries that the order did not name.
+//
+// The remainder is appended rather than dropped, so a point that reports only
+// a coarse container still gets a name; it comes last, so a coarse name can
+// never win over one the order asked for.
+func orderFields(order []string) ([]addressField, error) {
+	if len(order) == 0 {
+		order = defaultPlaceFields
+	}
+
+	fields := make([]addressField, 0, len(addressFields))
+	taken := make(map[string]struct{}, len(addressFields))
+
+	for _, key := range order {
+		index := slices.IndexFunc(addressFields, func(field addressField) bool {
+			return field.key == key
+		})
+
+		if index < 0 {
+			return nil, fmt.Errorf("geo: %q is not an address key this service reads", key)
+		}
+
+		if _, ok := taken[key]; ok {
+			return nil, fmt.Errorf("geo: address key %q is listed twice", key)
+		}
+
+		taken[key] = struct{}{}
+		fields = append(fields, addressFields[index])
+	}
+
+	for _, field := range addressFields {
+		if _, ok := taken[field.key]; !ok {
+			fields = append(fields, field)
+		}
+	}
+
+	return fields, nil
 }
 
 // reverseResponse is the subset of Nominatim's jsonv2 reply that is read.
@@ -228,10 +326,12 @@ func (l *limiter) wait(ctx context.Context) error {
 
 // Nominatim reverse-geocodes coordinates into verified place names.
 type Nominatim struct {
-	baseURL    string
-	userAgent  string
-	httpClient *http.Client
-	limiter    *limiter
+	baseURL     string
+	userAgent   string
+	httpClient  *http.Client
+	limiter     *limiter
+	zoom        int
+	placeFields []addressField
 }
 
 // NominatimConfig configures a [Nominatim] client.
@@ -250,6 +350,15 @@ type NominatimConfig struct {
 	// value: the usage policy is not something a config file may relax.
 	MinInterval time.Duration
 
+	// Zoom is the granularity every reverse request asks for. Zero means
+	// [DefaultZoom]; anything outside [MinZoom] to [MaxZoom] is refused.
+	Zoom int
+
+	// PlaceFields is the order a point's name is resolved in. Empty means
+	// [DefaultPlaceFields]. Every entry must be an address key this package
+	// reads, and no key may appear twice.
+	PlaceFields []string
+
 	// Now and Sleep are injected so the rate limit is testable without
 	// spending real seconds.
 	Now   func() time.Time
@@ -267,6 +376,20 @@ func NewNominatim(cfg NominatimConfig) (*Nominatim, error) {
 		interval = MinRequestInterval
 	}
 
+	zoom := cfg.Zoom
+	if zoom == 0 {
+		zoom = DefaultZoom
+	}
+
+	if zoom < MinZoom || zoom > MaxZoom {
+		return nil, fmt.Errorf("geo: zoom %d is outside %d to %d", zoom, MinZoom, MaxZoom)
+	}
+
+	fields, err := orderFields(cfg.PlaceFields)
+	if err != nil {
+		return nil, err
+	}
+
 	client := &Nominatim{
 		baseURL:    strings.TrimSuffix(cfg.BaseURL, "/"),
 		userAgent:  cfg.UserAgent,
@@ -276,6 +399,8 @@ func NewNominatim(cfg NominatimConfig) (*Nominatim, error) {
 			now:      cfg.Now,
 			sleep:    cfg.Sleep,
 		},
+		zoom:        zoom,
+		placeFields: fields,
 	}
 
 	if client.baseURL == "" {
@@ -304,12 +429,10 @@ func (n *Nominatim) Reverse(ctx context.Context, point Point) (store.Place, erro
 	}
 
 	query := url.Values{
-		"format": {"jsonv2"},
-		"lat":    {strconv.FormatFloat(point.Lat, 'f', 6, 64)},
-		"lon":    {strconv.FormatFloat(point.Lon, 'f', 6, 64)},
-		// zoom 12 is roughly "town"; it keeps Nominatim from resolving to a
-		// building or a shop in the first place.
-		"zoom":            {"12"},
+		"format":          {"jsonv2"},
+		"lat":             {strconv.FormatFloat(point.Lat, 'f', 6, 64)},
+		"lon":             {strconv.FormatFloat(point.Lon, 'f', 6, 64)},
+		"zoom":            {strconv.Itoa(n.zoom)},
 		"addressdetails":  {"1"},
 		"namedetails":     {"0"},
 		"extratags":       {"0"},
@@ -355,14 +478,18 @@ func (n *Nominatim) Reverse(ctx context.Context, point Point) (store.Place, erro
 		return store.Place{}, nil
 	}
 
-	return placeFrom(payload), nil
+	return n.placeFrom(payload), nil
 }
 
 // placeFrom extracts only what may safely become part of a title.
 //
 // Everything not on the allow-lists is dropped, including the free-text
 // display_name, which is never read at all.
-func placeFrom(payload reverseResponse) store.Place {
+//
+// The name is the first key of the resolution order this point reports, so a
+// hamlet inside a town is named as the hamlet, and the municipality several
+// villages share is reached only where the point has nothing finer to offer.
+func (n *Nominatim) placeFrom(payload reverseResponse) store.Place {
 	place := store.Place{
 		Country: payload.Address["country"],
 	}
@@ -375,7 +502,7 @@ func placeFrom(payload reverseResponse) store.Place {
 		}
 	}
 
-	for _, field := range addressFields {
+	for _, field := range n.placeFields {
 		if value := payload.Address[field.key]; value != "" {
 			place.Name = value
 			place.Kind = field.kind
