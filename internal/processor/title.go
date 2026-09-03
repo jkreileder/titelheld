@@ -186,10 +186,11 @@ func (p *Processor) complete(
 	// series has been offered at all.
 	guard := gathered.Series.Guard(entry)
 
-	// What the prompt says never to repeat, in the form the refusal needs.
-	// Built once: all three calls carry the same RECENT and EXAMPLES blocks,
-	// so a per-call list would only be the same list rebuilt.
-	forbidden := forbiddenTitles(gathered.Context)
+	// What the prompt says never to repeat, derived by the naming layer from
+	// the same context the prompt is built from. Built once: all three calls
+	// carry the same RECENT and EXAMPLES blocks — the third differs only in
+	// FranchiseNext — so a per-call list would only be the same list rebuilt.
+	forbidden := gathered.Context.ForbiddenTitles()
 
 	title, err := p.ask(
 		ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, forbidden, logger)
@@ -320,23 +321,6 @@ func (p *Processor) ask(
 	}
 
 	return title, nil
-}
-
-// forbiddenTitles are the titles a candidate may not be: every RECENT line and
-// every few-shot example's title.
-//
-// Both blocks and nothing else. RECENT and EXAMPLES are what the prompt shows
-// the model and tells it not to repeat, so they are what the refusal is
-// measured against; a title the prompt never carried is a fresh one.
-func forbiddenTitles(promptContext naming.Context) []string {
-	titles := make([]string, 0, len(promptContext.RecentTitles)+len(promptContext.Examples))
-	titles = append(titles, promptContext.RecentTitles...)
-
-	for _, example := range promptContext.Examples {
-		titles = append(titles, example.Title)
-	}
-
-	return titles
 }
 
 // maxAchievements bounds what the ACHIEVEMENTS block carries.
