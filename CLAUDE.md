@@ -77,6 +77,7 @@ Stop and ask before any of these; none may be done on an assumption.
   A newer model is a candidate, not an upgrade.
 - Running `terraform apply` while a release run is in flight (the writes gate reads the service
   before the deploy; an apply in that window defeats it).
+- Writing `WRITES_ACKNOWLEDGED`. Propose the date in the report; the operator sets the variable.
 
 ### Evidence
 
