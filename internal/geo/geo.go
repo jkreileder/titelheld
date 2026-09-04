@@ -27,19 +27,52 @@ import (
 // points that near each other resolve to the same settlement.
 const cachePrecision = 3
 
-// waypointCount is how many evenly spaced points along the route are sampled,
-// on top of the start and the bounding-box extremes.
-const waypointCount = 3
+// cacheKeyVersion opens every geocode cache key.
+//
+// A cached answer is only valid for the query shape that produced it: the zoom
+// and the resolution order decide which name a coordinate resolves to, so both
+// travel in the key next to this version — a zoom-12 answer and a zoom-16
+// answer for one cell are two different answers and may not share an entry. A
+// configuration change therefore orphans what was written under the old shape
+// instead of reading it as if it answered the new question, and nothing has to
+// be migrated or wiped. Bump this when the meaning of a stored place changes
+// for a shape that is otherwise unchanged.
+const cacheKeyVersion = "v2"
+
+// keySeparator joins the parts of a cache key.
+//
+// The key becomes a Firestore document ID, and the store hashes any key
+// outside the small character set an ID may carry unescaped. "_" is inside it;
+// ":" is not, and "/" is not a legal document ID character at all. Staying
+// inside the set keeps the stored ID readable, which is what an operator
+// looking at one entry needs.
+const keySeparator = "_"
+
+// DefaultSampleCount is how many interior points along the route are sampled.
+const DefaultSampleCount = 6
+
+// MaxSampleCount bounds that count.
+//
+// The farthest point is sampled on top of it, so this is what keeps one
+// activity to at most seven reverse-geocoding requests — seven seconds of the
+// rate-limit budget, spent while an athlete waits for a title.
+const MaxSampleCount = 6
+
+// earthRadiusMeters is the mean radius the haversine distance is scaled by.
+const earthRadiusMeters = 6371000
 
 // Summary is the verified geography of one route.
 //
 // Every field is a name. There is deliberately nowhere to put a coordinate.
+//
+// Neither endpoint of the track is in here, nor anything that would resolve to
+// the same place as one. A title is public, and a name resolved at km 0 or km
+// end is the address the ride starts and finishes at, so the cells the
+// endpoints fall in are never geocoded at all — see [SamplePoints].
 type Summary struct {
-	// Start is where the route began.
-	Start store.Place
-
-	// Along holds the other resolved places, in sample order, deduplicated by
-	// name. Every entry has a name: a sample that resolved only to a country
+	// Along holds the resolved places, in sample order: the interior samples
+	// in track order, then the farthest point. It is deduplicated by name, and
+	// every entry has a name — a sample that resolved only to a country
 	// contributes to Country and Region and is not listed here.
 	Along []store.Place
 
@@ -54,16 +87,16 @@ type Summary struct {
 // resolves to a country and nothing else. Callers that need names should use
 // [Summary.Names] and check its length rather than inferring it from here.
 func (s Summary) Empty() bool {
-	return s.Start.Empty() && len(s.Along) == 0 && s.Region == "" && s.Country == ""
+	return len(s.Along) == 0 && s.Region == "" && s.Country == ""
 }
 
-// Names returns every distinct place name, start first. This is what a prompt
-// builder passes to an LLM.
+// Names returns every distinct place name, in sample order. This is what a
+// prompt builder passes to an LLM.
 func (s Summary) Names() []string {
-	names := make([]string, 0, len(s.Along)+1)
-	seen := make(map[string]struct{}, len(s.Along)+1)
+	names := make([]string, 0, len(s.Along))
+	seen := make(map[string]struct{}, len(s.Along))
 
-	for _, place := range append([]store.Place{s.Start}, s.Along...) {
+	for _, place := range s.Along {
 		if place.Name == "" {
 			continue
 		}
@@ -110,27 +143,75 @@ func NormalizePlaceName(name string) string {
 // tests substitute their own.
 type Reverser interface {
 	Reverse(ctx context.Context, point Point) (store.Place, error)
+
+	// CacheScope names the query shape every answer of this Reverser belongs
+	// to. It is part of the cache key, so an answer is never read back for a
+	// question it did not answer.
+	//
+	// Required rather than optional: the cache is shared and long-lived, and a
+	// Reverser that cannot state its shape would have its answers filed under
+	// somebody else's. It must stay stable for identical configuration —
+	// otherwise every sweep starts from an empty cache — and it should stay
+	// inside the character set [keySeparator] describes.
+	CacheScope() string
 }
 
 // Describer turns an encoded polyline into verified place names.
 type Describer struct {
-	reverser Reverser
-	cache    store.GeocodeCache
-	logger   *slog.Logger
+	reverser    Reverser
+	cache       store.GeocodeCache
+	logger      *slog.Logger
+	sampleCount int
+
+	// scope is the reverser's query shape, read once: a Describer asks one
+	// reverser, so every key it writes belongs to one shape.
+	scope string
 }
 
-// NewDescriber builds a describer. The cache is required: Nominatim's usage
-// policy expects results to be cached rather than refetched.
-func NewDescriber(reverser Reverser, cache store.GeocodeCache, logger *slog.Logger) (*Describer, error) {
-	if reverser == nil || cache == nil {
+// DescriberConfig configures a [Describer].
+type DescriberConfig struct {
+	// Reverser resolves one coordinate. Required.
+	Reverser Reverser
+
+	// Cache is required: Nominatim's usage policy expects results to be
+	// cached rather than refetched.
+	Cache store.GeocodeCache
+
+	// Logger defaults to [slog.Default].
+	Logger *slog.Logger
+
+	// SampleCount is how many interior points along the route are geocoded;
+	// the farthest point is asked about on top of them, and the cells the
+	// track's endpoints fall in never are. Zero means [DefaultSampleCount],
+	// and anything above [MaxSampleCount] is refused rather than clamped: the
+	// request budget per activity is a property of the code, not of the
+	// configuration that happens to be deployed.
+	SampleCount int
+}
+
+// NewDescriber builds a describer.
+func NewDescriber(cfg DescriberConfig) (*Describer, error) {
+	if cfg.Reverser == nil || cfg.Cache == nil {
 		return nil, errors.New("geo: a reverser and a cache are required")
 	}
 
+	if cfg.SampleCount < 0 || cfg.SampleCount > MaxSampleCount {
+		return nil, fmt.Errorf("geo: sample count %d is outside 1 to %d (0 means %d)",
+			cfg.SampleCount, MaxSampleCount, DefaultSampleCount)
+	}
+
+	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return &Describer{reverser: reverser, cache: cache, logger: logger}, nil
+	return &Describer{
+		reverser:    cfg.Reverser,
+		cache:       cfg.Cache,
+		logger:      logger,
+		sampleCount: cfg.SampleCount,
+		scope:       cfg.Reverser.CacheScope(),
+	}, nil
 }
 
 // Describe resolves the geography of an encoded polyline.
@@ -152,7 +233,7 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 		return Summary{}, nil
 	}
 
-	samples := SamplePoints(points)
+	samples := SamplePoints(points, d.sampleCount)
 
 	var (
 		summary   Summary
@@ -160,12 +241,13 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 		seenNames = make(map[string]struct{}, len(samples))
 	)
 
-	for index, point := range samples {
-		key := CacheKey(point)
+	for _, point := range samples {
+		key := CacheKey(d.scope, point)
 
 		// Dedupe on the cache key, not on the raw coordinate: an out-and-back
-		// puts two bounding-box extremes on the same spot, and geocoding it
-		// twice spends a second of the rate-limit budget for nothing.
+		// puts the outward and the homeward sample within the same rounded
+		// key, and geocoding it twice spends a second of the rate-limit
+		// budget for nothing.
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -199,17 +281,10 @@ func (d *Describer) Describe(ctx context.Context, encodedPolyline string) (Summa
 			continue
 		}
 
-		if index == 0 {
-			summary.Start = place
-			seenNames[place.Name] = struct{}{}
-
-			continue
-		}
-
-		// Deduplicate on the resolved name, not just on the cache key. Eight
-		// samples 110 m apart are eight distinct keys that routinely resolve to
+		// Deduplicate on the resolved name, not just on the cache key. Seven
+		// samples 110 m apart are seven distinct keys that routinely resolve to
 		// one town, and a caller iterating Along would otherwise render it
-		// eight times.
+		// seven times.
 		if _, ok := seenNames[place.Name]; ok {
 			continue
 		}
@@ -283,13 +358,18 @@ func (d *Describer) resolve(ctx context.Context, key string, point Point) (store
 	return place, nil
 }
 
-// CacheKey rounds a coordinate into the key its cached place is stored under.
+// CacheKey is the key the place resolved for this point under this query shape
+// is stored under: the version, the scope the [Reverser] reported, and the
+// rounded coordinate.
 //
-// The key is the only place a coordinate is ever persisted, and it is rounded
-// to roughly 110 m.
-func CacheKey(point Point) string {
-	return strconv.FormatFloat(round(point.Lat), 'f', cachePrecision, 64) + "," +
-		strconv.FormatFloat(round(point.Lon), 'f', cachePrecision, 64)
+// The coordinate is the only place one is ever persisted, and it is rounded to
+// roughly 110 m.
+func CacheKey(scope string, point Point) string {
+	cell := cellOf(point)
+
+	return cacheKeyVersion + keySeparator + scope + keySeparator +
+		strconv.FormatFloat(cell.lat, 'f', cachePrecision, 64) + "," +
+		strconv.FormatFloat(cell.lon, 'f', cachePrecision, 64)
 }
 
 func round(value float64) float64 {
@@ -306,52 +386,230 @@ func round(value float64) float64 {
 		return 0
 	}
 
+	// -180 and 180 are one meridian, and both are representable: a longitude
+	// that wrapped one way and a longitude that wrapped the other describe the
+	// same place, so they may not become two cache entries for it.
+	if rounded == -180 {
+		return 180
+	}
+
 	return rounded
 }
 
-// SamplePoints picks the points worth geocoding: the start, the four
-// bounding-box extremes, and [waypointCount] evenly spaced points along the
-// route.
+// cacheCell is the rounded coordinate a point is filed under: the cache's own
+// notion of "the same place", roughly 110 m across.
+type cacheCell struct {
+	lat, lon float64
+}
+
+// cellOf is the cell a point falls in. [CacheKey] files an answer by it, and
+// [withoutEndpoints] excludes by it, so the two agree on what one place is.
+func cellOf(point Point) cacheCell {
+	return cacheCell{lat: round(point.Lat), lon: round(point.Lon)}
+}
+
+// SamplePoints picks the points worth geocoding: count points at equal arc
+// length inside the track, and the point farthest from the start. A count of
+// zero or less means [DefaultSampleCount], so one activity costs at most
+// count+1 reverse-geocoding requests.
 //
-// The start comes first because it is the only sample whose position in the
-// result matters.
-func SamplePoints(points []Point) []Point {
+// Neither endpoint is ever sampled, and neither is anything sharing an
+// endpoint's cache cell. Titles are public, and a place resolved at km 0 or km
+// end names where the athlete lives; the interior points at k*L/(count+1) are
+// interior by construction, and the farthest point is dropped — not replaced —
+// when it falls in an endpoint's cell, which on a one-way ride it does, U-turn
+// at the finish or not.
+//
+// Spacing is by distance traveled rather than by index. A summary polyline
+// carries its vertices wherever the track bends, so index spacing follows the
+// shape of the simplification and not the shape of the ride: a loop with a
+// dense section puts every index-spaced sample inside it, and the rest of the
+// route is never asked about.
+func SamplePoints(points []Point, count int) []Point {
 	if len(points) == 0 {
 		return nil
 	}
 
-	start := points[0]
-	samples := []Point{start}
+	if count <= 0 {
+		count = DefaultSampleCount
+	}
 
-	// The extremes are carried as values rather than indices, so there is no
-	// index whose range has to be argued about.
-	minLat, maxLat, minLon, maxLon := start, start, start, start
+	samples := make([]Point, 0, count+1)
+
+	cumulative, total := arcLengths(points)
+
+	// A track that stands still has no arc to spread samples along, and
+	// dividing by its length would put every sample on the start anyway.
+	if total > 0 {
+		for step := 1; step <= count; step++ {
+			samples = append(samples, pointAtArc(points, cumulative, float64(step)*total/float64(count+1)))
+		}
+	}
+
+	samples = append(samples, farthestFrom(points[0], points))
+
+	return dedupePoints(withoutEndpoints(points, samples))
+}
+
+// withoutEndpoints drops every sample falling in the cache cell of the track's
+// first or last point.
+//
+// This is the privacy rule of [SamplePoints] in code, applied to the whole set
+// rather than to the one sample expected to need it: whatever produced a
+// sample, an endpoint's name may not reach a public title. A track of one
+// point, or one that never moved, is therefore sampled nowhere at all — its
+// only point is both endpoints.
+//
+// By cell and not by coordinate, because the cell is what decides which name a
+// point comes back with: two points in one cell share a cache entry and
+// resolve to one settlement, and an endpoint's cell is the settlement the
+// athlete lives in. A ride that overshoots its finish and doubles back has a
+// farthest point that is bit-for-bit unequal to the last vertex and names the
+// same place, which is what exact equality lets through.
+func withoutEndpoints(track, samples []Point) []Point {
+	first, last := cellOf(track[0]), cellOf(track[len(track)-1])
+	kept := samples[:0]
+
+	for _, sample := range samples {
+		if at := cellOf(sample); at == first || at == last {
+			continue
+		}
+
+		kept = append(kept, sample)
+	}
+
+	return kept
+}
+
+// arcLengths returns the cumulative distance to each point and the total.
+func arcLengths(points []Point) ([]float64, float64) {
+	cumulative := make([]float64, len(points))
+
+	var total float64
+
+	for index := 1; index < len(points); index++ {
+		total += Distance(points[index-1], points[index])
+		cumulative[index] = total
+	}
+
+	return cumulative, total
+}
+
+// pointAtArc returns the position at the given arc length, interpolated within
+// the segment that contains it.
+//
+// Interpolated rather than snapped to the nearer vertex: a simplified track
+// has long straight segments, and snapping would collapse several samples onto
+// one vertex and leave whole stretches of the ride unsampled. Every point on
+// the segment is on the track the polyline describes.
+func pointAtArc(points []Point, cumulative []float64, target float64) Point {
+	for index := 1; index < len(points); index++ {
+		span := cumulative[index] - cumulative[index-1]
+		if cumulative[index] < target || span <= 0 {
+			continue
+		}
+
+		fraction := (target - cumulative[index-1]) / span
+		from, to := points[index-1], points[index]
+
+		return Point{
+			Lat: from.Lat + (to.Lat-from.Lat)*fraction,
+			Lon: wrapLongitude(from.Lon + shortestLonDelta(from.Lon, to.Lon)*fraction),
+		}
+	}
+
+	return points[len(points)-1]
+}
+
+// shortestLonDelta is the signed longitude difference along the shorter way
+// around the globe.
+//
+// A segment is the track between two vertices, and the track takes the shorter
+// way: a raw delta past 180° describes the longer one, which crosses every
+// meridian the ride never saw. [Distance] measures the same segment the same
+// way, so an arc length and the position it resolves to agree.
+func shortestLonDelta(from, to float64) float64 {
+	delta := to - from
+
+	if delta > 180 {
+		return delta - 360
+	}
+
+	if delta < -180 {
+		return delta + 360
+	}
+
+	return delta
+}
+
+// wrapLongitude brings a longitude back into [-180, 180].
+//
+// One adjustment is enough: the inputs are a longitude already in range and a
+// delta of at most 180°.
+func wrapLongitude(lon float64) float64 {
+	if lon > 180 {
+		return lon - 360
+	}
+
+	if lon < -180 {
+		return lon + 360
+	}
+
+	return lon
+}
+
+// farthestFrom returns the track point farthest from the start, which is the
+// turning point of an out-and-back and the far side of a loop. Ties go to the
+// first, so the result does not depend on iteration order.
+func farthestFrom(start Point, points []Point) Point {
+	farthest, distance := start, 0.0
 
 	for _, point := range points {
-		if point.Lat < minLat.Lat {
-			minLat = point
-		}
-		if point.Lat > maxLat.Lat {
-			maxLat = point
-		}
-		if point.Lon < minLon.Lon {
-			minLon = point
-		}
-		if point.Lon > maxLon.Lon {
-			maxLon = point
+		if d := Distance(start, point); d > distance {
+			farthest, distance = point, d
 		}
 	}
 
-	samples = append(samples, minLat, maxLat, minLon, maxLon)
+	return farthest
+}
 
-	for step := 1; step <= waypointCount; step++ {
-		index := len(points) * step / (waypointCount + 1)
-		if index >= len(points) {
-			index = len(points) - 1
+// dedupePoints drops repeats while keeping the first occurrence: the farthest
+// point can fall on an interior sample, and geocoding it twice spends a second
+// of the rate-limit budget for nothing.
+func dedupePoints(points []Point) []Point {
+	seen := make(map[Point]struct{}, len(points))
+	unique := points[:0]
+
+	for _, point := range points {
+		if _, ok := seen[point]; ok {
+			continue
 		}
 
-		samples = append(samples, points[index])
+		seen[point] = struct{}{}
+		unique = append(unique, point)
 	}
 
-	return samples
+	return unique
+}
+
+// Distance is the great-circle distance between two points, in meters.
+//
+// classifier.distanceMeters is the same haversine, duplicated because
+// classifier must stay dependency-free and this package must not be its
+// import. A fix to either formula belongs in both places; this one clamps
+// the asin operand against rounding, the classifier's copy does not yet.
+func Distance(from, to Point) float64 {
+	const degreesToRadians = math.Pi / 180
+
+	lat1 := from.Lat * degreesToRadians
+	lat2 := to.Lat * degreesToRadians
+	deltaLat := (to.Lat - from.Lat) * degreesToRadians
+	deltaLon := (to.Lon - from.Lon) * degreesToRadians
+
+	sinLat := math.Sin(deltaLat / 2)
+	sinLon := math.Sin(deltaLon / 2)
+
+	a := sinLat*sinLat + math.Cos(lat1)*math.Cos(lat2)*sinLon*sinLon
+
+	return 2 * earthRadiusMeters * math.Asin(math.Min(1, math.Sqrt(a)))
 }

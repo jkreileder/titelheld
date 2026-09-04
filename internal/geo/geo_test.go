@@ -17,6 +17,16 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// testScope is the query shape the fakes below answer in. They answer from a
+// table whatever they are asked, so any stable scope will do; the shapes that
+// matter are asserted against the real client in TestCacheKeyCarriesTheQueryShape.
+const testScope = "test"
+
+// stubScope gives a fake Reverser the query shape the interface requires.
+type stubScope struct{}
+
+func (stubScope) CacheScope() string { return testScope }
+
 // TestDecodePolyline uses the worked example from Google's specification, which
 // is the only fixture whose expected output is independently known.
 func TestDecodePolyline(t *testing.T) {
@@ -132,99 +142,389 @@ func TestCacheKeyRounds(t *testing.T) {
 		point Point
 		want  string
 	}{
-		{point: Point{Lat: 0, Lon: 0}, want: "0.000,0.000"},
-		{point: Point{Lat: 0.0503, Lon: 0.0002}, want: "0.050,0.000"},
-		{point: Point{Lat: 1.23456, Lon: 6.78901}, want: "1.235,6.789"},
-		{point: Point{Lat: -1.23456, Lon: -6.78949}, want: "-1.235,-6.789"},
+		{point: Point{Lat: 0, Lon: 0}, want: "v2_test_0.000,0.000"},
+		{point: Point{Lat: 0.0503, Lon: 0.0002}, want: "v2_test_0.050,0.000"},
+		{point: Point{Lat: 1.23456, Lon: 6.78901}, want: "v2_test_1.235,6.789"},
+		{point: Point{Lat: -1.23456, Lon: -6.78949}, want: "v2_test_-1.235,-6.789"},
 		// Two points 50 m apart share a key, which is the whole point.
-		{point: Point{Lat: 1.23451, Lon: 6.78912}, want: "1.235,6.789"},
+		{point: Point{Lat: 1.23451, Lon: 6.78912}, want: "v2_test_1.235,6.789"},
 		// A negative that rounds to zero must not become "-0.000".
-		{point: Point{Lat: -0.0001, Lon: -0.0002}, want: "0.000,0.000"},
+		{point: Point{Lat: -0.0001, Lon: -0.0002}, want: "v2_test_0.000,0.000"},
+		// The antimeridian has two spellings and one cache entry.
+		{point: Point{Lat: 1.2345, Lon: -180}, want: "v2_test_1.235,180.000"},
 	}
 
 	for _, tt := range tests {
-		if got := CacheKey(tt.point); got != tt.want {
+		if got := CacheKey(testScope, tt.point); got != tt.want {
 			t.Errorf("CacheKey(%+v) = %q, want %q", tt.point, got, tt.want)
 		}
 	}
 }
 
-func TestSamplePoints(t *testing.T) {
+// The key carries the query shape that produced the answer, so two shapes
+// cannot share an entry and one shape cannot lose its entries to a rebuild.
+//
+// The scopes come from the real client here rather than from a fixture: the
+// key is only as trustworthy as what [Nominatim] reports about itself.
+func TestCacheKeyCarriesTheQueryShape(t *testing.T) {
 	t.Parallel()
 
-	if got := SamplePoints(nil); got != nil {
-		t.Errorf("SamplePoints(nil) = %v, want nil", got)
-	}
+	point := Point{Lat: 48.123, Lon: 11.456}
 
-	// A synthetic out-and-back around Null Island.
-	points := []Point{
-		{Lat: 0.000, Lon: 0.000},
-		{Lat: 0.010, Lon: 0.005},
-		{Lat: 0.020, Lon: -0.005},
-		{Lat: 0.030, Lon: 0.010},
-		{Lat: 0.010, Lon: 0.005},
-		{Lat: 0.000, Lon: 0.000},
-	}
+	key := func(t *testing.T, cfg NominatimConfig) string {
+		t.Helper()
 
-	samples := SamplePoints(points)
+		cfg.UserAgent = "titelheld-test/1.0 (test@example.invalid)"
 
-	// Start, four extremes, three waypoints.
-	if len(samples) != 8 {
-		t.Fatalf("sampled %d points, want 8", len(samples))
-	}
-
-	if samples[0] != points[0] {
-		t.Errorf("samples[0] = %+v, want the start", samples[0])
-	}
-
-	// The extremes must actually be extreme.
-	var minLat, maxLat, minLon, maxLon = points[0], points[0], points[0], points[0]
-
-	for _, p := range points {
-		if p.Lat < minLat.Lat {
-			minLat = p
-		}
-		if p.Lat > maxLat.Lat {
-			maxLat = p
-		}
-		if p.Lon < minLon.Lon {
-			minLon = p
-		}
-		if p.Lon > maxLon.Lon {
-			maxLon = p
-		}
-	}
-
-	for _, want := range []Point{minLat, maxLat, minLon, maxLon} {
-		found := false
-
-		for _, sample := range samples {
-			if sample == want {
-				found = true
-
-				break
-			}
+		client, err := NewNominatim(cfg)
+		if err != nil {
+			t.Fatalf("NewNominatim: %v", err)
 		}
 
-		if !found {
-			t.Errorf("the extreme %+v was not sampled", want)
+		return CacheKey(client.CacheScope(), point)
+	}
+
+	shipped := key(t, NominatimConfig{})
+
+	// The shipped shape, spelled out: a reader of a Firestore document ID can
+	// tell which question it answers.
+	if want := "v2_z16_hvst_48.123,11.456"; shipped != want {
+		t.Errorf("the shipped key = %q, want %q", shipped, want)
+	}
+
+	// Stable for identical configuration: an unstable key empties the cache on
+	// every restart and spends the rate-limit budget re-asking.
+	if again := key(t, NominatimConfig{}); again != shipped {
+		t.Errorf("the same configuration produced %q and %q", shipped, again)
+	}
+
+	// A coarser zoom reports coarser address fields, so its answer for this
+	// cell is a different answer.
+	if coarse := key(t, NominatimConfig{Zoom: 12}); coarse == shipped {
+		t.Errorf("zoom 12 and zoom %d share the key %q", DefaultZoom, coarse)
+	}
+
+	// The order decides which of a response's fields becomes the name.
+	reordered := key(t, NominatimConfig{
+		PlaceFields: []string{"village", "hamlet", "suburb", "town"},
+	})
+	if reordered == shipped {
+		t.Errorf("two resolution orders share the key %q", reordered)
+	}
+
+	// An explicit order that is the shipped one is the shipped question.
+	if explicit := key(t, NominatimConfig{
+		PlaceFields: []string{"hamlet", "village", "suburb", "town"},
+	}); explicit != shipped {
+		t.Errorf("the shipped order spelled out = %q, want %q", explicit, shipped)
+	}
+
+	// A key becomes a Firestore document ID, which may not contain a slash.
+	for _, candidate := range []string{shipped, reordered, key(t, NominatimConfig{Zoom: 12})} {
+		if strings.ContainsRune(candidate, '/') {
+			t.Errorf("key %q contains a slash, which no document ID may carry", candidate)
 		}
 	}
 }
 
+// A longitude that wrapped east and one that wrapped west describe the same
+// meridian, and a cache holds one entry per place.
+func TestRoundCanonicalizesTheAntimeridian(t *testing.T) {
+	t.Parallel()
+
+	if round(-180) != round(180) {
+		t.Errorf("round(-180) = %v and round(180) = %v are two keys for one meridian",
+			round(-180), round(180))
+	}
+}
+
+// A cached answer is only valid for the service that gave it: two geocoders
+// answer one coordinate with two different names, so a scope that ignores the
+// endpoint hands one service's answer back for the other's question.
+func TestTheCacheScopeCarriesTheEndpoint(t *testing.T) {
+	t.Parallel()
+
+	scope := func(t *testing.T, baseURL string) string {
+		t.Helper()
+
+		client, err := NewNominatim(NominatimConfig{
+			UserAgent: "titelheld-test/1.0 (test@example.invalid)",
+			BaseURL:   baseURL,
+		})
+		if err != nil {
+			t.Fatalf("NewNominatim: %v", err)
+		}
+
+		return client.CacheScope()
+	}
+
+	// The public endpoint keeps the shape it already writes — unset, spelled
+	// out, or with a trailing slash — so the shipped deployment does not start
+	// from an empty cache and re-spend the rate-limit budget.
+	shipped := scope(t, "")
+
+	if want := "z16_hvst"; shipped != want {
+		t.Errorf("the shipped scope = %q, want %q", shipped, want)
+	}
+
+	for _, spelling := range []string{DefaultNominatimBaseURL, DefaultNominatimBaseURL + "/"} {
+		if got := scope(t, spelling); got != shipped {
+			t.Errorf("base URL %q has the scope %q, want the shipped %q", spelling, got, shipped)
+		}
+	}
+
+	self := scope(t, "https://nominatim.example.invalid")
+	other := scope(t, "https://geocoder.example.invalid")
+
+	for _, private := range []string{self, other} {
+		if private == shipped {
+			t.Errorf("a private endpoint shares the public endpoint's scope %q", shipped)
+		}
+	}
+
+	if self == other {
+		t.Errorf("two different geocoding services share the scope %q", self)
+	}
+
+	// Stable for identical configuration: an unstable scope empties the cache
+	// on every restart.
+	if again := scope(t, "https://nominatim.example.invalid"); again != self {
+		t.Errorf("one base URL produced the scopes %q and %q", self, again)
+	}
+
+	// The scope becomes part of a Firestore document ID: a base URL's own
+	// punctuation would have the store hash the whole key instead of leaving it
+	// readable, which is why the endpoint travels as a hash and not as itself.
+	if !regexp.MustCompile(`^[A-Za-z0-9_]+$`).MatchString(self) {
+		t.Errorf("scope %q carries a character a readable document ID may not", self)
+	}
+}
+
+// The order token is one letter per key, and two orders may not share one:
+// "city", "city_district" and "county" all begin with the same letter, so the
+// tokens are assigned rather than derived.
+func TestEveryAddressFieldHasItsOwnToken(t *testing.T) {
+	t.Parallel()
+
+	seen := make(map[byte]string, len(addressFields))
+
+	for _, field := range addressFields {
+		if field.token == 0 {
+			t.Errorf("address key %q has no cache-key token", field.key)
+
+			continue
+		}
+
+		if other, ok := seen[field.token]; ok {
+			t.Errorf("address keys %q and %q share the token %q", other, field.key, field.token)
+		}
+
+		seen[field.token] = field.key
+	}
+}
+
+// The samples are spread by distance traveled, not by vertex index, and both
+// endpoints are left out.
+//
+// The fixture is a straight synthetic track whose vertices are deliberately
+// bunched at one end: index spacing would put five of the six interior samples
+// inside the bunch, and equal-arc spacing puts them at even fractions of the
+// length whatever the vertices do. Its farthest point from the start is its
+// last point, so the endpoint rule applies to that sample too.
+func TestSamplePoints(t *testing.T) {
+	t.Parallel()
+
+	if got := SamplePoints(nil, 0); got != nil {
+		t.Errorf("SamplePoints(nil) = %v, want nil", got)
+	}
+
+	points := []Point{
+		{Lat: 0, Lon: 0.0000},
+		{Lat: 0, Lon: 0.0002},
+		{Lat: 0, Lon: 0.0004},
+		{Lat: 0, Lon: 0.0006},
+		{Lat: 0, Lon: 0.0008},
+		{Lat: 0, Lon: 0.0010},
+		{Lat: 0, Lon: 0.0700},
+	}
+
+	samples := SamplePoints(points, 0)
+
+	// The six interior samples and nothing else: the farthest point from the
+	// start is the last point here, and an endpoint is dropped rather than
+	// replaced.
+	if len(samples) != DefaultSampleCount {
+		t.Fatalf("sampled %d points, want %d: %+v", len(samples), DefaultSampleCount, samples)
+	}
+
+	for index, sample := range samples {
+		if sample == points[0] || sample == points[len(points)-1] {
+			t.Errorf("sample %d = %+v, which is an endpoint of the track", index, sample)
+		}
+	}
+
+	// A straight track along the equator, so the fraction of the length is
+	// the fraction of the longitude span.
+	for step := 1; step <= DefaultSampleCount; step++ {
+		want := 0.07 * float64(step) / float64(DefaultSampleCount+1)
+
+		if got := samples[step-1].Lon; math.Abs(got-want) > 1e-6 {
+			t.Errorf("sample %d is at lon %.6f, want %.6f — the samples are not equally spaced by arc length",
+				step, got, want)
+		}
+	}
+}
+
+// An endpoint is a cell, not a float. A ride that overshoots its finish and
+// doubles back has a farthest point that is not the last vertex and is not
+// equal to it, yet resolves to the same settlement — the cache cell is the
+// cache's own notion of "the same place", and the finish's cell is where the
+// athlete stopped.
+func TestSamplesLeaveTheEndpointCells(t *testing.T) {
+	t.Parallel()
+
+	// Ten kilometers east, 100 m past the finish, and back to it.
+	track := []Point{
+		{Lat: 0, Lon: 0.00000},
+		{Lat: 0, Lon: 0.09000},
+		{Lat: 0, Lon: 0.10045},
+		{Lat: 0, Lon: 0.09955},
+	}
+
+	first, last := cellOf(track[0]), cellOf(track[len(track)-1])
+
+	samples := SamplePoints(track, 0)
+	if len(samples) == 0 {
+		t.Fatal("an 11 km ride was sampled nowhere at all")
+	}
+
+	for index, sample := range samples {
+		if at := cellOf(sample); at == first || at == last {
+			t.Errorf("sample %d at %+v is in %+v, the cell the ride began or ended in",
+				index, sample, at)
+		}
+	}
+}
+
+// A segment across the antimeridian is 11 km long, and every sample on it
+// belongs in that 11 km.
+//
+// The two vertices are 0.1° apart the short way and 359.9° apart as raw
+// numbers, so an interpolation over the raw difference walks the whole globe
+// and puts the middle sample off West Africa — a coordinate the ride never
+// visited, handed to the geocoder and cached under its own key.
+func TestSampleAcrossTheAntimeridian(t *testing.T) {
+	t.Parallel()
+
+	points := []Point{{Lat: 0, Lon: 179.95}, {Lat: 0, Lon: -179.95}}
+
+	// Three interior samples: one short of 180°, one on it, one past it, so a
+	// fix that only handles the delta and not the wrap is still caught.
+	samples := SamplePoints(points, 3)
+
+	// Three, and only three: the farthest point is the segment's own end, and
+	// an endpoint is never sampled.
+	if len(samples) != 3 {
+		t.Fatalf("sampled %d points, want 3: %+v", len(samples), samples)
+	}
+
+	for index, sample := range samples {
+		if math.Abs(sample.Lon) <= 179 {
+			t.Errorf("sample %d is at lon %.4f, want the segment's own neighborhood (|lon| > 179)",
+				index, sample.Lon)
+		}
+
+		if math.Abs(sample.Lon) > 180 {
+			t.Errorf("sample %d is at lon %.4f, which is not a longitude", index, sample.Lon)
+		}
+
+		// Every sample is on the segment, so none is farther from either end
+		// than the segment is long.
+		if d := Distance(points[0], sample); d > 12000 {
+			t.Errorf("sample %d is %.0f m from the start of an 11 km segment", index, d)
+		}
+	}
+}
+
+// The count is configuration, and the request budget per activity is not.
+func TestSampleCountIsBounded(t *testing.T) {
+	t.Parallel()
+
+	// A straight track: its farthest point is its last point, so the count is
+	// the interior samples alone.
+	points := []Point{{Lat: 0, Lon: 0}, {Lat: 0, Lon: 0.05}, {Lat: 0, Lon: 0.1}}
+
+	if got := len(SamplePoints(points, 2)); got != 2 {
+		t.Errorf("a count of 2 sampled %d points, want 2", got)
+	}
+
+	if got := len(SamplePoints(points, 0)); got != DefaultSampleCount {
+		t.Errorf("the default sampled %d points, want %d", got, DefaultSampleCount)
+	}
+
+	// The ceiling holds wherever the farthest point falls: it is one request
+	// on top of the interior samples, and never more.
+	loop := []Point{
+		{Lat: 0, Lon: 0}, {Lat: 0.01, Lon: 0.05}, {Lat: 0.02, Lon: 0.1},
+		{Lat: 0.05, Lon: 0.04}, {Lat: 0, Lon: 0},
+	}
+
+	if got := len(SamplePoints(loop, MaxSampleCount)); got > MaxSampleCount+1 {
+		t.Errorf("the maximum count sampled %d points, want at most %d", got, MaxSampleCount+1)
+	}
+}
+
+// A track of one point is a track that is nothing but its own endpoints, and
+// an endpoint is never geocoded.
 func TestSampleSinglePoint(t *testing.T) {
 	t.Parallel()
 
-	samples := SamplePoints([]Point{{Lat: 1, Lon: 2}})
-	for _, sample := range samples {
-		if sample != (Point{Lat: 1, Lon: 2}) {
-			t.Errorf("sample = %+v, want the only point", sample)
-		}
+	if samples := SamplePoints([]Point{{Lat: 1, Lon: 2}}, 0); len(samples) != 0 {
+		t.Errorf("a track of one point sampled %+v, want nothing", samples)
+	}
+}
+
+// A track that never moves has no arc to spread samples along, and its only
+// point is where the athlete started and finished.
+func TestSampleStandstill(t *testing.T) {
+	t.Parallel()
+
+	standstill := []Point{{Lat: 1, Lon: 2}, {Lat: 1, Lon: 2}, {Lat: 1, Lon: 2}}
+
+	if samples := SamplePoints(standstill, 0); len(samples) != 0 {
+		t.Errorf("a standstill sampled %+v, want nothing", samples)
+	}
+}
+
+// Distance is the haversine over the two axes, so a sample placed by arc
+// length is placed by the ride's own geometry.
+func TestDistance(t *testing.T) {
+	t.Parallel()
+
+	// A tenth of a degree of longitude at the equator is about 11.1 km.
+	if got := Distance(Point{}, Point{Lon: 0.1}); math.Abs(got-11119.5) > 5 {
+		t.Errorf("Distance over 0.1° of longitude = %.1f m, want about 11119.5", got)
+	}
+
+	// The same span of latitude is the same distance, anywhere.
+	if got := Distance(Point{Lat: 48}, Point{Lat: 48.1}); math.Abs(got-11119.5) > 5 {
+		t.Errorf("Distance over 0.1° of latitude = %.1f m, want about 11119.5", got)
+	}
+
+	// Longitude converges toward the pole; the same span is shorter there.
+	if got := Distance(Point{Lat: 60}, Point{Lat: 60, Lon: 0.1}); math.Abs(got-5560) > 20 {
+		t.Errorf("Distance over 0.1° of longitude at 60° = %.1f m, want about 5560", got)
+	}
+
+	if got := Distance(Point{Lat: 1, Lon: 2}, Point{Lat: 1, Lon: 2}); got != 0 {
+		t.Errorf("Distance to the same point = %v, want 0", got)
 	}
 }
 
 // fakeReverser records what it was asked and answers from a table.
 type fakeReverser struct {
+	stubScope
+
 	calls  []Point
 	places map[string]store.Place
 	err    error
@@ -237,7 +537,7 @@ func (f *fakeReverser) Reverse(_ context.Context, point Point) (store.Place, err
 		return store.Place{}, f.err
 	}
 
-	if place, ok := f.places[CacheKey(point)]; ok {
+	if place, ok := f.places[CacheKey(testScope, point)]; ok {
 		return place, nil
 	}
 
@@ -249,7 +549,9 @@ func newDescriber(t *testing.T, reverser Reverser) (*Describer, *store.Memory) {
 
 	memory := store.NewMemory()
 
-	describer, err := NewDescriber(reverser, memory, quietLogger())
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: reverser, Cache: memory, Logger: quietLogger(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
@@ -260,19 +562,43 @@ func newDescriber(t *testing.T, reverser Reverser) (*Describer, *store.Memory) {
 func TestNewDescriberRequiresItsCollaborators(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewDescriber(nil, store.NewMemory(), nil); err == nil {
+	if _, err := NewDescriber(DescriberConfig{Cache: store.NewMemory()}); err == nil {
 		t.Error("NewDescriber without a reverser = nil error, want error")
 	}
-	if _, err := NewDescriber(&fakeReverser{}, nil, nil); err == nil {
+	if _, err := NewDescriber(DescriberConfig{Reverser: &fakeReverser{}}); err == nil {
 		t.Error("NewDescriber without a cache = nil error, want error")
 	}
 
-	describer, err := NewDescriber(&fakeReverser{}, store.NewMemory(), nil)
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: &fakeReverser{}, Cache: store.NewMemory(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
 	if describer.logger == nil {
 		t.Error("NewDescriber left the logger unset")
+	}
+}
+
+// A sample count above the maximum is refused rather than clamped: the
+// per-activity request budget is the reason the bound exists, and a
+// deployment that asked for more must hear about it at startup.
+func TestNewDescriberBoundsTheSampleCount(t *testing.T) {
+	t.Parallel()
+
+	for _, count := range []int{-1, MaxSampleCount + 1} {
+		_, err := NewDescriber(DescriberConfig{
+			Reverser: &fakeReverser{}, Cache: store.NewMemory(), SampleCount: count,
+		})
+		if err == nil {
+			t.Errorf("NewDescriber with a sample count of %d = nil error, want error", count)
+		}
+	}
+
+	if _, err := NewDescriber(DescriberConfig{
+		Reverser: &fakeReverser{}, Cache: store.NewMemory(), SampleCount: MaxSampleCount,
+	}); err != nil {
+		t.Errorf("NewDescriber with a sample count of %d = %v", MaxSampleCount, err)
 	}
 }
 
@@ -309,19 +635,21 @@ func TestDescribeDeduplicatesByCacheKey(t *testing.T) {
 	reverser := &fakeReverser{}
 	describer, _ := newDescriber(t, reverser)
 
-	// A route that returns to its start: several samples collapse onto one key.
+	// An out-and-back: the outward and the homeward sample at the same distance
+	// from the turn collapse onto one key. Long enough that the ride leaves the
+	// cell it started in — one entirely inside that cell is sampled nowhere,
+	// which is the endpoint rule and not a deduplication.
 	points := []Point{
-		{Lat: 0.0000, Lon: 0.0000},
-		{Lat: 0.0001, Lon: 0.0001},
-		{Lat: 0.0002, Lon: 0.0000},
-		{Lat: 0.0000, Lon: 0.0000},
+		{Lat: 0, Lon: 0.000},
+		{Lat: 0, Lon: 0.004},
+		{Lat: 0, Lon: 0.000},
 	}
 
-	samples := SamplePoints(points)
+	samples := SamplePoints(points, 0)
 
 	keys := make(map[string]struct{}, len(samples))
 	for _, sample := range samples {
-		keys[CacheKey(sample)] = struct{}{}
+		keys[CacheKey(testScope, sample)] = struct{}{}
 	}
 
 	summary, err := describer.Describe(t.Context(), encodeForTest(points))
@@ -364,7 +692,12 @@ func TestDescribeUsesAndFillsTheCache(t *testing.T) {
 	}
 
 	// The cache holds places, and the coordinates survive only as rounded keys.
-	place, ok, err := memory.Place(t.Context(), CacheKey(Point{Lat: 38.5, Lon: -120.2}))
+	points, err := DecodePolyline(encoded)
+	if err != nil {
+		t.Fatalf("DecodePolyline: %v", err)
+	}
+
+	place, ok, err := memory.Place(t.Context(), CacheKey(testScope, SamplePoints(points, 0)[0]))
 	if err != nil || !ok {
 		t.Fatalf("cache lookup = %+v, %v, %v", place, ok, err)
 	}
@@ -375,16 +708,21 @@ func TestDescribeUsesAndFillsTheCache(t *testing.T) {
 func TestEmptyAnswersAreCached(t *testing.T) {
 	t.Parallel()
 
+	points := []Point{{Lat: 38.5, Lon: -120.2}, {Lat: 38.6, Lon: -120.3}}
+	sampled := SamplePoints(points, 0)
+
 	reverser := &fakeReverser{places: map[string]store.Place{}}
-	reverser.places["38.500,-120.200"] = store.Place{}
+	for _, sample := range sampled {
+		reverser.places[CacheKey(testScope, sample)] = store.Place{}
+	}
 
 	describer, memory := newDescriber(t, reverser)
 
-	if _, err := describer.Describe(t.Context(), "_p~iF~ps|U"); err != nil {
+	if _, err := describer.Describe(t.Context(), encodeForTest(points)); err != nil {
 		t.Fatalf("Describe: %v", err)
 	}
 
-	_, ok, err := memory.Place(t.Context(), "38.500,-120.200")
+	_, ok, err := memory.Place(t.Context(), CacheKey(testScope, sampled[0]))
 	if err != nil {
 		t.Fatalf("cache lookup: %v", err)
 	}
@@ -429,7 +767,8 @@ func TestDescribeReportsFailures(t *testing.T) {
 		wantErr := errors.New("nominatim unreachable")
 		describer, _ := newDescriber(t, &fakeReverser{err: wantErr})
 
-		if _, err := describer.Describe(t.Context(), "_p~iF~ps|U"); !errors.Is(err, wantErr) {
+		// Three points, so the track has interior samples to fail on.
+		if _, err := describer.Describe(t.Context(), "_p~iF~ps|U_ulLnnqC_mqNvxq`@"); !errors.Is(err, wantErr) {
 			t.Errorf("Describe = %v, want %v", err, wantErr)
 		}
 	})
@@ -439,8 +778,8 @@ func TestSummaryNamesAreDistinct(t *testing.T) {
 	t.Parallel()
 
 	summary := Summary{
-		Start: store.Place{Name: "Musterdorf"},
 		Along: []store.Place{
+			{Name: "Musterdorf"},
 			{Name: "Musterstadt"},
 			{Name: "Musterdorf"},
 			{Name: ""},
@@ -539,7 +878,7 @@ func TestDecodePolylineRejectsImpossibleCoordinates(t *testing.T) {
 	}
 }
 
-// Eight samples 110 m apart are eight distinct cache keys that routinely
+// Seven samples 110 m apart are seven distinct cache keys that routinely
 // resolve to one town. Along must list it once.
 func TestAlongIsDeduplicatedByName(t *testing.T) {
 	t.Parallel()
@@ -559,9 +898,9 @@ func TestAlongIsDeduplicatedByName(t *testing.T) {
 		t.Fatalf("Describe: %v", err)
 	}
 
-	// The fake resolves everything to Musterdorf, which is also the start.
-	if len(summary.Along) != 0 {
-		t.Errorf("Along = %+v, want empty — every sample resolved to the start's name", summary.Along)
+	// The fake resolves every sample to Musterdorf.
+	if len(summary.Along) != 1 {
+		t.Errorf("Along = %+v, want one entry — every sample resolved to the same name", summary.Along)
 	}
 
 	if names := summary.Names(); len(names) != 1 || names[0] != "Musterdorf" {
@@ -581,8 +920,8 @@ func TestCountryOnlyAnswersAreNotListedAsPlaces(t *testing.T) {
 	reverser.places = map[string]store.Place{}
 
 	points := []Point{{Lat: 0, Lon: 0}, {Lat: 0.01, Lon: 0.01}}
-	for _, p := range SamplePoints(points) {
-		reverser.places[CacheKey(p)] = store.Place{Country: "Testland"}
+	for _, p := range SamplePoints(points, 0) {
+		reverser.places[CacheKey(testScope, p)] = store.Place{Country: "Testland"}
 	}
 
 	summary, err := describer.Describe(t.Context(), encodeForTest(points))
@@ -641,7 +980,9 @@ func TestACachedPlaceIsRecheckedAgainstTheAllowList(t *testing.T) {
 		}
 	}
 
-	describer, err := NewDescriber(refusingReverser{t}, cache, quietLogger())
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: refusingReverser{t: t}, Cache: cache, Logger: quietLogger(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
@@ -674,7 +1015,11 @@ func TestACachedPlaceIsRecheckedAgainstTheAllowList(t *testing.T) {
 
 // refusingReverser fails if it is called, so the test can only be exercising
 // the cache path.
-type refusingReverser struct{ t *testing.T }
+type refusingReverser struct {
+	stubScope
+
+	t *testing.T
+}
 
 func (r refusingReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
 	r.t.Error("the geocoder was called for a cached key")
@@ -729,7 +1074,9 @@ func TestAGeocoderCannotIntroduceAPointOfInterest(t *testing.T) {
 
 	cache := store.NewMemory()
 
-	describer, err := NewDescriber(fixedReverser{poi}, cache, quietLogger())
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: fixedReverser{place: poi}, Cache: cache, Logger: quietLogger(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
@@ -766,7 +1113,9 @@ func TestAGeocodersAllowedNameSurvives(t *testing.T) {
 
 	village := store.Place{Name: "Musterdorf", Kind: "village", Region: "Musterregion"}
 
-	describer, err := NewDescriber(fixedReverser{village}, store.NewMemory(), quietLogger())
+	describer, err := NewDescriber(DescriberConfig{
+		Reverser: fixedReverser{place: village}, Cache: store.NewMemory(), Logger: quietLogger(),
+	})
 	if err != nil {
 		t.Fatalf("NewDescriber: %v", err)
 	}
@@ -782,7 +1131,11 @@ func TestAGeocodersAllowedNameSurvives(t *testing.T) {
 }
 
 // fixedReverser answers with the same place every time.
-type fixedReverser struct{ place store.Place }
+type fixedReverser struct {
+	stubScope
+
+	place store.Place
+}
 
 func (f fixedReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
 	return f.place, nil
@@ -878,7 +1231,7 @@ func TestDescribeNormalizesResolvedNames(t *testing.T) {
 	}
 
 	if names[0] != "Ruhstorf a. d. Rott" {
-		t.Errorf("start name = %q, want the spaced form", names[0])
+		t.Errorf("resolved name = %q, want the spaced form", names[0])
 	}
 
 	// The region and the country travel to the prompt too, on their own
@@ -895,7 +1248,7 @@ func TestDescribeNormalizesResolvedNames(t *testing.T) {
 
 // dottedReverser answers every point with a name in the compact official form
 // Nominatim returns for these places.
-type dottedReverser struct{}
+type dottedReverser struct{ stubScope }
 
 func (dottedReverser) Reverse(_ context.Context, _ Point) (store.Place, error) {
 	return store.Place{

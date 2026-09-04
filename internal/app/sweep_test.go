@@ -10,6 +10,7 @@ import (
 
 	"github.com/jkreileder/titelheld/internal/classifier"
 	"github.com/jkreileder/titelheld/internal/config"
+	"github.com/jkreileder/titelheld/internal/geo"
 	"github.com/jkreileder/titelheld/internal/naming"
 	"github.com/jkreileder/titelheld/internal/processor"
 	"github.com/jkreileder/titelheld/internal/store"
@@ -233,6 +234,43 @@ func depsFromEnv(t *testing.T, overrides map[string]string) processor.Deps {
 	}
 
 	return deps
+}
+
+// Each geo setting reaches the component that applies it.
+//
+// Asserted through the refusals those components make, because a setting that
+// is loaded and then never passed on is invisible from the outside: the
+// service would run on the shipped defaults while the environment said
+// otherwise. A value the loader would never produce is used for each one, so
+// the only way the build can fail is that the value arrived.
+func TestGeoSettingsReachTheGeocoder(t *testing.T) {
+	t.Parallel()
+
+	for name, geoConfig := range map[string]config.Geo{
+		"sample count": {SampleCount: geo.MaxSampleCount + 1},
+		"zoom":         {Zoom: geo.MaxZoom + 1},
+		"place fields": {PlaceFields: []string{"village", "village"}},
+	} {
+		cfg := anthropicConfig()
+		cfg.Geo = geoConfig
+
+		if _, err := buildGeographer(cfg, memoryStore{store.NewMemory()}, quiet()); err == nil {
+			t.Errorf("the configured %s never reached the geocoder", name)
+		}
+	}
+
+	// The shipped defaults are the zero value, and they build.
+	if _, err := buildGeographer(anthropicConfig(), memoryStore{store.NewMemory()}, quiet()); err != nil {
+		t.Errorf("an unconfigured geographer failed to build: %v", err)
+	}
+
+	// So does a configuration the loader does produce.
+	cfg := anthropicConfig()
+	cfg.Geo = config.Geo{SampleCount: 3, Zoom: 12, PlaceFields: []string{"town", "village"}}
+
+	if _, err := buildGeographer(cfg, memoryStore{store.NewMemory()}, quiet()); err != nil {
+		t.Errorf("a configured geographer failed to build: %v", err)
+	}
 }
 
 // title is a model response the validator would otherwise accept.

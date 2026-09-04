@@ -101,12 +101,21 @@ func buildSweep(
 func buildGeographer(
 	cfg config.Config, dataStore boundStore, logger *slog.Logger,
 ) (*geo.Describer, error) {
-	nominatim, err := geo.NewNominatim(geo.NominatimConfig{UserAgent: cfg.NominatimUserAgent})
+	nominatim, err := geo.NewNominatim(geo.NominatimConfig{
+		UserAgent:   cfg.NominatimUserAgent,
+		Zoom:        cfg.Geo.Zoom,
+		PlaceFields: cfg.Geo.PlaceFields,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("build the geocoder: %w", err)
 	}
 
-	describer, err := geo.NewDescriber(nominatim, dataStore, logger)
+	describer, err := geo.NewDescriber(geo.DescriberConfig{
+		Reverser:    nominatim,
+		Cache:       dataStore,
+		Logger:      logger,
+		SampleCount: cfg.Geo.SampleCount,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("build the describer: %w", err)
 	}

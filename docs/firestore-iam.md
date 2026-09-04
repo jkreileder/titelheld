@@ -21,7 +21,7 @@ Six collections, and nothing else. Adding a seventh means changing this document
 | `tokens`    | `{athleteID}`             | OAuth access and refresh token, expiry, scopes            | **No**                  |
 | `pending`   | `{athleteID}-{activity}`  | Queued activity, its `process_after` deadline, the aspect | Yes                     |
 | `named`     | `{athleteID}-{activity}`  | The recorded title, its language and source, and when     | Mostly, from Strava     |
-| `geocache`  | rounded coordinate key    | Verified place names from Nominatim                       | Yes, by refetching      |
+| `geocache`  | versioned query-shape key | Verified place names from Nominatim                       | Yes, by refetching      |
 | `franchise` | `{athleteID}-{franchise}` | Position in an ordered title series                       | In principle, painfully |
 | `config`    | `{athleteID}`             | The athlete's configuration: franchise series             | **No** — hand-written   |
 
@@ -63,9 +63,10 @@ that is a document that has to be backed up by being written down somewhere.
 The other four are a work queue, two caches, and franchise position state.
 
 Location data is minimized, not absent. No coordinate is stored as a *field*: `geocache`
-documents hold place names only. The coordinate that produced a place does survive as the
-document ID, rounded to three decimals — roughly 110 m, and enough to reconstruct the rough
-shape of a route from the cache alone. Nothing finer is retained anywhere.
+documents hold place names only. The coordinate that produced a place does survive inside the
+document ID — one component of it, after a version and the query shape — rounded to three
+decimals: roughly 110 m, and enough to reconstruct the rough shape of a route from the cache
+alone. Nothing finer is retained anywhere.
 
 ## The role
 
