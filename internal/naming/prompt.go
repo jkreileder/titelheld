@@ -50,9 +50,9 @@ type Ride struct {
 	GearName string
 
 	// Places are verified place names along the route, in sample order. The
-	// track's endpoints are excluded, so a title cannot name where the ride
-	// began or ended. The prompt states these are the only geography the model
-	// may use.
+	// prompt states these are the only geography the model may use; which
+	// points along the track are sampled is the geo package's rule, not
+	// knowledge this layer holds.
 	Places []string
 
 	// Region and Country are the coarsest containers the route touched.

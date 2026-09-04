@@ -267,8 +267,8 @@ func TestForbiddenTitlesCarryTheFormThePromptShows(t *testing.T) {
 
 	forbidden := promptContext.ForbiddenTitles()
 
-	// The prefix the model was shown, returned verbatim. This is the review's
-	// case: without the prompt's own truncation on the stored side, it passes.
+	// The prefix the model was shown, returned verbatim. Without the prompt's
+	// own truncation on the stored side, this passes as a fresh title.
 	known, repeated := RepeatsTitle(shown, forbidden)
 	if !repeated {
 		t.Errorf("RepeatsTitle(%q, %q) = false, want true", shown, forbidden)
