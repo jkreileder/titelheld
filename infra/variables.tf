@@ -118,3 +118,39 @@ variable "vertex_location" {
     error_message = "vertex_location must be empty, a GCP region such as europe-west3, or a multi-region the service has a host for: eu or global."
   }
 }
+
+variable "geo_sample_count" {
+  description = "GEO_SAMPLE_COUNT: interior track samples geocoded per activity. Empty means the binary's own default, 6."
+  type        = string
+  default     = ""
+
+  validation {
+    # The bounds the binary enforces, enforced again here: the interior
+    # samples plus the farthest point must stay within Nominatim's
+    # per-activity budget.
+    condition     = var.geo_sample_count == "" || can(regex("^[1-6]$", var.geo_sample_count))
+    error_message = "geo_sample_count must be empty or 1 to 6."
+  }
+}
+
+variable "nominatim_zoom" {
+  description = "NOMINATIM_ZOOM: the granularity Nominatim answers at. Empty means the binary's own default, 16."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.nominatim_zoom == "" || can(regex("^([3-9]|1[0-8])$", var.nominatim_zoom))
+    error_message = "nominatim_zoom must be empty or 3 to 18."
+  }
+}
+
+variable "nominatim_place_fields" {
+  description = "NOMINATIM_PLACE_FIELDS: comma-separated address fields tried in order per point. Empty means the binary's own default, hamlet,village,suburb,town. The binary validates the keys; this only refuses shapes that cannot be a field list."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.nominatim_place_fields == "" || can(regex("^[a-z_]+(,[a-z_]+)*$", var.nominatim_place_fields))
+    error_message = "nominatim_place_fields must be empty or a comma-separated list of lowercase field names."
+  }
+}
