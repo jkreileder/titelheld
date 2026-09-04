@@ -186,7 +186,14 @@ func (p *Processor) complete(
 	// series has been offered at all.
 	guard := gathered.Series.Guard(entry)
 
-	title, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, logger)
+	// What the prompt says never to repeat, derived by the naming layer from
+	// the same context the prompt is built from. Built once: all three calls
+	// carry the same RECENT and EXAMPLES blocks — the third differs only in
+	// FranchiseNext — so a per-call list would only be the same list rebuilt.
+	forbidden := gathered.Context.ForbiddenTitles()
+
+	title, err := p.ask(
+		ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, forbidden, logger)
 	if err != nil {
 		return naming.Title{}, false, err
 	}
@@ -209,7 +216,8 @@ func (p *Processor) complete(
 			"entry", logsafe.String(entry),
 			"title", logsafe.String(title.Text))
 
-		retry, err := p.ask(ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, logger)
+		retry, err := p.ask(
+			ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, forbidden, logger)
 		if err != nil {
 			// The title in hand is a good one that simply ignored the series.
 			// Losing it because a second call failed would leave the ride at
@@ -236,7 +244,9 @@ func (p *Processor) complete(
 	// guard. Without that, a title from this call could still claim it — and
 	// this call's title is written with the position left where it was, so
 	// the entry would be spent on the feed and offered again on the next ride.
-	plainTitle, err := p.ask(ctx, naming.BuildPrompt(ride, plain), gathered.Series.Guard(""), ride.Achievements, logger)
+	plainTitle, err := p.ask(
+		ctx, naming.BuildPrompt(ride, plain), gathered.Series.Guard(""),
+		ride.Achievements, forbidden, logger)
 	if err != nil {
 		logger.Warn("naming without the series failed; keeping the title that ignored it",
 			"error", err)
@@ -259,9 +269,13 @@ func (p *Processor) complete(
 // is never the title itself, and a candidate that is one taken whole is
 // refused here. The consequence is the same re-roll — the model is sampled
 // at temperature, so the next sweep's draw is a real second chance.
+//
+// The forbidden titles are the third: the prompt lists RECENT and EXAMPLES and
+// says not to repeat them, and a candidate that is one of them is refused for
+// the same reason and with the same consequence.
 func (p *Processor) ask(
 	ctx context.Context, prompt naming.Prompt, guard naming.Guarded,
-	achievements []string, logger *slog.Logger,
+	achievements, forbidden []string, logger *slog.Logger,
 ) (naming.Title, error) {
 	p.logPrompt(prompt, logger)
 
@@ -297,6 +311,13 @@ func (p *Processor) ask(
 			"llm %s returned an unusable title: %w: %q copies %q",
 			p.deps.Provider.Name(), naming.ErrTitleCopiesSegment,
 			logsafe.String(title.Text), logsafe.String(name))
+	}
+
+	if known, repeats := naming.RepeatsTitle(title.Text, forbidden); repeats {
+		return naming.Title{}, fmt.Errorf(
+			"llm %s returned an unusable title: %w: %q repeats %q",
+			p.deps.Provider.Name(), naming.ErrTitleRepeatsKnown,
+			logsafe.String(title.Text), logsafe.String(known))
 	}
 
 	return title, nil

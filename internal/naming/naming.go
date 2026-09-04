@@ -105,6 +105,10 @@ var (
 	// ErrTitleCopiesSegment means the title is one of the ride's achievement
 	// names taken whole — somebody else's words as the entire title.
 	ErrTitleCopiesSegment = errors.New("naming: title copies a segment name")
+
+	// ErrTitleRepeatsKnown means the title is one the prompt listed as not to
+	// be repeated: a RECENT line, or a few-shot example.
+	ErrTitleRepeatsKnown = errors.New("naming: title repeats a known title")
 )
 
 // DefaultBannedWords is the list the spec ships with. It is configuration, not
