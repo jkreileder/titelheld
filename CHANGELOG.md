@@ -10,6 +10,32 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.6] – 2026-09-04
+
+The rules a model is asked to follow are now the rules a title is held to, and the geography a
+title may use no longer includes the one place it must never name.
+
+- **A repeated title is refused, not merely forbidden.**
+  A candidate normalized-equal to any RECENT line or any EXAMPLES title is rejected the way a
+  claimed franchise entry or a copied segment name already is: the activity stays queued and the
+  next sweep draws again. The comparison reads the same lines the model read — the 60-rune form
+  the prompt shows as well as the stored title — and the normalization sees through case (ß
+  equals ss), emoji, combining marks and invisible format characters, so "Windig 🌬️" cannot
+  return as "windig".
+- **PLACES comes from spread samples at settlement granularity.**
+  The track is sampled at equal arc length (six interior points plus the farthest point from the
+  start) and reverse-geocoded at zoom 16, where hamlet and village names exist; the finest
+  present field wins, so a title can say the stretch instead of the market town every sample
+  used to collapse into. No sample in the endpoints' ~110 m cache cells is ever geocoded — a
+  title is public, and a name at km 0 or km end is where the athlete lives. Sample count, zoom
+  and field order are configuration (`GEO_SAMPLE_COUNT`, `NOMINATIM_ZOOM`,
+  `NOMINATIM_PLACE_FIELDS`), at most 7 Nominatim calls per activity.
+- **The geocode cache key carries the query shape.**
+  A cached answer is valid only for the version, zoom, field order and endpoint that produced it
+  (`v2_z16_hvst_…` plus the rounded coordinate), so a configuration change orphans old entries
+  instead of reusing answers of a different shape. Entries written at zoom 12 stay in place,
+  unread.
+
 ## [v0.7.5] – 2026-09-02
 
 The segment-copy loop is closed. Within two days of going live on a new narrator, a segment name
@@ -620,6 +646,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.6]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.6
 [v0.7.5]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.5
 [v0.7.4]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.4
 [v0.7.3]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.3
