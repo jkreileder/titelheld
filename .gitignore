@@ -61,3 +61,7 @@ __pycache__/
 # a scan is a local artifact of one moment rather than something the repository
 # should carry.
 /security-scan/
+
+# Subagent worktrees. They live inside the checkout because that is what the
+# sandbox may write to; the outer tree must not see them as untracked files.
+.claude/worktrees/
