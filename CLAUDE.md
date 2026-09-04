@@ -35,9 +35,13 @@ shipping weekly without a rollback.
   and merges; Opus subagents implement. One item still means one subagent — the separation of
   author and reviewer is the point, parallelism is the bonus. The main session implements directly
   only when the brief would be longer than the diff (dating a changelog, a one-line fix).
-- **One git worktree per subagent.** A sibling directory on its own branch, created and removed by
-  the main session (`git worktree add ../titelheld-<item> -b <branch>` … `git worktree remove`
-  after merge). Subagents touch only the files their item owns. Shared files — `CHANGELOG.md`,
+- **One git worktree per subagent.** A directory under `.claude/worktrees/` on its own branch,
+  created and removed by the main session
+  (`git worktree add .claude/worktrees/<item> -b <branch>` … `git worktree remove` after merge).
+  Inside the checkout because that is the sandbox's write set — a sibling directory is not
+  writable from a sandboxed command; `.gitignore` hides the directory from the outer tree and
+  `./...` does not descend into a dot-directory. Subagents touch only the files their item owns.
+  Shared files — `CHANGELOG.md`,
   `README.md`, `docs/`, CI workflows, `go.mod`, this file — are edited by the main session alone
   after the branches land, so anything two items would collide on has one author.
 - **Briefs carry the spec.** `HANDOFF.md` is untracked, so a subagent in a fresh worktree cannot
