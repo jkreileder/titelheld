@@ -75,9 +75,12 @@ func TestRunStartsAndStops(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 
+	// The port is picked on the test goroutine: a t.Fatal inside the goroutine
+	// below would exit that goroutine alone and leave done unwritten.
+	port := freePort(t)
 	done := make(chan error, 1)
 
-	go func() { done <- Run(ctx, quietLogger(), env(map[string]string{"PORT": freePort(t)})) }()
+	go func() { done <- Run(ctx, quietLogger(), env(map[string]string{"PORT": port})) }()
 
 	time.Sleep(50 * time.Millisecond)
 	cancel()
@@ -99,10 +102,11 @@ func TestRunAcceptsWritesEnabled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 
+	port := freePort(t)
 	done := make(chan error, 1)
 
 	go func() {
-		done <- Run(ctx, quietLogger(), env(map[string]string{"DRY_RUN": "0", "PORT": freePort(t)}))
+		done <- Run(ctx, quietLogger(), env(map[string]string{"DRY_RUN": "0", "PORT": port}))
 	}()
 
 	time.Sleep(50 * time.Millisecond)
@@ -124,11 +128,12 @@ func TestRunOnFirestore(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 
+	port := freePort(t)
 	done := make(chan error, 1)
 
 	go func() {
 		done <- Run(ctx, quietLogger(), env(map[string]string{
-			"PORT":              freePort(t),
+			"PORT":              port,
 			"FIRESTORE_PROJECT": "titelheld-emulator-test",
 		}))
 	}()
