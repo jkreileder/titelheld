@@ -65,3 +65,8 @@ __pycache__/
 # Subagent worktrees. They live inside the checkout because that is what the
 # sandbox may write to; the outer tree must not see them as untracked files.
 .claude/worktrees/
+
+# Replay artifacts. Logged prompts, live descriptions and geocoder answers from
+# real rides: they name the settlements around the athlete's start and are
+# reviewed locally, never published.
+replay/
