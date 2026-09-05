@@ -844,10 +844,20 @@ func TestValidateAllowsTheDegreeSign(t *testing.T) {
 	}
 }
 
+// Both shapes a description arrives in: plain labels, and the bulleted ones
+// Xert writes. The bulleted case carries lines that are deliberately not on the
+// allow-list, and the fact count is asserted so they cannot slip in unnoticed.
 func TestParseFacts(t *testing.T) {
 	t.Parallel()
 
-	description := `Xert Summary
+	tests := []struct {
+		name        string
+		description string
+		want        map[string]string
+	}{
+		{
+			name: "plain labels",
+			description: `Xert Summary
 Relative Power: 4.2 W/kg
 XSS: 142
 Difficulty: Difficult
@@ -859,30 +869,52 @@ Headwind: 42%
 Temp: 18C
 
 mybiketraffic
-Vehicles: 87`
-
-	facts := ParseFacts(description)
-
-	want := map[string]string{
-		"Relative power":   "4.2 W/kg",
-		"Strain (XSS)":     "142",
-		"Difficulty":       "Difficult",
-		"Focus":            "Breakaway Specialist",
-		"CdA":              "0.31",
-		"Headwind":         "42%",
-		"Temperature":      "18C",
-		"Vehicles passing": "87",
+Vehicles: 87`,
+			want: map[string]string{
+				"Relative power":   "4.2 W/kg",
+				"Strain (XSS)":     "142",
+				"Difficulty":       "Difficult",
+				"Focus":            "Breakaway Specialist",
+				"CdA":              "0.31",
+				"Headwind":         "42%",
+				"Temperature":      "18C",
+				"Vehicles passing": "87",
+			},
+		},
+		{
+			name: "bullet-prefixed labels",
+			description: "● Totals: \u3000 ❎ 85\U0001d5d1\U0001d5cc\U0001d5cc\u3000 🔵 80\u3000 🟡 4.4\u3000 🔴 0.5\r\n" +
+				"● Relative Power: 109\U0001d5d0\U0001d5ba\U0001d5cd\U0001d5cd\U0001d5cc\r\n" +
+				"● Difficulty: ◆◆ - 60\r\n" +
+				"● Calories: 717\u3000 ● Fat: 21g\u3000 ● Carbs: 123g\r\n",
+			want: map[string]string{
+				"Relative power": "109\U0001d5d0\U0001d5ba\U0001d5cd\U0001d5cd\U0001d5cc",
+				"Difficulty":     "◆◆ - 60",
+			},
+		},
 	}
 
-	got := make(map[string]string, len(facts))
-	for _, f := range facts {
-		got[f.Label] = f.Value
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	for label, value := range want {
-		if got[label] != value {
-			t.Errorf("fact %q = %q, want %q", label, got[label], value)
-		}
+			facts := ParseFacts(tt.description)
+
+			got := make(map[string]string, len(facts))
+			for _, f := range facts {
+				got[f.Label] = f.Value
+			}
+
+			if len(facts) != len(tt.want) {
+				t.Errorf("%d facts, want %d: %+v", len(facts), len(tt.want), facts)
+			}
+
+			for label, value := range tt.want {
+				if got[label] != value {
+					t.Errorf("fact %q = %q, want %q", label, got[label], value)
+				}
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ package naming
 
 import (
 	"strings"
+	"unicode"
 )
 
 // Description parsing turns third-party text into facts the prompt can carry.
@@ -39,8 +40,9 @@ const (
 
 // factPattern is one label this service recognizes in a description.
 //
-// Matching is on a lowercased line prefix, so "Relative Power: 4.2 W/kg" and
-// "relative power : 4.2 W/kg" both hit. The label written into the prompt is
+// Matching is on a prefix of the lowercased label with its leading decoration
+// removed, so "Relative Power: 4.2 W/kg", "relative power : 4.2 W/kg" and
+// "● Relative Power: 109𝗐𝖺𝗍𝗍𝗌" all hit. The label written into the prompt is
 // the canonical one here, not the one in the description, so a tool changing
 // its capitalization does not change the prompt.
 type factPattern struct {
@@ -136,6 +138,12 @@ func ParseFacts(description string) []Fact {
 }
 
 // parseFactLine reads one line, or reports that there is nothing in it.
+//
+// Xert writes bullet-prefixed labels — "● Difficulty: ◆◆ - 60" — so the label's
+// leading run of symbols, punctuation and whitespace comes off before the
+// allow-list is matched, and the label bound applies to what is left. Only the
+// label is normalized: a value is carried as the tool printed it, decoration
+// and all.
 func parseFactLine(line string) (label, value string, ok bool) {
 	// A separator is required. Without one there is no claim being made, just
 	// prose — and prose is what this deliberately does not forward.
@@ -144,7 +152,7 @@ func parseFactLine(line string) (label, value string, ok bool) {
 		return "", "", false
 	}
 
-	rawLabel := strings.ToLower(strings.TrimSpace(line[:colon]))
+	rawLabel := strings.ToLower(strings.TrimSpace(trimLabelDecoration(line[:colon])))
 	rawValue := strings.TrimSpace(line[colon+1:])
 
 	if rawLabel == "" || rawValue == "" ||
@@ -170,6 +178,18 @@ func parseFactLine(line string) (label, value string, ok bool) {
 	}
 
 	return knownFacts[best].label, sanitizeFactValue(rawValue), true
+}
+
+// trimLabelDecoration removes the leading run of symbols, punctuation and
+// whitespace a tool prints in front of a label.
+//
+// The stripping stops at the first character that is none of those, so it can
+// only shorten a label — it never joins two of them, and the allow-list still
+// decides what is forwarded.
+func trimLabelDecoration(label string) string {
+	return strings.TrimLeftFunc(label, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsSymbol(r) || unicode.IsPunct(r)
+	})
 }
 
 // sanitizeFactValue bounds one value and strips what a prompt should not carry.

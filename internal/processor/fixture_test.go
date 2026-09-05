@@ -206,14 +206,25 @@ func TestTheWholePipelineFromStravasWireFormat(t *testing.T) {
 		labels[fact.Label] = fact.Value
 	}
 
-	for label, want := range map[string]string{
-		"Difficulty":       "Difficult",
-		"Focus":            "Breakaway Specialist",
+	// Xert writes its labels behind a bullet, and its values are carried as
+	// printed. The count is asserted alongside the values because the Totals
+	// and Calories lines are not on the allow-list: a label that started
+	// matching one of them would show up here and nowhere else.
+	want := map[string]string{
+		"Relative power":   "109𝗐𝖺𝗍𝗍𝗌",
+		"Difficulty":       "◆◆ - 60",
 		"Headwind":         "42%",
+		"Temperature":      "18C",
 		"Vehicles passing": "87",
-	} {
-		if labels[label] != want {
-			t.Errorf("fact %q = %q, want %q", label, labels[label], want)
+	}
+
+	if len(facts) != len(want) {
+		t.Errorf("%d facts, want %d: %+v", len(facts), len(want), facts)
+	}
+
+	for label, value := range want {
+		if labels[label] != value {
+			t.Errorf("fact %q = %q, want %q", label, labels[label], value)
 		}
 	}
 
