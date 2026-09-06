@@ -1770,19 +1770,41 @@ func TestHumanTitleThatCannotBeRecordedStaysQueued(t *testing.T) {
 // A tool's title, or one of this service's own templates typed by hand, is
 // not the athlete's and is not recorded — the same filter the import applies,
 // because a recorded row teaches style and is never revisited.
+//
+// A title with Xert's shape is a tool's title even where the machine-title
+// pattern does not name every word in it: the pattern's gap costs a naming,
+// and it must not also seed Xert's wording as the athlete's style. The last
+// case is the control on that looseness — a title the athlete wrote is still
+// recorded, and the same sweep records it.
 func TestToolAndTemplateTitlesAreNotRecordedAsHuman(t *testing.T) {
 	t.Parallel()
 
-	for _, title := range []string{
-		"Zwift - Watopia Flat Route",
-		"Tough Endurance Ride - Xert",
-		"Zur Arbeit",
-	} {
-		t.Run(title, func(t *testing.T) {
+	// declinedByName says the recorder is the one that turns the title down,
+	// which is where the log line comes from. "Zur Arbeit" never reaches it: a
+	// commute-titled ride classifies as a commute and the tier check declines it
+	// first.
+	cases := []struct {
+		title          string
+		recorded       bool
+		declinedByName bool
+	}{
+		{title: "Zwift - Watopia Flat Route", declinedByName: true},
+		{title: "Tough Endurance Ride - Xert", declinedByName: true},
+		{title: "Difficult Polar Domestique Ride", declinedByName: true},
+		{title: "Zur Arbeit"},
+		{title: "Plan B auf dem Silbernen", recorded: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.title, func(t *testing.T) {
 			t.Parallel()
 
-			h := newHarness(t, true, nil)
-			h.strava.activity.Name = title
+			var logged bytes.Buffer
+
+			h := newHarness(t, true, func(d *Deps) {
+				d.Logger = slog.New(slog.NewJSONHandler(&logged, nil))
+			})
+			h.strava.activity.Name = tc.title
 			h.enqueue(t, "create")
 
 			result, err := h.proc.Sweep(t.Context())
@@ -1795,8 +1817,28 @@ func TestToolAndTemplateTitlesAreNotRecordedAsHuman(t *testing.T) {
 					result, h.strava.writes())
 			}
 
-			if _, named, _ := h.store.Named(t.Context(), 4242, 777); named {
-				t.Errorf("%q was recorded as the athlete's own", title)
+			entry, named, _ := h.store.Named(t.Context(), 4242, 777)
+			if named != tc.recorded {
+				t.Errorf("%q recorded = %v, want %v", tc.title, named, tc.recorded)
+			}
+
+			declined := strings.Contains(logged.String(), "not recording the title")
+
+			if tc.recorded {
+				if entry.Source != store.SourceHuman || entry.Title != tc.title {
+					t.Errorf("row = %+v, want %q under source human", entry, tc.title)
+				}
+
+				if declined {
+					t.Errorf("the athlete's own title was declined:\n%s", logged.String())
+				}
+
+				return
+			}
+
+			if declined != tc.declinedByName {
+				t.Errorf("the recorder declined = %v, want %v:\n%s",
+					declined, tc.declinedByName, logged.String())
 			}
 		})
 	}

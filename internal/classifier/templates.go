@@ -76,12 +76,23 @@ const (
 )
 
 // IsToolTitle reports whether a title is a tool's output rather than a
-// person's: Zwift names a virtual ride after its route, and Xert marks what
-// it touched. Both are the tool talking whatever the sport type says — a Zwift
-// ride recorded as a plain Ride carries the same title. Trimmed, because Strava
-// keeps whatever trailing space a title was saved with.
+// person's: Zwift names a virtual ride after its route, Xert marks what it
+// touched, and a title built the way Xert builds one is Xert's whether or not
+// the machine-title pattern names every word in it. Both tools are the tool
+// talking whatever the sport type says — a Zwift ride recorded as a plain Ride
+// carries the same title. Trimmed, because Strava keeps whatever trailing space
+// a title was saved with.
+//
+// This is allowed to match more than [MachineTitles] does, and the shape test
+// is where it does. Nothing here decides an overwrite; the callers are the ones
+// asking whether to record a title as the athlete's own style. Matching too
+// much costs one style example, matching too little teaches the model a tool's
+// wording — so a title with Xert's shape is a tool's title, and only the exact
+// pattern may license a rename.
 func IsToolTitle(title string) bool {
 	title = strings.TrimSpace(title)
 
-	return strings.HasPrefix(title, zwiftTitlePrefix) || strings.HasSuffix(title, xertTitleSuffix)
+	return strings.HasPrefix(title, zwiftTitlePrefix) ||
+		strings.HasSuffix(title, xertTitleSuffix) ||
+		hasXertShape(title)
 }

@@ -76,21 +76,26 @@ func TestCommuteTitleHasGermanDefaults(t *testing.T) {
 	}
 }
 
-// The shipped pattern recognizes the Xert titles this athlete actually has.
+// The shipped pattern recognizes the Xert titles this athlete's account holds.
 //
-// Both were found by a history import: they carry Xert's construction but a
-// focus type the list did not have, so they were treated as the athlete's own
-// words. The failure is the safe one — an unmatched title is skipped, never
-// overwritten — but it costs a naming every time Xert writes one.
+// Xert writes "<difficulty> [<specificity> ]<focus> Ride", and the pattern is
+// held to that construction and to Xert's published vocabulary. A title it
+// fails to match is skipped rather than overwritten — the safe direction — but
+// it costs a naming every time Xert writes one.
 func TestTheXertPatternMatchesTheObservedTitles(t *testing.T) {
 	t.Parallel()
 
 	machine := classifier.DefaultMachineTitles()
 
 	for _, title := range []string{
+		"Difficult Mixed Breakaway Specialist Ride",
 		"Easy Pure Endurance Ride",
 		"Moderate Polar Endurance Ride",
-		"Difficult Mixed Breakaway Specialist Ride",
+		"Difficult Polar Puncheur Ride",
+		// The specificity slot is optional, and the hyphenated focus names
+		// have to survive being spliced into the alternation.
+		"Tough Endurance Ride",
+		"Hard Mixed Time-Trialist Ride",
 	} {
 		if !machine.Matches(title) {
 			t.Errorf("%q is not recognized as a machine title", title)
@@ -101,13 +106,60 @@ func TestTheXertPatternMatchesTheObservedTitles(t *testing.T) {
 	// built from the same words by a person is not Xert's construction, and
 	// matching it would overwrite what the athlete wrote.
 	for _, title := range []string{
+		"Puncheur-Tag",
 		"Pure Endurance",
 		"Endurance Ride",
 		"Easy Pure Endurance Ride im Regen",
 		"Eine Easy Pure Endurance Ride",
+		// A word Xert does not publish, in either slot, keeps the title out.
+		"Difficult Polar Domestique Ride",
+		"Epic Puncheur Ride",
+		"difficult polar puncheur ride",
 	} {
 		if machine.Matches(title) {
 			t.Errorf("%q was taken for a machine title", title)
+		}
+	}
+}
+
+// A pattern gap must not turn a tool's title into the athlete's style.
+//
+// [classifier.IsToolTitle] is read only where the question is whether to record
+// a title as the athlete's own, never by the overwrite gate, so it may match
+// more than the pattern: a title with Xert's shape but a word the pattern does
+// not name is still Xert's. The negative half is the cost of that looseness
+// staying bounded — the athlete's own titles must survive it.
+func TestToolTitlesIncludeTheXertShape(t *testing.T) {
+	t.Parallel()
+
+	for _, title := range []string{
+		"Difficult Polar Domestique Ride",
+		"Epic Puncheur Ride",
+		"Tough Endurance Ride",
+		"Zwift - Watopia",
+		"Tough Endurance Ride - Xert",
+	} {
+		if !classifier.IsToolTitle(title) {
+			t.Errorf("%q is not recognized as a tool's title", title)
+		}
+	}
+
+	for _, title := range []string{
+		"Puncheur-Tag",
+		"Plan B auf dem Silbernen",
+		"Der Silberne kann's noch",
+		"Windschief",
+		"Sonntagabendrunde",
+		"Ride",
+		"Morning Ride",
+		// Xert's own words in a title Xert would not build: the construction is
+		// never two words, and never opens on a specificity or focus name.
+		"Endurance Ride",
+		"Hard Ride",
+		"Mixed Terrain Ride",
+	} {
+		if classifier.IsToolTitle(title) {
+			t.Errorf("%q was taken for a tool's title", title)
 		}
 	}
 }
