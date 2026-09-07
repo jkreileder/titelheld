@@ -45,5 +45,5 @@ jobs:
           path: .
           # `version` selects the scanner image and defaults to latest; the action pin
           # alone leaves it floating. Renovate bumps the version + digest.
-          version: 3.97.1@sha256:deb2af10659a488a14d262a323addcde099d99827a1cf1dc4e93c17915c39f08
+          version: 3.97.4@sha256:562bc231afa9de3d04de44cfe624252b08207de1fc3cebc5e7ed92bed7f279e4
           extra_args: --results=verified,unknown
