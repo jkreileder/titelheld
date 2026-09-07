@@ -288,6 +288,18 @@
             "matchPackageNames": [
                 "golangci/golangci-lint"
             ]
+        },
+        {
+            "description": "The Go toolchain is pinned twice: the go directive in go.mod (CI reads it through go-version-file) and the golang tag in the Dockerfile. The official image sets GOTOOLCHAIN=local, so a directive ahead of the image fails the build while the reverse is harmless; that ordering constraint disappears when both move in one PR. Automerge is inherited per update: a patch of both automerges, a minor waits for review because the directive's minor does.",
+            "groupName": "go toolchain",
+            "matchDepNames": [
+                "go",
+                "docker.io/library/golang"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
+            ]
         }
     ],
     "postUpdateOptions": [
