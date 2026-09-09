@@ -234,7 +234,7 @@ jobs:
       # from this module's call graph, and covers the standard library and the
       # toolchain as well as third-party modules.
       - name: Run govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
   upload-to-codecov:
     name: Upload to Codecov
