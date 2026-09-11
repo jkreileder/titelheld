@@ -122,7 +122,7 @@ jobs:
           # Kept in step with docker.yaml and release-image.yaml; Renovate
           # updates all three together.
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
-          version: v0.37.0
+          version: v0.37.1
           cache-binary: false
 
       # Cache-free, like the release build it is reproducing. A restored layer
