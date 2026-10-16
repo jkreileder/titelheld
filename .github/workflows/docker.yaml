@@ -40,7 +40,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           disable-sudo: true
           egress-policy: block
@@ -82,7 +82,7 @@ jobs:
           # pinned by digest like every other image here. Renovate keeps it
           # current; see the custom manager in .github/renovate.json.
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
-          version: v0.37.1
+          version: v0.38.0
 
       # `load` rather than `push`: the image goes into the local daemon so the
       # smoke test below can run it, and nowhere else. The gha cache is
@@ -154,7 +154,7 @@ jobs:
       - name: Upload the Grype findings
         if: ${{ steps.grype.outputs.sarif != '' }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype
