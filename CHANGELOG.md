@@ -12,7 +12,7 @@ step rather than a habit.
 
 ## [v0.7.7] – 2026-10-16
 
-A dependency release: the service behaves exactly as v0.7.6 did, on a toolchain and module set
+A dependency release: no change to the service's own code, on a toolchain and module set
 without the vulnerabilities v0.7.6 carries.
 
 - **Built with Go 1.27.2.**
