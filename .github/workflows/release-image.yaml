@@ -68,7 +68,8 @@ jobs:
           disable-sudo: true
           egress-policy: block
           # gcr.io and its storage.googleapis.com backend serve the distroless
-          # runtime base; the docker.io hosts serve the golang build base.
+          # runtime base; the docker.io hosts serve the golang build base. dockerd
+          # fetches Sigstore's TUF metadata (tuf-repo-cdn) when it pulls an image.
           allowed-endpoints: >
             *.actions.githubusercontent.com:443
             accounts.google.com:443
@@ -91,6 +92,7 @@ jobs:
             storage.googleapis.com:443
             sts.googleapis.com:443
             sum.golang.org:443
+            tuf-repo-cdn.sigstore.dev:443
             ${{ vars.GCP_REGION }}-docker.pkg.dev:443
 
       - name: Checkout repository
