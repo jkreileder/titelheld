@@ -30,7 +30,7 @@ concurrency:
 jobs:
   check-release-version:
     name: Check release version
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -185,7 +185,7 @@ jobs:
     needs:
       - check-release-version
       - image
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
 
     # Federation requires this environment claim, so naming it here is not
@@ -383,7 +383,7 @@ jobs:
             && needs.image.result != 'failure' && needs.image.result != 'cancelled'
             && needs.deploy.result != 'failure' && needs.deploy.result != 'cancelled')
          ) }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
 
     permissions:

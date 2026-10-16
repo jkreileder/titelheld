@@ -24,7 +24,7 @@ jobs:
     name: Validate
     # Format, validate and lint only. This workflow never applies, and holds no
     # credentials that could: infrastructure changes are applied by hand.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
