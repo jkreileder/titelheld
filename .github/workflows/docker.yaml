@@ -29,7 +29,7 @@ concurrency:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
 
     permissions:
@@ -47,7 +47,8 @@ jobs:
           # Pulling only: the two base images (gcr.io for distroless, the
           # docker.io hosts and their CDNs for golang) and the Go module proxy.
           # Artifact Registry and the Google credential endpoints are absent,
-          # so this job could not publish or authenticate even if it tried.
+          # so this job could not publish or authenticate even if it tried. dockerd
+          # fetches Sigstore's TUF metadata (tuf-repo-cdn) when it pulls an image.
           allowed-endpoints: >
             *.actions.githubusercontent.com:443
             api.github.com:443
@@ -67,6 +68,7 @@ jobs:
             release-assets.githubusercontent.com:443
             storage.googleapis.com:443
             sum.golang.org:443
+            tuf-repo-cdn.sigstore.dev:443
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

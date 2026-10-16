@@ -18,7 +18,7 @@ concurrency:
 jobs:
   analyze-go:
     name: Analyze Go code with CodeQL
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       actions: read
@@ -71,7 +71,7 @@ jobs:
 
   analyze-actions:
     name: Analyze GitHub actions code with CodeQL
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       actions: read
