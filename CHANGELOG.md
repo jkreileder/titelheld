@@ -10,6 +10,22 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.7] – 2026-10-16
+
+A dependency release: the service behaves exactly as v0.7.6 did, on a toolchain and module set
+without the vulnerabilities v0.7.6 carries.
+
+- **Built with Go 1.27.2.**
+  v0.7.6 was built with Go 1.27.0, and govulncheck finds eleven standard-library advisories its
+  code reaches: seven in `net/http` and its HTTP/2 stack, on the serving and the client side,
+  and the rest in `crypto/tls`, `net/textproto` and `html/template` (GO-2026-6599, -6600,
+  -6603, -6605, -6607, -6608, -6610, -6611, -6612, -6613, -6617). `golang.org/x/net` moves to
+  v0.61.0 for the five of those it carries as well. govulncheck reports nothing reachable at
+  this tag.
+- **Runtime modules updated**: Firestore v1.26.0, `google.golang.org/api` v0.304.0, gRPC v1.84.0,
+  `golang.org/x/text` v0.43.0, with their indirect dependencies. The distroless runtime base is
+  refreshed to its current digest.
+
 ## [v0.7.6] – 2026-09-04
 
 The rules a model is asked to follow are now the rules a title is held to, and the geography a
