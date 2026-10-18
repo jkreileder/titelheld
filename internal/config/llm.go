@@ -25,6 +25,16 @@ const (
 	EnvVertexLocation = "VERTEX_LOCATION"
 	EnvBannedWords    = "BANNED_WORDS"
 	EnvMachineTitles  = "MACHINE_TITLE_PATTERNS"
+
+	// The anthropic-wif provider's federation identifiers. Identifiers, not
+	// secrets: each names something on Anthropic's side, and none of them
+	// authenticates anything without the runtime service account's identity
+	// token. Read only when that provider is selected.
+	EnvAnthropicFederationRuleID = "ANTHROPIC_FEDERATION_RULE_ID"
+	EnvAnthropicOrganizationID   = "ANTHROPIC_ORGANIZATION_ID"
+	EnvAnthropicServiceAccountID = "ANTHROPIC_SERVICE_ACCOUNT_ID"
+	EnvAnthropicWorkspaceID      = "ANTHROPIC_WORKSPACE_ID"
+	EnvAnthropicWIFAudience      = "ANTHROPIC_WIF_AUDIENCE"
 )
 
 // Provider selects the LLM backend.
@@ -42,7 +52,17 @@ const (
 	// against a configurable base URL: one key, many narrators, for an A/B
 	// of models on the same queued ride. Needs a key.
 	ProviderOpenRouter Provider = "openrouter"
+
+	// ProviderAnthropicWIF is the Messages API reached through workload
+	// identity federation: the runtime service account's Google identity
+	// token is exchanged for a short-lived Anthropic access token. Keyless.
+	ProviderAnthropicWIF Provider = "anthropic-wif"
 )
+
+// DefaultAnthropicWIFAudience is the identity token's audience when
+// ANTHROPIC_WIF_AUDIENCE is unset. The federation rule names the audience it
+// accepts, and this is the one it was configured with.
+const DefaultAnthropicWIFAudience = "https://api.anthropic.com"
 
 // checkBaseURL bounds LLM_BASE_URL, on the same reasoning as
 // [vertexLocationPattern]: the value names the host the API key is sent to in
@@ -71,6 +91,34 @@ func checkBaseURL(raw string) error {
 	if port := parsed.Port(); port != "" {
 		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
 			return fmt.Errorf("%s has a port outside 1-65535: %q", EnvLLMBaseURL, raw)
+		}
+	}
+
+	return nil
+}
+
+// checkAudience bounds ANTHROPIC_WIF_AUDIENCE to the shape rules of
+// [checkBaseURL] without its path requirement: an https URL with a host and
+// nothing that would make two spellings of one audience differ — no user
+// info, query or fragment. The value is compared verbatim by the federation
+// rule, so it is not normalized here.
+func checkAudience(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", EnvAnthropicWIFAudience, err)
+	}
+
+	switch {
+	case parsed.Scheme != "https":
+		return fmt.Errorf("%s must use https, got %q", EnvAnthropicWIFAudience, raw)
+	case parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "":
+		return fmt.Errorf("%s must be a plain https URL with a host, such as %s, got %q",
+			EnvAnthropicWIFAudience, DefaultAnthropicWIFAudience, raw)
+	}
+
+	if port := parsed.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("%s has a port outside 1-65535: %q", EnvAnthropicWIFAudience, raw)
 		}
 	}
 
@@ -146,6 +194,26 @@ type LLM struct {
 	// MachineTitlePatterns are the titles another tool wrote that may be
 	// replaced. Empty means the shipped set, which is Xert's pattern.
 	MachineTitlePatterns []string
+
+	// Federation addresses the anthropic-wif exchange. Zero unless that
+	// provider is selected, where none of its variables is looked up.
+	Federation AnthropicFederation
+}
+
+// AnthropicFederation is what the anthropic-wif provider exchanges a Google
+// identity token against. Identifiers, not secrets.
+type AnthropicFederation struct {
+	// RuleID, OrganizationID and ServiceAccountID are required.
+	RuleID           string
+	OrganizationID   string
+	ServiceAccountID string
+
+	// WorkspaceID is optional; the exchange sends it when set.
+	WorkspaceID string
+
+	// Audience is the identity token's audience. Defaults to
+	// [DefaultAnthropicWIFAudience].
+	Audience string
 }
 
 // loadLLM reads the naming configuration, appending to errs rather than
@@ -165,9 +233,11 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 		llm.Provider = ProviderAnthropic
 	case string(ProviderOpenRouter):
 		llm.Provider = ProviderOpenRouter
+	case string(ProviderAnthropicWIF):
+		llm.Provider = ProviderAnthropicWIF
 	default:
-		*errs = append(*errs, fmt.Errorf("config: %s must be %q, %q or %q, got %q",
-			EnvLLMProvider, ProviderVertex, ProviderAnthropic, ProviderOpenRouter, raw))
+		*errs = append(*errs, fmt.Errorf("config: %s must be %q, %q, %q or %q, got %q",
+			EnvLLMProvider, ProviderVertex, ProviderAnthropic, ProviderOpenRouter, ProviderAnthropicWIF, raw))
 	}
 
 	llm.VertexProject = cmp.Or(llm.VertexProject, firestoreProject)
@@ -200,6 +270,10 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 		}
 	}
 
+	if llm.Provider == ProviderAnthropicWIF {
+		llm.Federation = loadFederation(getenv, errs)
+	}
+
 	// No startup error for a missing Vertex project. With FIRESTORE_PROJECT
 	// unset the service runs on the in-memory store — the documented local
 	// mode — and requiring a GCP project there would make the service refuse
@@ -220,6 +294,45 @@ func loadLLM(getenv func(string) string, firestoreProject string, errs *[]error)
 	llm.MachineTitlePatterns = splitLines(getenv(EnvMachineTitles))
 
 	return llm
+}
+
+// loadFederation reads the anthropic-wif variables. It is called only when that
+// provider is selected, so with any other provider none of them is looked up.
+func loadFederation(getenv func(string) string, errs *[]error) AnthropicFederation {
+	federation := AnthropicFederation{
+		RuleID:           strings.TrimSpace(getenv(EnvAnthropicFederationRuleID)),
+		OrganizationID:   strings.TrimSpace(getenv(EnvAnthropicOrganizationID)),
+		ServiceAccountID: strings.TrimSpace(getenv(EnvAnthropicServiceAccountID)),
+		WorkspaceID:      strings.TrimSpace(getenv(EnvAnthropicWorkspaceID)),
+		Audience:         cmp.Or(strings.TrimSpace(getenv(EnvAnthropicWIFAudience)), DefaultAnthropicWIFAudience),
+	}
+
+	for _, required := range []struct{ name, value string }{
+		{EnvAnthropicFederationRuleID, federation.RuleID},
+		{EnvAnthropicOrganizationID, federation.OrganizationID},
+		{EnvAnthropicServiceAccountID, federation.ServiceAccountID},
+	} {
+		if required.value == "" {
+			*errs = append(*errs, fmt.Errorf(
+				"config: %s is required when %s=%s, and it is unset",
+				required.name, EnvLLMProvider, ProviderAnthropicWIF))
+		}
+	}
+
+	if err := checkAudience(federation.Audience); err != nil {
+		*errs = append(*errs, fmt.Errorf("config: %w", err))
+	}
+
+	// A leftover key must never shadow the keyless path: refused outright,
+	// rather than ignored, so the environment cannot say two things at once.
+	// The key is looked up for this check and not kept.
+	if strings.TrimSpace(getenv(EnvLLMAPIKey)) != "" {
+		*errs = append(*errs, fmt.Errorf(
+			"config: %s must be unset when %s=%s, which authenticates without a key",
+			EnvLLMAPIKey, EnvLLMProvider, ProviderAnthropicWIF))
+	}
+
+	return federation
 }
 
 // splitList parses a comma-separated list, dropping blanks.
