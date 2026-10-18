@@ -22,51 +22,107 @@ import (
 // Xert's own vocabulary at both ends rather than on a shape like
 // "<word> <words> Ride", which "Sunday Morning Ride" would also satisfy.
 
-// xertDifficulties are the difficulty words Xert puts at the front of a title.
-//
-// Sourced from the observed title "Difficult Mixed Breakaway Specialist Ride"
-// plus the surrounding scale Xert uses. Any word absent here simply fails to
-// match, leaving the activity skipped, so an incomplete list is the safe kind
-// of wrong.
+// Xert builds a title as "<difficulty> [<specificity> ]<focus> Ride", and the
+// three lists below are that construction's vocabulary. Each is drawn from
+// Xert's published glossary and from the titles this athlete's account carries;
+// nothing else belongs in them. A word that is absent fails to match, which
+// leaves the activity skipped rather than overwritten — the safe kind of wrong.
+
+// xertDifficulties is Xert's difficulty scale, complete as published:
+// https://www.baronbiosys.com/glossary/difficulty-rating/
 var xertDifficulties = []string{
 	"Easy",
 	"Moderate",
-	"Challenging",
 	"Difficult",
+	"Tough",
 	"Hard",
-	"Very Hard",
-	"Extreme",
-	"Epic",
 }
 
-// xertFocusTypes are Xert's rider focus-type names, optionally prefixed by
-// "Mixed" in the observed title.
+// xertSpecificities is Xert's specificity scale, complete as published:
+// https://www.baronbiosys.com/glossary/specificity-rating/
 //
-// "Pure Endurance" and "Polar Endurance" were added after a history import
-// found two titles Xert had written that this list did not recognize — the
-// safe kind of wrong, since an unmatched title is skipped rather than
-// overwritten, but a naming opportunity lost every time it happens.
+// The slot is optional; Xert leaves it out of some titles.
+var xertSpecificities = []string{
+	"Pure",
+	"Mixed",
+	"Polar",
+}
+
+// xertFocusTypes are Xert's athlete-type names:
+// https://www.baronbiosys.com/glossary/athlete-type/, plus the older twelve-type
+// list at https://www.baronbiosys.com/training-right-for-your-event/. Xert's own
+// pages spell the time-trial types both "Time-Triallist" and "Time-Trialist", so
+// the list carries both.
+//
+// "Endurance" is the one entry that is not a published focus name — the glossary
+// pairs it as "Endurance/Triathlete" — and is taken from the titles Xert has
+// written on this account.
 var xertFocusTypes = []string{
-	"Breakaway Specialist",
-	"Climber",
-	"GC Specialist",
-	"Polar Endurance",
+	"Power Sprinter",
+	"Road Sprinter",
+	"Pursuiter",
 	"Puncheur",
-	"Pure Endurance",
+	"Breakaway Specialist",
 	"Rouleur",
-	"Sprinter",
-	"Time Trialist",
+	"GC Specialist",
+	"Climber",
+	"Sprint Time-Triallist",
+	"Sprint Time-Trialist",
+	"Time-Triallist",
+	"Time-Trialist",
+	"Century Rider",
 	"Triathlete",
-	"All-Rounder",
+	"Endurance",
 }
 
 // XertTitlePattern is the machine-title pattern this service ships with.
 //
-// It matches, case-sensitively, "<difficulty> [Mixed ]<focus type> Ride" —
+// It matches, case-sensitively, "<difficulty> [<specificity> ]<focus> Ride" —
 // Xert's own construction and nothing wider.
 func XertTitlePattern() string {
 	return `^(?:` + strings.Join(xertDifficulties, "|") + `) ` +
-		`(?:Mixed )?(?:` + strings.Join(xertFocusTypes, "|") + `) Ride$`
+		`(?:(?:` + strings.Join(xertSpecificities, "|") + `) )?` +
+		`(?:` + strings.Join(xertFocusTypes, "|") + `) Ride$`
+}
+
+// The two halves of the looser shape test: a title opening on one of Xert's
+// difficulty words, and one of its specificity or focus names standing as a
+// whole word after the title's first word.
+var (
+	xertDifficultyPrefix = regexp.MustCompile(`^(?:` + strings.Join(xertDifficulties, "|") + `) `)
+	xertVocabularyWord   = regexp.MustCompile(
+		`\b(?:` + strings.Join(slices.Concat(xertSpecificities, xertFocusTypes), "|") + `)\b`)
+)
+
+// hasXertShape reports whether a title is built the way Xert builds one, even
+// where [XertTitlePattern] does not match it: at least three words ending in
+// " Ride", and either an opening difficulty word or one of Xert's specificity
+// or focus names after the first word.
+//
+// Deliberately wider than the pattern, and read only by [IsToolTitle], which
+// answers a different question — did a person write this? A vocabulary gap that
+// costs the pattern a naming must not also make the title a style example, so
+// the shape is enough here while the pattern stays exact for the overwrite
+// decision. The width is bounded by what Xert's construction always has: the
+// difficulty slot is mandatory, so a Xert title is never two words and never
+// opens on a specificity or focus name. "Endurance Ride" and "Hard Ride" are a
+// person's, and a person's title that the shape swallowed would never be
+// recorded as theirs — a rename to it would leave the attribution line in
+// place. Trimming is the caller's, and the " Ride" ending is tested in code
+// rather than as `.* Ride$` so the check does not lean on what `.` means around
+// a newline.
+func hasXertShape(title string) bool {
+	if !strings.HasSuffix(title, " Ride") {
+		return false
+	}
+
+	words := strings.Fields(title)
+	if len(words) < 3 {
+		return false
+	}
+
+	return xertDifficultyPrefix.MatchString(title) ||
+		xertVocabularyWord.MatchString(strings.Join(words[1:], " "))
 }
 
 // MachineTitles decides whether a title was written by a tool this service may
