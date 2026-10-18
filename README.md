@@ -416,12 +416,16 @@ entry left queued, never a rename sent with nothing recorded. The response is a 
 `cancelled` field is true, carrying the counts of what was finished before it stopped:
 
 ```json
-{"due":12,"named":3,"reconciled":2,"skipped":1,"failed":0,"cancelled":true}
+{"due":12,"named":3,"reconciled":2,"skipped":1,"provisional":1,"failed":0,"cancelled":true}
 ```
 
 `reconciled` counts activities that were re-examined against Strava rather than named — an
 update event on one already in the named log. It is neither a naming nor a skip: no title was
 produced, and nothing was declined. See [When the athlete renames](#when-the-athlete-renames).
+`provisional` counts small untagged rides whose skip is not yet final: each was re-read, found
+still below the sport thresholds and still without a commute flag, and left queued for the next
+sweep until its window closes — see `PROVISIONAL_SKIP_WINDOW` in
+[docs/configuration.md](docs/configuration.md). `due` is the sum of the other counts.
 
 ## Development
 
@@ -530,9 +534,13 @@ Among rides, four kinds are skipped:
 - **Strava's own defaults**, because a default is not a title. They repeat by design, so listing
   them under "never repeat" forbids the right answer.
 - **Recognized machine titles**, which are the style this service exists to replace.
-- **Anything Zwift or Xert titled** — a `Zwift - …` prefix or a suffix of `" - Xert"`. That is
-  the tool talking, whatever the sport type says: a Zwift session recorded by a head unit arrives
-  as a plain `Ride`.
+- **Anything Zwift or Xert titled** — a `Zwift - …` prefix, a suffix of `" - Xert"`, or Xert's
+  own shape: at least three words ending in `Ride` that open on one of Xert's difficulty words or
+  carry one of its specificity or focus names after the first word. The shape catches a Xert title
+  whose vocabulary the machine-title pattern does not name, and stops where Xert's construction
+  does: the difficulty slot is mandatory, so "Endurance Ride" and "Hard Ride" are a person's. That
+  is the tool talking, whatever the sport type says: a Zwift session recorded by a head unit
+  arrives as a plain `Ride`.
 - **This service's own templates**, the commute pair and the errand pool. They are the correct
   title for those rides and are meant to repeat, which is the opposite of a style.
 

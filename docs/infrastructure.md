@@ -393,7 +393,10 @@ was answered `200` without starting a second sweep, and the `sweep complete` lin
 belongs to that tick rather than to you.
 
 `sweep complete` carries the counts, and the sweep drained the queue only if `failed` is zero
-**and** `cancelled` is false. A cancelled sweep is a `200` with a clean `failed` count: Cloud Run
+**and** `cancelled` is false. What `provisional` counts is still queued, by design rather than
+by failure: a small untagged ride is re-read on every sweep until `PROVISIONAL_SKIP_WINDOW` has
+closed, so a nonzero `provisional` beside a zero `failed` is a drained sweep whose rides are not
+yet decided. A cancelled sweep is a `200` with a clean `failed` count: Cloud Run
 took the instance away and the sweep stopped at an activity boundary, leaving the rest queued for
 a run that is not coming while the job is paused. `sweep rejected` is the `401` — it names the
 claim that did not check out, and an audience mismatch is silent in every other place you could
