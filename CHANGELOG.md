@@ -10,6 +10,45 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.8] – 2026-10-18
+
+The three fixes the observation week asked for: a Xert title is recognized by Xert's own
+construction, Xert's facts reach the prompt, and a small ride that is tagged a few minutes after
+it was swept is still named as the errand it is.
+
+- **Xert titles are matched by Xert's construction, and recorded as a tool's by its shape.**
+  The shipped machine-title pattern follows Xert's published vocabulary — five difficulty words,
+  an optional specificity word, the athlete-type names — so "Difficult Polar Puncheur Ride" is
+  renamable where the old pattern left it skipped and recorded as the athlete's own title.
+  Where a title is about to be recorded as the athlete's style, Xert's *shape* is enough: at
+  least three words ending in "Ride" that open on a difficulty word or carry a specificity or
+  focus name after the first word, so a vocabulary gap costs a naming but never teaches the
+  model a tool's wording. The bound is Xert's own: the difficulty slot is mandatory, so
+  "Endurance Ride" and "Hard Ride" stay a person's. What may be overwritten did not widen beyond
+  the vocabulary.
+- **Xert's facts are parsed from its bullet-prefixed lines.**
+  Xert writes `● Relative Power: …` and `● Difficulty: ◆◆ - 60`; the fact parser matched labels
+  by prefix and saw `● difficulty`, so none of those lines ever reached a prompt. The label is
+  now read past a leading run of symbol, punctuation and whitespace characters. The value is
+  carried as printed, and the glyph difficulty still stays out of a derived example's situation.
+  NOTES gains Xert's lines on every ride, which restarts the observation week.
+- **A small untagged ride is re-checked before its skip is final.**
+  A ride below the sport thresholds, with no commute flag and a Strava default title, stays
+  queued and is re-read on every sweep until `PROVISIONAL_SKIP_WINDOW` (default `60m`,
+  ceiling `24h`, `0` disables) has elapsed from the event's arrival; a flag that arrives in that
+  window names the ride as an errand on the same sweep, and Strava sends no event for a flag
+  change that would otherwise bring it back. No new queue field, index or migration: the
+  deadline is the entry's arrival plus the window. The outcome is counted as `provisional` on
+  the `sweep complete` line and in the sweep response, so `due` stays the sum of the endings.
+  An entry is first seen only after `PROCESS_DELAY`, so a non-zero window that does not exceed
+  the delay refuses to start, naming both; raising `process_delay` to `60m` or more means
+  raising the window in the same apply. Cost: one Strava read per sweep per provisional ride,
+  11 at the defaults.
+- **Documentation follows**: the README's importer skip list names all three tool-title rules
+  and its sweep response carries `provisional`; `docs/infrastructure.md` says a provisional entry
+  is still queued by design rather than a failed drain; the startup log names
+  `provisional_skip_window` beside `process_delay`.
+
 ## [v0.7.7] – 2026-10-16
 
 A dependency release: no change to the service's own code, on a toolchain and module set
@@ -662,6 +701,8 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.8]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.8
+[v0.7.7]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.7
 [v0.7.6]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.6
 [v0.7.5]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.5
 [v0.7.4]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.4
