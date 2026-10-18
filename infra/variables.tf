@@ -61,6 +61,42 @@ variable "process_delay" {
   default     = "10m"
 }
 
+# The provisional-skip window, carried only when one is chosen. Unset, the
+# binary re-checks a small untagged ride for 60 minutes from the event's
+# arrival; "0" turns the re-check off without a release.
+variable "provisional_skip_window" {
+  description = "PROVISIONAL_SKIP_WINDOW: how long a small untagged ride is re-checked for a commute flag before its skip is final, measured from the event's arrival. Empty means the binary's own default, 60m; 0 disables the re-check. A non-zero window must exceed process_delay, or no sweep ever sees the ride inside it."
+  type        = string
+  default     = ""
+
+  validation {
+    # The binary accepts any Go duration up to 24h. This accepts the
+    # single-unit forms, which is what the coupling below can compare: write
+    # 90m rather than 1h30m.
+    condition     = var.provisional_skip_window == "" || var.provisional_skip_window == "0" || can(regex("^[1-9][0-9]*[smh]$", var.provisional_skip_window))
+    error_message = "provisional_skip_window must be empty, 0, or a single-unit duration such as 60m or 2h."
+  }
+
+  validation {
+    # The bound the binary enforces at startup, enforced here first so a
+    # tfvars change to process_delay that outgrows the window is refused by
+    # the apply rather than by a revision that will not start. An empty
+    # window is the binary's 60m default, and is compared as such. The
+    # comparison runs only when both values are single-unit durations; the
+    # binary's refusal is the guard that always holds.
+    condition = (
+      var.provisional_skip_window == "0"
+      || !can(regex("^[1-9][0-9]*[smh]$", var.provisional_skip_window == "" ? "60m" : var.provisional_skip_window))
+      || !can(regex("^[1-9][0-9]*[smh]$", var.process_delay))
+      || (
+        tonumber(regex("^([0-9]+)", var.provisional_skip_window == "" ? "60m" : var.provisional_skip_window)[0]) * { s = 1, m = 60, h = 3600 }[regex("([smh])$", var.provisional_skip_window == "" ? "60m" : var.provisional_skip_window)[0]]
+        > tonumber(regex("^([0-9]+)", var.process_delay)[0]) * { s = 1, m = 60, h = 3600 }[regex("([smh])$", var.process_delay)[0]]
+      )
+    )
+    error_message = "provisional_skip_window must be greater than process_delay (an empty window is the binary's 60m default): an entry is first seen only after the delay, so a window inside it never re-checks anything."
+  }
+}
+
 variable "budget_amount_eur" {
   description = "Budget alert threshold in euros. The service is designed to fit inside the always-free tier; this exists to catch the case where it does not."
   type        = number
@@ -153,4 +189,12 @@ variable "nominatim_place_fields" {
     condition     = var.nominatim_place_fields == "" || can(regex("^[a-z_]+(,[a-z_]+)*$", var.nominatim_place_fields))
     error_message = "nominatim_place_fields must be empty or a comma-separated list of lowercase field names."
   }
+}
+
+# The machine-title list, carried only when one is chosen. Unset, the binary
+# uses its shipped list, which is Xert's pattern.
+variable "machine_title_patterns" {
+  description = "MACHINE_TITLE_PATTERNS: newline-separated regular expressions that replace the shipped machine-title list, the titles this service may overwrite. Empty means the binary's own list. The binary compiles the patterns and refuses to start on a bad one; nothing is checked here."
+  type        = string
+  default     = ""
 }

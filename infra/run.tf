@@ -151,13 +151,15 @@ resource "google_cloud_run_v2_service" "this" {
       dynamic "env" {
         for_each = {
           for name, value in {
-            LLM_PROVIDER           = var.llm_provider
-            LLM_MODEL              = var.llm_model
-            LLM_BASE_URL           = var.llm_base_url
-            VERTEX_LOCATION        = var.vertex_location
-            GEO_SAMPLE_COUNT       = var.geo_sample_count
-            NOMINATIM_ZOOM         = var.nominatim_zoom
-            NOMINATIM_PLACE_FIELDS = var.nominatim_place_fields
+            LLM_PROVIDER            = var.llm_provider
+            LLM_MODEL               = var.llm_model
+            LLM_BASE_URL            = var.llm_base_url
+            VERTEX_LOCATION         = var.vertex_location
+            GEO_SAMPLE_COUNT        = var.geo_sample_count
+            NOMINATIM_ZOOM          = var.nominatim_zoom
+            NOMINATIM_PLACE_FIELDS  = var.nominatim_place_fields
+            PROVISIONAL_SKIP_WINDOW = var.provisional_skip_window
+            MACHINE_TITLE_PATTERNS  = var.machine_title_patterns
           } : name => value if value != ""
         }
 

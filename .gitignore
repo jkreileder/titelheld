@@ -44,6 +44,9 @@ infra/.terraform/
 *.tfvars
 *.tfvars.json
 !*.tfvars.example
+# A saved plan carries the state it was made against, including generated
+# secrets, so it never belongs in the tree.
+*.tfplan
 crash.log
 override.tf
 override.tf.json
