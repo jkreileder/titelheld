@@ -7,23 +7,57 @@ is wired. -->
 All configuration comes from the environment. Nothing is read from a file, so secrets have no
 route into the working tree; on Cloud Run they are injected from Secret Manager.
 
-| Variable                 | Required | Default                      | Purpose                                         |
-| ------------------------ | -------- | ---------------------------- | ----------------------------------------------- |
-| `STRAVA_CLIENT_ID`       | yes      | —                            | Strava API application ID                       |
-| `STRAVA_CLIENT_SECRET`   | yes      | —                            | Strava API application secret                   |
-| `STRAVA_VERIFY_TOKEN`    | yes      | —                            | Shared secret for the subscription handshake    |
-| `WEBHOOK_PATH_SECRET`    | yes      | —                            | Unguessable segment of the webhook path         |
-| `BASE_URL`               | yes      | —                            | Public base URL, used for the OAuth redirect    |
-| `MAX_INSTANCES`          | yes      | —                            | Must be `1`; Terraform sets it — see below      |
-| `STRAVA_ATHLETE_ID`      | no       | any                          | Restrict processing to one athlete              |
-| `PROCESS_DELAY`          | no       | `10m`                        | How long to wait before naming                  |
-| `DRY_RUN`                | no       | on                           | Set to `0` to permit writes                     |
-| `LOG_PROMPT`             | no       | on                           | Set to `0` to stop logging the whole prompt     |
-| `PORT`                   | no       | `8080`                       | Listen port; Cloud Run sets this                |
-| `NOMINATIM_USER_AGENT`   | no       | derived                      | Identifies the service to Nominatim — see below |
-| `GEO_SAMPLE_COUNT`       | no       | `6`                          | Interior track samples geocoded per activity    |
-| `NOMINATIM_ZOOM`         | no       | `16`                         | Reverse-geocoding zoom — see below              |
-| `NOMINATIM_PLACE_FIELDS` | no       | `hamlet,village,suburb,town` | Settlement fields tried in order                |
+| Variable                  | Required | Default                      | Purpose                                         |
+| ------------------------- | -------- | ---------------------------- | ----------------------------------------------- |
+| `STRAVA_CLIENT_ID`        | yes      | —                            | Strava API application ID                       |
+| `STRAVA_CLIENT_SECRET`    | yes      | —                            | Strava API application secret                   |
+| `STRAVA_VERIFY_TOKEN`     | yes      | —                            | Shared secret for the subscription handshake    |
+| `WEBHOOK_PATH_SECRET`     | yes      | —                            | Unguessable segment of the webhook path         |
+| `BASE_URL`                | yes      | —                            | Public base URL, used for the OAuth redirect    |
+| `MAX_INSTANCES`           | yes      | —                            | Must be `1`; Terraform sets it — see below      |
+| `STRAVA_ATHLETE_ID`       | no       | any                          | Restrict processing to one athlete              |
+| `PROCESS_DELAY`           | no       | `10m`                        | How long to wait before naming                  |
+| `PROVISIONAL_SKIP_WINDOW` | no       | `60m`                        | Re-check window, measured from event arrival    |
+| `DRY_RUN`                 | no       | on                           | Set to `0` to permit writes                     |
+| `LOG_PROMPT`              | no       | on                           | Set to `0` to stop logging the whole prompt     |
+| `PORT`                    | no       | `8080`                       | Listen port; Cloud Run sets this                |
+| `NOMINATIM_USER_AGENT`    | no       | derived                      | Identifies the service to Nominatim — see below |
+| `GEO_SAMPLE_COUNT`        | no       | `6`                          | Interior track samples geocoded per activity    |
+| `NOMINATIM_ZOOM`          | no       | `16`                         | Reverse-geocoding zoom — see below              |
+| `NOMINATIM_PLACE_FIELDS`  | no       | `hamlet,village,suburb,town` | Settlement fields tried in order                |
+
+## The provisional skip window
+
+A ride below the sport-ride thresholds that carries no commute flag and is still at a Strava
+default title is not skipped for good on the first sweep that sees it. The queue entry is kept
+and the ride is re-read on every sweep until `PROVISIONAL_SKIP_WINDOW` has elapsed, after which
+the skip is final and the entry is dropped.
+
+The window exists because the commute flag can arrive after the naming delay has. Strava's
+update events carry a title, a sport type and the private flag and nothing else, so a flag set
+by another automation produces no event and nothing would re-queue the ride: it would keep its
+Strava default with no second chance. Each re-check reads Strava before it decides, so a flag
+set moments before the deadline is still acted on and the ride is named as an errand.
+
+The deadline is measured from the queue entry's arrival — when the webhook event came in, which
+for an upload is the moment the rest of the automation chain starts writing. The entry is not
+looked at until `PROCESS_DELAY` has elapsed, so the re-checks span the window *minus* the delay,
+and a non-zero window that is not greater than the delay refuses to start: it would expire
+before anything could see it and the setting would silently do nothing. Finalization happens on
+the first sweep at or after the deadline, so the effective window is up to one sweep interval
+longer than the configured duration.
+
+The cost while a ride is provisional is one Strava read per sweep — (window − delay) ÷ sweep
+interval, plus the sweep that first sees it. Eleven reads at the defaults, against a budget of a
+hundred per fifteen minutes.
+
+The window is wall clock, not sweep count. With the scheduler paused — a dry-run observation
+window, where sweeps are triggered by hand hours later — the deadline has already passed when
+the ride is first seen, so the skip is final at one read: no worse than having no window at all.
+
+Accepted values run from `0` to `24h`; anything else refuses to start. `0` turns the re-checks
+off, restoring the behavior the service had before the window existed. An unset variable is not
+`0` — it gets the 60-minute default.
 
 ## Geography
 

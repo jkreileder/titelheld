@@ -30,7 +30,18 @@ var pathSecretPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{8,128}$`)
 const (
 	DefaultPort         = 8080
 	DefaultProcessDelay = 10 * time.Minute
+
+	// DefaultProvisionalSkipWindow is how long a small untagged ride is
+	// re-checked before its skip becomes final. See
+	// [Config.ProvisionalSkipWindow].
+	DefaultProvisionalSkipWindow = 60 * time.Minute
 )
+
+// maxProvisionalSkipWindow bounds the re-check window. Every sweep spends one
+// Strava read per ride still being re-checked, against a budget of a hundred
+// per fifteen minutes, so the ceiling is what keeps a mistyped duration from
+// consuming it.
+const maxProvisionalSkipWindow = 24 * time.Hour
 
 // Config is the fully resolved configuration.
 //
@@ -65,6 +76,23 @@ type Config struct {
 	// ProcessDelay is how long to wait after an event before naming, so the
 	// other automations in the chain have finished writing.
 	ProcessDelay time.Duration
+
+	// ProvisionalSkipWindow is how long a ride below the sport thresholds,
+	// untagged and still at a Strava default title, is kept queued and
+	// re-checked before the skip becomes final.
+	//
+	// It closes a race the process delay cannot: ActivityFix can set the
+	// commute flag after the delay has elapsed, and Strava sends no webhook
+	// event for that change, so a ride swept a minute too early would keep
+	// its default title with nothing left to re-queue it.
+	//
+	// It is measured from the queue entry's arrival, but the entry is first
+	// seen only once [Config.ProcessDelay] has elapsed, so the re-checks span
+	// the window minus the delay — which is why a non-zero window must be
+	// greater than the delay. Zero disables them: the pre-feature behavior,
+	// and the rollback knob without a release. An unset variable is not zero;
+	// it gets [DefaultProvisionalSkipWindow].
+	ProvisionalSkipWindow time.Duration
 
 	// WritesEnabled permits Strava writes. False — the zero value — is dry run.
 	WritesEnabled bool
@@ -180,23 +208,24 @@ func (s SweepConfig) Enabled() bool {
 //
 //nolint:gosec // G101: these are variable names, not hardcoded credentials
 const (
-	EnvStravaClientID      = "STRAVA_CLIENT_ID"
-	EnvStravaClientSecret  = "STRAVA_CLIENT_SECRET"
-	EnvStravaVerifyToken   = "STRAVA_VERIFY_TOKEN"
-	EnvStravaAthleteID     = "STRAVA_ATHLETE_ID"
-	EnvWebhookPathSecret   = "WEBHOOK_PATH_SECRET"
-	EnvBaseURL             = "BASE_URL"
-	EnvProcessDelay        = "PROCESS_DELAY"
-	EnvDryRun              = "DRY_RUN"
-	EnvPort                = "PORT"
-	EnvFirestoreProject    = "FIRESTORE_PROJECT"
-	EnvFirestoreDatabase   = "FIRESTORE_DATABASE"
-	EnvNominatimUserAgent  = "NOMINATIM_USER_AGENT"
-	EnvSweepPath           = "SWEEP_PATH"
-	EnvSweepAudience       = "SWEEP_AUDIENCE"
-	EnvSweepServiceAccount = "SWEEP_SERVICE_ACCOUNT"
-	EnvMaxInstances        = "MAX_INSTANCES"
-	EnvLogPrompt           = "LOG_PROMPT"
+	EnvStravaClientID        = "STRAVA_CLIENT_ID"
+	EnvStravaClientSecret    = "STRAVA_CLIENT_SECRET"
+	EnvStravaVerifyToken     = "STRAVA_VERIFY_TOKEN"
+	EnvStravaAthleteID       = "STRAVA_ATHLETE_ID"
+	EnvWebhookPathSecret     = "WEBHOOK_PATH_SECRET"
+	EnvBaseURL               = "BASE_URL"
+	EnvProcessDelay          = "PROCESS_DELAY"
+	EnvProvisionalSkipWindow = "PROVISIONAL_SKIP_WINDOW"
+	EnvDryRun                = "DRY_RUN"
+	EnvPort                  = "PORT"
+	EnvFirestoreProject      = "FIRESTORE_PROJECT"
+	EnvFirestoreDatabase     = "FIRESTORE_DATABASE"
+	EnvNominatimUserAgent    = "NOMINATIM_USER_AGENT"
+	EnvSweepPath             = "SWEEP_PATH"
+	EnvSweepAudience         = "SWEEP_AUDIENCE"
+	EnvSweepServiceAccount   = "SWEEP_SERVICE_ACCOUNT"
+	EnvMaxInstances          = "MAX_INSTANCES"
+	EnvLogPrompt             = "LOG_PROMPT"
 )
 
 // RequiredMaxInstances is the only value this service will start with.
@@ -352,12 +381,13 @@ func loadFirestore(getenv func(string) string, cfg *Config) error {
 // service uses.
 func load(getenv func(string) string, serving bool) (Config, error) {
 	cfg := Config{
-		Port:               DefaultPort,
-		ProcessDelay:       DefaultProcessDelay,
-		StravaClientID:     strings.TrimSpace(getenv(EnvStravaClientID)),
-		StravaClientSecret: getenv(EnvStravaClientSecret),
-		StravaVerifyToken:  getenv(EnvStravaVerifyToken),
-		BaseURL:            strings.TrimRight(strings.TrimSpace(getenv(EnvBaseURL)), "/"),
+		Port:                  DefaultPort,
+		ProcessDelay:          DefaultProcessDelay,
+		ProvisionalSkipWindow: DefaultProvisionalSkipWindow,
+		StravaClientID:        strings.TrimSpace(getenv(EnvStravaClientID)),
+		StravaClientSecret:    getenv(EnvStravaClientSecret),
+		StravaVerifyToken:     getenv(EnvStravaVerifyToken),
+		BaseURL:               strings.TrimRight(strings.TrimSpace(getenv(EnvBaseURL)), "/"),
 	}
 
 	var errs []error
@@ -449,6 +479,29 @@ func load(getenv func(string) string, serving bool) (Config, error) {
 		} else {
 			cfg.ProcessDelay = delay
 		}
+	}
+
+	if raw := strings.TrimSpace(getenv(EnvProvisionalSkipWindow)); raw != "" {
+		window, err := time.ParseDuration(raw)
+		if err != nil || window < 0 || window > maxProvisionalSkipWindow {
+			errs = append(errs, fmt.Errorf(
+				"config: "+EnvProvisionalSkipWindow+" must be a duration between 0 and %v, got %q",
+				maxProvisionalSkipWindow, raw))
+		} else {
+			cfg.ProvisionalSkipWindow = window
+		}
+	}
+
+	// A queue entry is not looked at until the process delay has elapsed, so
+	// the re-checks span the window minus the delay. A window inside the delay
+	// has expired before anything can see it: the skip is final on first
+	// sight and the setting silently does nothing, which is the failure mode
+	// worth refusing to start over.
+	if cfg.ProvisionalSkipWindow > 0 && cfg.ProvisionalSkipWindow <= cfg.ProcessDelay {
+		errs = append(errs, fmt.Errorf(
+			"config: "+EnvProvisionalSkipWindow+" (%v) must be greater than "+
+				EnvProcessDelay+" (%v); an entry is first seen only after the delay",
+			cfg.ProvisionalSkipWindow, cfg.ProcessDelay))
 	}
 
 	cfg.NominatimUserAgent = strings.TrimSpace(getenv(EnvNominatimUserAgent))
