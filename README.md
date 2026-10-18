@@ -293,10 +293,15 @@ arithmetic over it can ever reach the number the athlete sees. The counts were n
 wrongly; they were derived from a source that does not contain the answer.
 
 So the tallies are gone from the ride and from the examples, and the `ACHIEVEMENTS` names stay: a
-segment name is checkable by opening the ride page, which is exactly what a count is not. There is
-no validator check that every integer in a title is a stated figure, because with no figure in the
-prompt there is nothing for a title to quote — if figures ever return, that check returns with
-them.
+segment name is checkable by opening the ride page, which is exactly what a count is not. The
+system prompt states the rule to the model in its own words — a number may appear only if a line
+under `RIDE` or `NOTES` states it verbatim; no counting items in a list, no time derived from the
+start hour, no rounding — and the validator enforces it: a candidate title carrying a digit string
+or a number word (`null`…`zwanzig`, the tens, `hundert`, `tausend`, their English forms, and `halb`
+plus an hour) whose value equals no figure stated under `RIDE` or `NOTES` is refused, the activity
+stays queued, and the next sweep draws again. Value equality, so `25` matches a stated `25.0 km/h`
+and `25,9` matches `25.9`, but `26` does not match `26.3`, which is a rounding. A human title is
+never validated. Known limit: a number word outside the table passes.
 
 A segment name is the least trusted string in the prompt: a segment is named by whoever created
 it, and every rider who crosses it inherits that name. So the system prompt states two rules for

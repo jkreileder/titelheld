@@ -176,13 +176,15 @@ Stop and ask before any of these; none may be done on an assumption.
   refresh, and `config.LoadStore` reads nothing but where Firestore is. The wiring is
   `app.SeedConfig`; the read-back goes through `processor.FranchisesFromStored`, the sweep's own
   conversion.
-- `internal/naming/` builds the prompt, validates what comes back, and holds the three LLM
+- `internal/naming/` builds the prompt, validates what comes back, and holds the four LLM
   implementations behind one interface it defines itself. No HTTP client of its own beyond the
   providers, no Firestore: a caller assembles a `Ride` and supplies a `Provider`. **The prompt
   states constraints; the validator enforces them**, because an instruction to a model is a
   request and the ride description is text this service did not write. Gemini goes through Vertex
-  AI with the runtime SA's ambient credentials and has no key at all. `anthropic` calls the
-  Messages API with `LLM_API_KEY`. `openrouter` is an OpenAI-compatible chat-completions client
+  AI with the runtime SA's ambient credentials and has no key at all. `anthropic-wif` calls the
+  Messages API with a short-lived token exchanged from that SA's identity token and has no key
+  either; it refuses to start with one set. `anthropic` calls the Messages API with
+  `LLM_API_KEY`. `openrouter` is an OpenAI-compatible chat-completions client
   against `LLM_BASE_URL` (default OpenRouter's, https required — the key travels in a header to
   that host), model via `LLM_MODEL`, the same `LLM_API_KEY`: one key, many narrators, so a voice
   miss is diagnosed by re-sweeping the same queued ride under another model — a Terraform variable
