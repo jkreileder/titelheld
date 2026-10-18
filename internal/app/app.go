@@ -93,6 +93,7 @@ func Run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 	// safe to state; what it is, is not.
 	logger.Info("configuration loaded",
 		"process_delay", cfg.ProcessDelay,
+		"provisional_skip_window", cfg.ProvisionalSkipWindow,
 		"athlete_id", cfg.AthleteID,
 		"auth_path_configured", cfg.AuthPath != "",
 		"sweep_configured", cfg.Sweep.Enabled(),
