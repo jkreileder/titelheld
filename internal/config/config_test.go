@@ -536,8 +536,13 @@ func TestLLMAnthropicWithAKey(t *testing.T) {
 func TestLLMRejectsAnUnknownProvider(t *testing.T) {
 	t.Parallel()
 
-	if _, err := Load(env(map[string]string{"LLM_PROVIDER": "openai"})); err == nil {
-		t.Error("an unknown provider = nil error, want error")
+	_, err := Load(env(map[string]string{"LLM_PROVIDER": "openai"}))
+	if err == nil {
+		t.Fatal("an unknown provider = nil error, want error")
+	}
+
+	if !strings.Contains(err.Error(), `"anthropic-wif"`) {
+		t.Errorf("error does not list every provider: %v", err)
 	}
 }
 
@@ -807,6 +812,11 @@ func TestLLMDormancyWithTheProviderUnset(t *testing.T) {
 	lookups := map[string]int{}
 	tracking := env(map[string]string{
 		"LLM_PROVIDER": "", "LLM_API_KEY": "sentinel-key-never-read", "LLM_BASE_URL": "http://plain.example",
+		// anthropic-wif's variables, with an audience its rule refuses: none
+		// of them may be consulted either.
+		EnvAnthropicWIFAudience: "http://plain.example", EnvAnthropicFederationRuleID: "fdrl_sentinel",
+		EnvAnthropicOrganizationID: "org-sentinel", EnvAnthropicServiceAccountID: "svac_sentinel",
+		EnvAnthropicWorkspaceID: "wrkspc_sentinel",
 	})
 	getenv := func(name string) string {
 		lookups[name]++
@@ -830,6 +840,45 @@ func TestLLMDormancyWithTheProviderUnset(t *testing.T) {
 	if lookups[EnvLLMAPIKey] != 0 || lookups[EnvLLMBaseURL] != 0 {
 		t.Errorf("the keyless provider looked up %s %d times and %s %d times; want none",
 			EnvLLMAPIKey, lookups[EnvLLMAPIKey], EnvLLMBaseURL, lookups[EnvLLMBaseURL])
+	}
+
+	for _, name := range anthropicWIFVariables {
+		if lookups[name] != 0 {
+			t.Errorf("the default provider looked up %s %d times; want none", name, lookups[name])
+		}
+	}
+
+	if cfg.LLM.Federation != (AnthropicFederation{}) {
+		t.Errorf("federation settings were loaded for the default provider: %+v", cfg.LLM.Federation)
+	}
+
+	// The control for the federation variables: the same environment with
+	// anthropic-wif selected reads every one of them, and refuses both the
+	// audience and the key.
+	wifLookups := map[string]int{}
+
+	_, err = Load(func(name string) string {
+		wifLookups[name]++
+		if name == EnvLLMProvider {
+			return string(ProviderAnthropicWIF)
+		}
+
+		return tracking(name)
+	})
+	if err == nil {
+		t.Fatal("anthropic-wif with a plain-http audience and a key loaded")
+	}
+
+	for _, name := range anthropicWIFVariables {
+		if wifLookups[name] == 0 {
+			t.Errorf("anthropic-wif did not look up %s", name)
+		}
+	}
+
+	for _, want := range []string{EnvAnthropicWIFAudience, EnvLLMAPIKey} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not carry %q: %v", want, err)
+		}
 	}
 
 	// The control: the same environment with openrouter selected is refused
@@ -897,5 +946,141 @@ func TestLLMOpenRouterBaseURLMustBeHTTPS(t *testing.T) {
 
 	if _, err := Load(env(map[string]string{"LLM_PROVIDER": "anthropic", "LLM_API_KEY": "k", "LLM_BASE_URL": "http://ignored.example"})); err != nil {
 		t.Errorf("a base URL was validated for a provider that never reads it: %v", err)
+	}
+}
+
+var anthropicWIFVariables = []string{
+	EnvAnthropicFederationRuleID, EnvAnthropicOrganizationID, EnvAnthropicServiceAccountID,
+	EnvAnthropicWorkspaceID, EnvAnthropicWIFAudience,
+}
+
+// wifEnv is a complete anthropic-wif environment with synthetic identifiers.
+func wifEnv(overrides map[string]string) func(string) string {
+	values := map[string]string{
+		EnvLLMProvider:               "anthropic-wif",
+		EnvLLMModel:                  "claude-fable-5-1",
+		EnvAnthropicFederationRuleID: "fdrl_test",
+		EnvAnthropicOrganizationID:   "00000000-1111-4222-8333-444444444444",
+		EnvAnthropicServiceAccountID: "svac_test",
+	}
+
+	for key, value := range overrides {
+		values[key] = value
+	}
+
+	return env(values)
+}
+
+// anthropic-wif loads with the three required identifiers, defaults the
+// audience, keeps an optional workspace, and is keyless.
+func TestLLMAnthropicWIFLoads(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(wifEnv(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := AnthropicFederation{
+		RuleID: "fdrl_test", OrganizationID: "00000000-1111-4222-8333-444444444444",
+		ServiceAccountID: "svac_test", Audience: DefaultAnthropicWIFAudience,
+	}
+	if cfg.LLM.Provider != ProviderAnthropicWIF || cfg.LLM.Provider.Keyed() ||
+		cfg.LLM.Federation != want || cfg.LLM.Model != "claude-fable-5-1" || cfg.LLM.APIKey != "" {
+		t.Errorf("llm = %+v", cfg.LLM)
+	}
+
+	if DefaultAnthropicWIFAudience != "https://api.anthropic.com" {
+		t.Errorf("default audience = %q", DefaultAnthropicWIFAudience)
+	}
+
+	cfg, err = Load(wifEnv(map[string]string{
+		EnvAnthropicWorkspaceID: " wrkspc_test ", EnvAnthropicWIFAudience: "https://audience.example:8443",
+	}))
+	if err != nil {
+		t.Fatalf("Load with a workspace and an audience: %v", err)
+	}
+
+	if cfg.LLM.Federation.WorkspaceID != "wrkspc_test" || cfg.LLM.Federation.Audience != "https://audience.example:8443" {
+		t.Errorf("federation = %+v", cfg.LLM.Federation)
+	}
+
+	// Keyed stays what it was for the other providers.
+	if !ProviderAnthropic.Keyed() || !ProviderOpenRouter.Keyed() || ProviderVertex.Keyed() {
+		t.Error("Keyed() changed for an existing provider")
+	}
+}
+
+// Each required identifier missing is a startup error that names it, and
+// only that one.
+func TestLLMAnthropicWIFRequiresItsIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	required := []string{EnvAnthropicFederationRuleID, EnvAnthropicOrganizationID, EnvAnthropicServiceAccountID}
+
+	for _, missing := range required {
+		_, err := Load(wifEnv(map[string]string{missing: "  "}))
+		if err == nil {
+			t.Errorf("anthropic-wif without %s loaded", missing)
+
+			continue
+		}
+
+		for _, name := range required {
+			if named := strings.Contains(err.Error(), name); named != (name == missing) {
+				t.Errorf("without %s, the error names %s: %t: %v", missing, name, named, err)
+			}
+		}
+	}
+}
+
+// The audience must be an https URL with a host; the path is free.
+func TestLLMAnthropicWIFAudienceMustBeHTTPS(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{
+		"http://api.anthropic.com", "api.anthropic.com", "https://", "https://a b",
+		"https://x.example?aud=1", "https://x.example#f", "https://user:pw@x.example",
+		"https://x.example:0", "https://x.example:65536", "mailto:x@example.com",
+	} {
+		_, err := Load(wifEnv(map[string]string{EnvAnthropicWIFAudience: bad}))
+		if err == nil || !strings.Contains(err.Error(), EnvAnthropicWIFAudience) {
+			t.Errorf("audience %q: err = %v, want a refusal naming %s", bad, err, EnvAnthropicWIFAudience)
+		}
+	}
+
+	for _, good := range []string{
+		"https://api.anthropic.com", "https://api.anthropic.com/", "https://Audience.Example/some/path",
+		"https://[::1]:8443",
+	} {
+		if _, err := Load(wifEnv(map[string]string{EnvAnthropicWIFAudience: good})); err != nil {
+			t.Errorf("audience %q was refused: %v", good, err)
+		}
+	}
+}
+
+// A leftover key is refused rather than ignored, naming both variables; the
+// keyed providers are unaffected.
+func TestLLMAnthropicWIFRefusesAKey(t *testing.T) {
+	t.Parallel()
+
+	_, err := Load(wifEnv(map[string]string{EnvLLMAPIKey: "leftover-key"}))
+	if err == nil {
+		t.Fatal("anthropic-wif with LLM_API_KEY set loaded")
+	}
+
+	for _, want := range []string{EnvLLMAPIKey, EnvLLMProvider + "=anthropic-wif"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not carry %q: %v", want, err)
+		}
+	}
+
+	if strings.Contains(err.Error(), "leftover-key") {
+		t.Errorf("error quotes the key: %v", err)
+	}
+
+	// The control: blank is unset.
+	if _, err := Load(wifEnv(map[string]string{EnvLLMAPIKey: " "})); err != nil {
+		t.Errorf("anthropic-wif with a blank key: %v", err)
 	}
 }

@@ -128,7 +128,8 @@ func buildGeographer(
 // Vertex is the default and needs no key: the runtime service account's
 // ambient credentials are the authentication, which is why there is no sixth
 // secret for it. The two keyed providers share LLM_API_KEY; which of them the
-// key belongs to is whatever LLM_PROVIDER says.
+// key belongs to is whatever LLM_PROVIDER says. anthropic-wif is keyless as
+// well, federated from the same runtime service account.
 func buildProvider(
 	ctx context.Context, cfg config.Config, logger *slog.Logger,
 ) (naming.Provider, error) {
@@ -140,6 +141,19 @@ func buildProvider(
 			APIKey:  cfg.LLM.APIKey,
 			Model:   cfg.LLM.Model,
 			BaseURL: cfg.LLM.BaseURL,
+		}, nil
+	case config.ProviderAnthropicWIF:
+		// Keyless too, but with no Google SDK in the way: the identity token
+		// comes from the metadata server and is exchanged inside the provider.
+		return &naming.AnthropicWIF{
+			IdentityToken:    metadataIdentity{}.Token,
+			Audience:         cfg.LLM.Federation.Audience,
+			FederationRuleID: cfg.LLM.Federation.RuleID,
+			OrganizationID:   cfg.LLM.Federation.OrganizationID,
+			ServiceAccountID: cfg.LLM.Federation.ServiceAccountID,
+			WorkspaceID:      cfg.LLM.Federation.WorkspaceID,
+			Model:            cfg.LLM.Model,
+			Logger:           logger,
 		}, nil
 	case config.ProviderVertex:
 		// Below: the keyless default, and the only one that needs the

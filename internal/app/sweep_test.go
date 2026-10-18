@@ -518,3 +518,49 @@ func TestProviderDispatchIsVertexUnlessAsked(t *testing.T) {
 		t.Errorf("Name() = %q", name)
 	}
 }
+
+// anthropic-wif is built from the real loader with the identifiers it was
+// configured with, a metadata-server identity source, and the name the
+// "sweep route mounted" line reports.
+func TestProviderDispatchAnthropicWIF(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(deployedEnv(map[string]string{
+		"LLM_PROVIDER": "anthropic-wif", "LLM_API_KEY": "", "LLM_MODEL": "claude-fable-5-1",
+		"ANTHROPIC_FEDERATION_RULE_ID": "fdrl_test", "ANTHROPIC_ORGANIZATION_ID": "00000000-1111-4222-8333-444444444444",
+		"ANTHROPIC_SERVICE_ACCOUNT_ID": "svac_test", "ANTHROPIC_WORKSPACE_ID": "wrkspc_test",
+	}))
+	if err != nil {
+		t.Fatalf("config.Load with anthropic-wif: %v", err)
+	}
+
+	provider, err := buildProvider(t.Context(), cfg, quiet())
+	if err != nil {
+		t.Fatalf("buildProvider: %v", err)
+	}
+
+	wif, ok := provider.(*naming.AnthropicWIF)
+	if !ok {
+		t.Fatalf("provider = %T, want *naming.AnthropicWIF", provider)
+	}
+
+	if name := wif.Name(); name != "anthropic-wif/claude-fable-5-1 effort=low" {
+		t.Errorf("Name() = %q", name)
+	}
+
+	if wif.FederationRuleID != "fdrl_test" || wif.OrganizationID != "00000000-1111-4222-8333-444444444444" ||
+		wif.ServiceAccountID != "svac_test" || wif.WorkspaceID != "wrkspc_test" ||
+		wif.Audience != "https://api.anthropic.com" || wif.IdentityToken == nil || wif.Logger == nil {
+		t.Errorf("provider = %+v", wif)
+	}
+
+	// The control: the deployed default environment, which carries a key, is
+	// refused for anthropic-wif before a provider is built at all.
+	if _, err := config.Load(deployedEnv(map[string]string{
+		"LLM_PROVIDER":                 "anthropic-wif",
+		"ANTHROPIC_FEDERATION_RULE_ID": "fdrl_test", "ANTHROPIC_ORGANIZATION_ID": "org",
+		"ANTHROPIC_SERVICE_ACCOUNT_ID": "svac_test",
+	})); err == nil || !strings.Contains(err.Error(), "LLM_API_KEY") {
+		t.Errorf("anthropic-wif with the default test key: %v, want a refusal naming LLM_API_KEY", err)
+	}
+}
