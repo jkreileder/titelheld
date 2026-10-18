@@ -142,8 +142,11 @@ cp terraform.tfvars.example terraform.tfvars   # fill in project_id and billing_
 
    `llm-api-key` is mounted only when `llm_provider` names a keyed provider
    (`anthropic`, `openrouter`); the shipped default, Vertex, is keyless and mounts
-   nothing — so this one may be left without a version until an A/B of narrators
-   is wanted. A mounted secret with no version stops the revision from starting,
+   nothing, and so is `anthropic-wif`, which reaches the Claude API through
+   workload identity federation from the runtime service account and carries
+   its federation identifiers as variables (see the configuration guide) — so
+   this one may be left without a version until an A/B of narrators is wanted.
+   A mounted secret with no version stops the revision from starting,
    which is why the mount follows the variable. Switching narrators later is: a
    new version of this secret holding the selected provider's key, the variables
    `llm_provider`, `llm_model` and `llm_base_url` in your tfvars, and an apply.

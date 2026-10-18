@@ -177,20 +177,28 @@ that never happens.
 | `SWEEP_SERVICE_ACCOUNT` | no       | —       | Email of the only identity allowed to sweep      |
 
 Naming. The default provider is keyless — Gemini is called through Vertex AI with the runtime
-service account's own credentials, so `LLM_API_KEY` exists only for the two keyed alternatives,
-`anthropic` and `openrouter`, and is required only when one of them is selected. Selecting a
-keyed provider without the key refuses at startup, naming both variables.
+service account's own credentials — and so is `anthropic-wif`, which calls the Claude API with a
+short-lived token exchanged from that same account's identity token. `LLM_API_KEY` exists only for
+the two keyed alternatives, `anthropic` and `openrouter`, and is required only when one of them is
+selected. Selecting a keyed provider without the key refuses at startup, naming both variables;
+selecting `anthropic-wif` *with* a key set refuses too, so a leftover key can never shadow the
+keyless path.
 
-| Variable                 | Required        | Default             | Purpose                                               |
-| ------------------------ | --------------- | ------------------- | ----------------------------------------------------- |
-| `LLM_PROVIDER`           | no              | `gemini`            | `gemini` (Vertex, keyless), `anthropic`, `openrouter` |
-| `LLM_MODEL`              | no              | provider default    | Overrides the shipped, pinned model ID                |
-| `LLM_API_KEY`            | keyed providers | —                   | Anthropic or OpenRouter; Vertex is keyless            |
-| `LLM_BASE_URL`           | no              | OpenRouter's        | `openrouter` only: an https API root                  |
-| `VERTEX_PROJECT`         | no              | `FIRESTORE_PROJECT` | Project the Vertex call bills to                      |
-| `VERTEX_LOCATION`        | no              | `europe-west3`      | Vertex region, or `eu` / `global` — see below         |
-| `BANNED_WORDS`           | no              | shipped list        | Comma-separated; rejected in a title                  |
-| `MACHINE_TITLE_PATTERNS` | no              | Xert's pattern      | Newline-separated regexes; see below                  |
+| Variable                       | Required        | Default                     | Purpose                                                                          |
+| ------------------------------ | --------------- | --------------------------- | -------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`                 | no              | `gemini`                    | `gemini` (Vertex, keyless), `anthropic-wif` (keyless), `anthropic`, `openrouter` |
+| `LLM_MODEL`                    | no              | provider default            | Overrides the shipped, pinned model ID                                           |
+| `LLM_API_KEY`                  | keyed providers | —                           | `anthropic` or `openrouter`; `anthropic-wif` refuses to start with it set        |
+| `LLM_BASE_URL`                 | no              | OpenRouter's                | `openrouter` only: an https API root                                             |
+| `VERTEX_PROJECT`               | no              | `FIRESTORE_PROJECT`         | Project the Vertex call bills to                                                 |
+| `VERTEX_LOCATION`              | no              | `europe-west3`              | Vertex region, or `eu` / `global` — see below                                    |
+| `ANTHROPIC_FEDERATION_RULE_ID` | `anthropic-wif` | —                           | The federation rule (`fdrl_…`) the identity token is exchanged under             |
+| `ANTHROPIC_ORGANIZATION_ID`    | `anthropic-wif` | —                           | The Anthropic organization UUID                                                  |
+| `ANTHROPIC_SERVICE_ACCOUNT_ID` | `anthropic-wif` | —                           | The Anthropic service account (`svac_…`) the token acts as                       |
+| `ANTHROPIC_WORKSPACE_ID`       | no              | —                           | The workspace (`wrkspc_…`) the token is scoped to; sent when set                 |
+| `ANTHROPIC_WIF_AUDIENCE`       | no              | `https://api.anthropic.com` | Audience of the identity token, matched by the federation rule                   |
+| `BANNED_WORDS`                 | no              | shipped list                | Comma-separated; rejected in a title                                             |
+| `MACHINE_TITLE_PATTERNS`       | no              | Xert's pattern              | Newline-separated regexes; see below                                             |
 
 `BANNED_WORDS` **replaces** the shipped list rather than adding to it, so removing a word means
 naming the ones you keep. Unset means the shipped list — `Epic`, `Crushing`, `Beast` — which is
@@ -202,8 +210,8 @@ are regular expressions, and a comma inside `{1,3}` is not a separator.
 
 The shipped model IDs are pinned, and each is recorded in the source next to the documentation
 URL it was verified against and the date — `internal/naming/vertex.go`,
-`internal/naming/anthropic.go` and `internal/naming/openrouter.go`. They are not taken from a
-model's training data.
+`internal/naming/anthropic.go`, `internal/naming/anthropic_wif.go` and
+`internal/naming/openrouter.go`. They are not taken from a model's training data.
 
 `openrouter` exists for one thing: an A/B of narrators on the same queued ride. It speaks the
 OpenAI-compatible chat-completions dialect against `LLM_BASE_URL` — OpenRouter's own root by
@@ -221,6 +229,20 @@ variables reach the container only when set, so an empty one is the same as an u
 manual sweep of the queued ride under the new narrator, which is the diagnostic. While
 `LLM_PROVIDER` is unset none of this is read — the resolution is Vertex, and no key is required
 or looked at.
+
+`anthropic-wif` is the Claude API without a key. Nothing is exchanged at startup; on a naming
+call the provider mints a Google-signed identity token for the runtime service account from the
+metadata server (`…/service-accounts/default/identity?audience=<ANTHROPIC_WIF_AUDIENCE>&format=full`),
+posts it to `https://api.anthropic.com/v1/oauth/token` under the federation rule, and calls
+`/v1/messages` with the returned bearer token, cached until 120 seconds before its expiry. The
+four identifiers are not secrets: they are plain configuration, carried the way `llm_model` is
+(see [Infrastructure](infrastructure.md)); the only secret in the flow is the token in memory,
+which never reaches a log. The request is the one the model was qualified under: `max_tokens` 1024,
+`output_config.effort` `low`, no temperature (the model rejects one), no thinking configuration,
+no JSON mode. A refused exchange or a `refusal` stop reason is a provider error: the activity
+stays queued and the next sweep retries, as after a Vertex 5xx. The federation rule on
+Anthropic's side matches the runtime service account's unique ID, its email and the audience,
+so no other identity can exchange a token under it.
 
 `LLM_BASE_URL` is the API root *including its version path*: the provider appends
 `/chat/completions` to it verbatim, so `https://openrouter.ai` would answer 404 on every call and
