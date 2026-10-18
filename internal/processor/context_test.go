@@ -1584,6 +1584,11 @@ func TestThePromptIsNotLoggedByDefault(t *testing.T) {
 // assertion: the human-titled ride is neither renamed nor prefixed, and its
 // title still reaches the next ride's RECENT. Remove the recorder and the
 // RECENT half fails.
+//
+// The human title carries a figure no prompt states, and is recorded as it
+// stands: the figure rule binds service candidates only, and the recorder never
+// asks it. The service's own answer for the next ride carries none, because a
+// service title with an unstated figure would be refused.
 func TestHumanTitleIsRememberedAndNeverRenamed(t *testing.T) {
 	t.Parallel()
 
@@ -1595,7 +1600,7 @@ func TestHumanTitleIsRememberedAndNeverRenamed(t *testing.T) {
 
 	h := newHarness(t, true, nil)
 	capture := withCapture(h)
-	capture.response = `{"title":"Acht auf einen Streich","language":"de"}`
+	capture.response = `{"title":"Wieder auf einen Streich","language":"de"}`
 
 	human := sportRide()
 	human.ID = humanID

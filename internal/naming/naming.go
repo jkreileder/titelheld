@@ -109,6 +109,11 @@ var (
 	// ErrTitleRepeatsKnown means the title is one the prompt listed as not to
 	// be repeated: a RECENT line, or a few-shot example.
 	ErrTitleRepeatsKnown = errors.New("naming: title repeats a known title")
+
+	// ErrTitleFiguresUnstated means the title carries a figure — a digit run,
+	// a decimal or a number word — that the prompt's RIDE and NOTES lines do
+	// not state.
+	ErrTitleFiguresUnstated = errors.New("naming: title carries a figure the prompt does not state")
 )
 
 // DefaultBannedWords is the list the spec ships with. It is configuration, not
