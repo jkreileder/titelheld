@@ -255,6 +255,22 @@ type Decision struct {
 	// says which skip this was, because [Reason] is prose for a log and not
 	// something to compare against.
 	HumanTitled bool
+
+	// Provisional reports that a tier-none skip may still change its mind: a
+	// ride below the sport thresholds, untagged, still at a Strava default
+	// title. Set only with [ActionSkip].
+	//
+	// The commute flag is the reason. ActivityFix sets it after the upload,
+	// and Strava sends no webhook event for that change, so a small ride
+	// swept before the flag arrives would keep its default title forever.
+	// A caller that re-checks such a ride reaches [TierErrand] on a later
+	// pass; how long it keeps re-checking is the caller's policy, not the
+	// classifier's.
+	//
+	// A machine-titled small ride is excluded, so this stays narrow: the
+	// default-title condition is what separates a ride nothing has touched
+	// from one another tool has already had its say about.
+	Provisional bool
 }
 
 // Strava sport_type values the tier rules reason about.
@@ -394,10 +410,26 @@ func Classify(activity Activity, cfg Config) Decision {
 	}
 
 	return Decision{
-		Tier:   tier,
-		Action: ActionSkip,
-		Reason: noTierReason(activity),
+		Tier:        tier,
+		Action:      ActionSkip,
+		Reason:      noTierReason(activity),
+		Provisional: provisional(activity),
 	}
+}
+
+// provisional decides [Decision.Provisional].
+//
+// Only the sport type and the title are tested, because reaching this
+// fallthrough with a ride already implies the rest: a ride that met the sport
+// thresholds would be [TierSportRide] and one carrying the commute flag would
+// be [TierCommute] or [TierErrand], so neither can be true here. The title is
+// what the tier rules never look at.
+func provisional(activity Activity) bool {
+	if _, ok := rideSportTypes[activity.SportType]; !ok {
+		return false
+	}
+
+	return IsDefaultTitle(activity.Name)
 }
 
 // classifyTier walks tiers 2 to 5. Tier 1 is handled by [Classify] before this

@@ -75,6 +75,16 @@ type Deps struct {
 	// that the zero value means the spec's default rather than its opposite.
 	DisableAttribution bool
 
+	// ProvisionalSkipWindow is how long a provisional skip is re-checked
+	// before it becomes final; see [classifier.Decision.Provisional] and
+	// [outcomeProvisional]. Measured from the queue entry's EnqueuedAt, which
+	// is the event's arrival and cannot move for the life of the entry.
+	//
+	// Zero turns the re-checks off, which makes every skip final on first
+	// sight. The cost while they are on is one Strava read per sweep per
+	// ride still being re-checked.
+	ProvisionalSkipWindow time.Duration
+
 	// WritesEnabled mirrors the Strava client's write mode. The client refuses
 	// a write on its own, twice over; this exists so the processor can say
 	// what it *would* have done instead of attempting it and logging a
@@ -181,6 +191,12 @@ type Result struct {
 	// was produced, and the entry was not declined.
 	Reconciled int
 
+	// Provisional is how many were skipped for now and left queued for a
+	// re-check: a small untagged ride that may still be commute-tagged. It is
+	// neither a skip nor a naming, and counting it under Skipped would report
+	// an entry as finished that is still in the queue.
+	Provisional int
+
 	// Failed is how many errored and stayed in the queue for the next sweep.
 	Failed int
 
@@ -188,7 +204,7 @@ type Result struct {
 	// queue, because its context was done. It is not a failure: what was named
 	// is named and recorded, and the rest is still queued for the next run.
 	// The caller reports it rather than inferring it from Due exceeding the
-	// other three counts.
+	// other counts.
 	Cancelled bool
 }
 
@@ -211,7 +227,8 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			p.deps.Logger.Warn("sweep cancelled; the rest stays queued",
 				"due", result.Due,
-				"finished", result.Named+result.Reconciled+result.Skipped+result.Failed,
+				"finished", result.Named+result.Reconciled+
+					result.Skipped+result.Provisional+result.Failed,
 				"error", err)
 
 			result.Cancelled = true
@@ -237,6 +254,8 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 			result.Named++
 		case outcome == outcomeReconciled, outcome == outcomeReconcileDryRun:
 			result.Reconciled++
+		case outcome == outcomeProvisional:
+			result.Provisional++
 		default:
 			result.Skipped++
 		}
@@ -255,7 +274,8 @@ func (p *Processor) Sweep(ctx context.Context) (Result, error) {
 	p.deps.Logger.Info("sweep complete",
 		"due", result.Due, "named", result.Named,
 		"reconciled", result.Reconciled,
-		"skipped", result.Skipped, "failed", result.Failed,
+		"skipped", result.Skipped, "provisional", result.Provisional,
+		"failed", result.Failed,
 		"cancelled", result.Cancelled)
 
 	// See the note on Result.Cancelled: a partial sweep is a success.
@@ -302,14 +322,27 @@ const (
 	// itself is already updated — that is not a write to Strava and the
 	// athlete's rename is final whatever the write mode.
 	outcomeReconcileDryRun
+
+	// outcomeProvisional is a skip that is not final yet: a ride below the
+	// sport thresholds, untagged and still at a Strava default title, inside
+	// its re-check window.
+	//
+	// ActivityFix sets the commute flag after the upload and Strava sends no
+	// event for that change, so an entry dequeued on the first sweep that
+	// sees it has nothing left to bring it back — the ride keeps its default
+	// title for good. Keeping the entry is what closes that race: the next
+	// sweep re-reads the activity and reaches [classifier.TierErrand] if the
+	// flag has since arrived.
+	outcomeProvisional
 )
 
 // staysQueued reports whether the entry is left for the next sweep.
 //
-// Only the dry-run endings, and only because dry run has to be a no-op on the
-// queue. Everything else is finished with: named, skipped or reconciled.
+// The dry-run endings, because dry run has to be a no-op on the queue, and a
+// provisional skip, because the decision that produced it is not final yet.
+// Everything else is finished with: named, skipped or reconciled.
 func (o outcome) staysQueued() bool {
-	return o == outcomeDryRun || o == outcomeReconcileDryRun
+	return o == outcomeDryRun || o == outcomeReconcileDryRun || o == outcomeProvisional
 }
 
 // processOne runs the pipeline for a single activity.
@@ -354,9 +387,7 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 			return outcomeSkipped, err
 		}
 
-		logger.Info("skipping", "reason", decision.Reason)
-
-		return outcomeSkipped, nil
+		return p.skip(pending, activity, decision, logger), nil
 	}
 
 	title, err := p.title(ctx, pending.AthleteID, activity, decision, logger)
@@ -378,6 +409,52 @@ func (p *Processor) processOne(ctx context.Context, pending store.Pending) (outc
 
 	return outcomeNamed, nil
 }
+
+// skip finishes a declined activity, deciding whether the decline is final.
+//
+// The activity has just been read and classified, which is the order that
+// matters: the last re-check before the window closes still sees Strava's
+// current state, so a commute flag set a minute before the deadline is acted
+// on rather than missed.
+//
+// The deadline is the queue entry's arrival plus the configured window. A
+// create event arrives at the upload to within webhook latency, which is when
+// the tools ahead of this one start writing; the ride's own start date would
+// be wrong for an upload hours after the ride.
+func (p *Processor) skip(
+	pending store.Pending, activity *strava.Activity,
+	decision classifier.Decision, logger *slog.Logger,
+) outcome {
+	if !decision.Provisional || p.deps.ProvisionalSkipWindow <= 0 {
+		logger.Info("skipping", "reason", decision.Reason)
+
+		return outcomeSkipped
+	}
+
+	deadline := pending.EnqueuedAt.Add(p.deps.ProvisionalSkipWindow)
+
+	now := p.deps.Now()
+	if now.Before(deadline) {
+		logger.Info("provisional skip; re-checking next sweep",
+			"reason", decision.Reason,
+			"commute", activity.Commute,
+			"deadline", deadline,
+			"remaining", deadline.Sub(now))
+
+		return outcomeProvisional
+	}
+
+	logger.Info("skipping",
+		"reason", reasonProvisionalExpired,
+		"deadline", deadline,
+		"commute", activity.Commute)
+
+	return outcomeSkipped
+}
+
+// reasonProvisionalExpired is what a log says when the re-check window closed
+// with the ride still untagged.
+const reasonProvisionalExpired = "provisional window expired"
 
 // gone reports that Strava has nothing to offer for this activity — it was
 // deleted, or it is no longer visible with the granted scopes.

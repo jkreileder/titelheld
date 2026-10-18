@@ -38,6 +38,11 @@ func TestClassify(t *testing.T) {
 		wantAction    Action
 		wantDirection Direction
 		wantReason    string
+
+		// wantProvisional cannot be derived from wantReason the way
+		// wantHuman is: a machine-titled small ride and an untouched one
+		// share reasonBelowThresholds and differ only here.
+		wantProvisional bool
 	}{
 		// --- The six cases named in the acceptance criteria. ---
 		{
@@ -556,10 +561,11 @@ func TestClassify(t *testing.T) {
 				DistanceMeters:    14999.9,
 				MovingTimeSeconds: 2699,
 			},
-			cfg:        geofencedConfig(),
-			wantTier:   TierNone,
-			wantAction: ActionSkip,
-			wantReason: "ride below the sport-ride thresholds",
+			cfg:             geofencedConfig(),
+			wantTier:        TierNone,
+			wantAction:      ActionSkip,
+			wantReason:      "ride below the sport-ride thresholds",
+			wantProvisional: true,
 		},
 		{
 			name: "no tier: a run has no rule of its own",
@@ -665,10 +671,11 @@ func TestClassify(t *testing.T) {
 				DistanceMeters:    3000,
 				MovingTimeSeconds: 600,
 			},
-			cfg:        Config{},
-			wantTier:   TierNone,
-			wantAction: ActionSkip,
-			wantReason: "ride below the sport-ride thresholds",
+			cfg:             Config{},
+			wantTier:        TierNone,
+			wantAction:      ActionSkip,
+			wantReason:      "ride below the sport-ride thresholds",
+			wantProvisional: true,
 		},
 		{
 			name: "zero config: commute titles are not filled in, so no tier 3",
@@ -691,6 +698,80 @@ func TestClassify(t *testing.T) {
 				SportType: "VirtualRide",
 			},
 			cfg:        Config{},
+			wantTier:   TierVirtual,
+			wantAction: ActionSkip,
+			wantReason: "virtual ride, zwift_mode=keep",
+		},
+
+		// --- Provisional: a tier-none skip the commute flag may still
+		// --- rescue. ActivityFix sets that flag after the upload and Strava
+		// --- sends no event for it, so the classifier says which skips are
+		// --- worth looking at again.
+		{
+			name: "provisional: small untagged ride still at its Strava default",
+			activity: Activity{
+				Name:              "Afternoon Ride",
+				SportType:         "Ride",
+				DistanceMeters:    2900,
+				MovingTimeSeconds: 600,
+			},
+			cfg:             geofencedConfig(),
+			wantTier:        TierNone,
+			wantAction:      ActionSkip,
+			wantReason:      "ride below the sport-ride thresholds",
+			wantProvisional: true,
+		},
+		{
+			name: "final: the same ride carrying a Xert machine title",
+			activity: Activity{
+				Name:              "Difficult Mixed Breakaway Specialist Ride",
+				SportType:         "Ride",
+				DistanceMeters:    2900,
+				MovingTimeSeconds: 600,
+			},
+			cfg:        geofencedConfig(),
+			wantTier:   TierNone,
+			wantAction: ActionSkip,
+			wantReason: "ride below the sport-ride thresholds",
+		},
+		{
+			name: "final: the same ride once the commute flag is set",
+			activity: Activity{
+				Name:              "Afternoon Ride",
+				SportType:         "Ride",
+				Commute:           true,
+				DistanceMeters:    2900,
+				MovingTimeSeconds: 600,
+				Start:             elsewhere,
+				End:               elsewhere,
+			},
+			cfg:        geofencedConfig(),
+			wantTier:   TierErrand,
+			wantAction: ActionErrandTemplate,
+			wantReason: "commute-tagged errand",
+		},
+		{
+			name: "final: a walk is never a ride awaiting a flag",
+			activity: Activity{
+				Name:              "Afternoon Walk",
+				SportType:         "Walk",
+				DistanceMeters:    2900,
+				MovingTimeSeconds: 600,
+			},
+			cfg:        geofencedConfig(),
+			wantTier:   TierSkip,
+			wantAction: ActionSkip,
+			wantReason: "sport type Walk is never named",
+		},
+		{
+			name: "final: a virtual ride has its own tier",
+			activity: Activity{
+				Name:              "Afternoon Ride",
+				SportType:         "VirtualRide",
+				DistanceMeters:    2900,
+				MovingTimeSeconds: 600,
+			},
+			cfg:        geofencedConfig(),
 			wantTier:   TierVirtual,
 			wantAction: ActionSkip,
 			wantReason: "virtual ride, zwift_mode=keep",
@@ -722,6 +803,10 @@ func TestClassify(t *testing.T) {
 			wantHuman := tt.wantReason == reasonNotDefaultTitle
 			if got.HumanTitled != wantHuman {
 				t.Errorf("HumanTitled = %v, want %v", got.HumanTitled, wantHuman)
+			}
+
+			if got.Provisional != tt.wantProvisional {
+				t.Errorf("Provisional = %v, want %v", got.Provisional, tt.wantProvisional)
 			}
 		})
 	}

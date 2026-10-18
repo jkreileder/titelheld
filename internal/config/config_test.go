@@ -40,6 +40,10 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ProcessDelay != DefaultProcessDelay {
 		t.Errorf("ProcessDelay = %v, want %v", cfg.ProcessDelay, DefaultProcessDelay)
 	}
+	if cfg.ProvisionalSkipWindow != DefaultProvisionalSkipWindow {
+		t.Errorf("ProvisionalSkipWindow = %v, want %v",
+			cfg.ProvisionalSkipWindow, DefaultProvisionalSkipWindow)
+	}
 	if cfg.WebhookPath != "/webhook/s3cr3t-segment" {
 		t.Errorf("WebhookPath = %q", cfg.WebhookPath)
 	}
@@ -208,10 +212,11 @@ func TestOptionalOverrides(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Load(env(map[string]string{
-		"PORT":              "9090",
-		"PROCESS_DELAY":     "90s",
-		"STRAVA_ATHLETE_ID": "4242",
-		"BASE_URL":          "https://namer.example.invalid/",
+		"PORT":                    "9090",
+		"PROCESS_DELAY":           "90s",
+		"PROVISIONAL_SKIP_WINDOW": "90m",
+		"STRAVA_ATHLETE_ID":       "4242",
+		"BASE_URL":                "https://namer.example.invalid/",
 	}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -222,6 +227,9 @@ func TestOptionalOverrides(t *testing.T) {
 	}
 	if cfg.ProcessDelay != 90*time.Second {
 		t.Errorf("ProcessDelay = %v", cfg.ProcessDelay)
+	}
+	if cfg.ProvisionalSkipWindow != 90*time.Minute {
+		t.Errorf("ProvisionalSkipWindow = %v", cfg.ProvisionalSkipWindow)
 	}
 	if cfg.AthleteID != 4242 {
 		t.Errorf("AthleteID = %d", cfg.AthleteID)
@@ -290,6 +298,9 @@ func TestInvalidOptionalValues(t *testing.T) {
 		{name: "athlete id negative", key: "STRAVA_ATHLETE_ID", raw: "-1"},
 		{name: "delay not a duration", key: "PROCESS_DELAY", raw: "ten minutes"},
 		{name: "delay negative", key: "PROCESS_DELAY", raw: "-5m"},
+		{name: "window not a duration", key: "PROVISIONAL_SKIP_WINDOW", raw: "one hour"},
+		{name: "window negative", key: "PROVISIONAL_SKIP_WINDOW", raw: "-1m"},
+		{name: "window over the ceiling", key: "PROVISIONAL_SKIP_WINDOW", raw: "24h1m"},
 	}
 
 	for _, tt := range tests {
@@ -300,6 +311,91 @@ func TestInvalidOptionalValues(t *testing.T) {
 				t.Fatalf("Load with %s=%q = nil error, want error", tt.key, tt.raw)
 			}
 		})
+	}
+}
+
+// The re-check window's boundaries: zero disables the re-checks — the
+// pre-feature behavior, and the rollback knob — and the ceiling itself is
+// accepted rather than refused one value short of the message it prints. An
+// unset variable is not zero; TestLoadDefaults holds that end.
+func TestProvisionalSkipWindowBoundaries(t *testing.T) {
+	t.Parallel()
+
+	for raw, want := range map[string]time.Duration{
+		"0":   0,
+		"24h": 24 * time.Hour,
+	} {
+		cfg, err := Load(env(map[string]string{"PROVISIONAL_SKIP_WINDOW": raw}))
+		if err != nil {
+			t.Fatalf("Load with PROVISIONAL_SKIP_WINDOW=%q: %v", raw, err)
+		}
+
+		if cfg.ProvisionalSkipWindow != want {
+			t.Errorf("ProvisionalSkipWindow = %v, want %v", cfg.ProvisionalSkipWindow, want)
+		}
+	}
+}
+
+// The refusal names the variable and both bounds, so an operator reads what
+// to change rather than that something was wrong.
+//
+// The whole phrase, not the pieces: "0" appears inside "24h0m0s", so a
+// substring check for it passes on a message that never mentioned the floor.
+func TestProvisionalSkipWindowRefusalNamesTheBounds(t *testing.T) {
+	t.Parallel()
+
+	_, err := Load(env(map[string]string{"PROVISIONAL_SKIP_WINDOW": "48h"}))
+	if err == nil {
+		t.Fatal("Load with PROVISIONAL_SKIP_WINDOW=48h = nil error, want error")
+	}
+
+	want := `PROVISIONAL_SKIP_WINDOW must be a duration between 0 and 24h0m0s, got "48h"`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error %v does not carry %q", err, want)
+	}
+}
+
+// A window inside the process delay never re-checks anything: the entry is
+// not looked at until the delay has elapsed, by which time the window has
+// closed. The loader refuses it rather than letting the setting do nothing.
+func TestAProvisionalSkipWindowMustOutlastTheProcessDelay(t *testing.T) {
+	t.Parallel()
+
+	// Equal is refused: the deadline has passed at the very first sight.
+	_, err := Load(env(map[string]string{
+		"PROCESS_DELAY": "10m", "PROVISIONAL_SKIP_WINDOW": "10m",
+	}))
+	if err == nil {
+		t.Fatal("a window equal to the delay was accepted, want a refusal")
+	}
+
+	want := "PROVISIONAL_SKIP_WINDOW (10m0s) must be greater than PROCESS_DELAY (10m0s)"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error %v does not carry %q", err, want)
+	}
+
+	// One minute more is accepted, so the refusal is about the relation and
+	// not about the variable being set at all.
+	cfg, err := Load(env(map[string]string{
+		"PROCESS_DELAY": "10m", "PROVISIONAL_SKIP_WINDOW": "11m",
+	}))
+	if err != nil {
+		t.Fatalf("Load with a window one minute past the delay: %v", err)
+	}
+
+	if cfg.ProvisionalSkipWindow != 11*time.Minute {
+		t.Errorf("ProvisionalSkipWindow = %v, want 11m", cfg.ProvisionalSkipWindow)
+	}
+
+	// And the shipped pair satisfies its own rule, which is the case a
+	// deployment that configures neither actually gets.
+	if cfg, err = Load(env(nil)); err != nil {
+		t.Fatalf("Load with neither variable set: %v", err)
+	}
+
+	if cfg.ProvisionalSkipWindow <= cfg.ProcessDelay {
+		t.Errorf("the shipped window %v does not outlast the shipped delay %v",
+			cfg.ProvisionalSkipWindow, cfg.ProcessDelay)
 	}
 }
 

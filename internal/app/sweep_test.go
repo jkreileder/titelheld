@@ -430,6 +430,30 @@ func TestPromptLoggingIsOnAndIndependentOfTheWriteMode(t *testing.T) {
 	}
 }
 
+// The re-check window reaches the processor, and an environment that sets
+// nothing still carries the shipped default.
+//
+// Asserted through config.Load and sweepDeps rather than on a hand-built
+// config: a default that is parsed and then never passed on leaves every skip
+// final on first sight, which is exactly the behavior the window exists to
+// change, and nothing about it is visible from outside the wiring.
+func TestTheProvisionalSkipWindowReachesTheProcessor(t *testing.T) {
+	t.Parallel()
+
+	if got := depsFromEnv(t, nil).ProvisionalSkipWindow; got != config.DefaultProvisionalSkipWindow {
+		t.Errorf("ProvisionalSkipWindow = %v, want the shipped %v",
+			got, config.DefaultProvisionalSkipWindow)
+	}
+
+	// The control: a configured value replaces the default, so the assertion
+	// above is about a value that traveled rather than one hard-coded twice.
+	deps := depsFromEnv(t, map[string]string{"PROVISIONAL_SKIP_WINDOW": "0"})
+	if deps.ProvisionalSkipWindow != 0 {
+		t.Errorf("ProvisionalSkipWindow = %v with the window disabled, want 0",
+			deps.ProvisionalSkipWindow)
+	}
+}
+
 // Provider dispatch, through the real loader and the real wiring.
 //
 // With LLM_PROVIDER unset the Vertex branch is taken. Reaching Vertex needs

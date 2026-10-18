@@ -203,6 +203,8 @@ func sweepDeps(
 		WritesEnabled: cfg.WritesEnabled,
 		LogPrompt:     cfg.LogPrompt,
 		Logger:        logger,
+
+		ProvisionalSkipWindow: cfg.ProvisionalSkipWindow,
 	}, nil
 }
 

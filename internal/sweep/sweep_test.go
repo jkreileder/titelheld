@@ -283,7 +283,9 @@ func TestTheSchedulersTokenIsAccepted(t *testing.T) {
 	t.Parallel()
 
 	fix := newFixture(t, goodPayload(), nil)
-	fix.sweeper.result = processor.Result{Due: 5, Named: 2, Reconciled: 1, Skipped: 1, Failed: 1}
+	fix.sweeper.result = processor.Result{
+		Due: 6, Named: 2, Reconciled: 1, Skipped: 1, Provisional: 1, Failed: 1,
+	}
 
 	rec := fix.post(t, "Bearer t")
 
@@ -302,17 +304,24 @@ func TestTheSchedulersTokenIsAccepted(t *testing.T) {
 	}
 
 	var body struct {
-		Due, Named, Reconciled, Skipped, Failed int
-		Cancelled                               bool
+		Due, Named, Reconciled, Skipped, Provisional, Failed int
+		Cancelled                                            bool
 	}
 
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("the response is not JSON: %v (%q)", err, rec.Body.String())
 	}
 
-	if body.Due != 5 || body.Named != 2 || body.Reconciled != 1 ||
-		body.Skipped != 1 || body.Failed != 1 {
+	// Every ending is reported, so due is the sum of them: an ending missing
+	// from the body reads as a queue that lost entries.
+	if body.Due != 6 || body.Named != 2 || body.Reconciled != 1 ||
+		body.Skipped != 1 || body.Provisional != 1 || body.Failed != 1 {
 		t.Errorf("body %+v does not report the sweep's counts", body)
+	}
+
+	if sum := body.Named + body.Reconciled + body.Skipped +
+		body.Provisional + body.Failed; sum != body.Due {
+		t.Errorf("the endings in %+v sum to %d, not the %d due", body, sum, body.Due)
 	}
 
 	if body.Cancelled {
@@ -337,8 +346,8 @@ func TestACancelledSweepIsReportedInTheResponse(t *testing.T) {
 	}
 
 	var body struct {
-		Due, Named, Reconciled, Skipped, Failed int
-		Cancelled                               bool
+		Due, Named, Reconciled, Skipped, Provisional, Failed int
+		Cancelled                                            bool
 	}
 
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {

@@ -161,9 +161,16 @@ func enqueueIsIdempotent(t *testing.T, s store.Store) {
 		t.Fatalf("Enqueue = %v, %v; want true, nil", added, err)
 	}
 
-	pending.Aspect = "update"
+	// A later delivery carrying different timestamps. Nothing about it may
+	// reach the stored entry: a re-check deadline is computed from EnqueuedAt,
+	// so an Enqueue that overwrote it would push the deadline forward on every
+	// redelivery and the entry would never finalize.
+	second := pending
+	second.Aspect = "update"
+	second.EnqueuedAt = pending.EnqueuedAt.Add(5 * time.Minute)
+	second.ProcessAfter = pending.ProcessAfter.Add(5 * time.Minute)
 
-	added, err = s.Enqueue(t.Context(), pending)
+	added, err = s.Enqueue(t.Context(), second)
 	if err != nil {
 		t.Fatalf("second Enqueue: %v", err)
 	}
@@ -174,6 +181,30 @@ func enqueueIsIdempotent(t *testing.T, s store.Store) {
 	count, err := s.Len(t.Context())
 	if err != nil || count != 1 {
 		t.Errorf("Len = %d, %v; want 1, nil", count, err)
+	}
+
+	// Read the entry back rather than trusting the count: an implementation
+	// that replaced the row would still report one entry.
+	// Well past either delivery's deadline, so an entry that was replaced is
+	// still returned and the mismatch is reported as the moved timestamp it
+	// is rather than as an empty result.
+	due, err := s.Due(t.Context(), pending.ProcessAfter.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+
+	if len(due) != 1 {
+		t.Fatalf("Due returned %d entries, want the one that was enqueued", len(due))
+	}
+
+	if !due[0].EnqueuedAt.Equal(pending.EnqueuedAt) {
+		t.Errorf("EnqueuedAt = %v, want the first delivery's %v — a redelivery moved it",
+			due[0].EnqueuedAt, pending.EnqueuedAt)
+	}
+
+	if !due[0].ProcessAfter.Equal(pending.ProcessAfter) {
+		t.Errorf("ProcessAfter = %v, want the first delivery's %v — a redelivery moved it",
+			due[0].ProcessAfter, pending.ProcessAfter)
 	}
 }
 
