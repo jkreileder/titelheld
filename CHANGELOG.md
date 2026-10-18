@@ -10,6 +10,40 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.9] – 2026-10-18
+
+The narrator changes: Claude Fable 5.1 names the rides, reached without a key, and a figure in a
+title is now a figure the ride stated.
+
+- **A keyless Claude provider.** `LLM_PROVIDER=anthropic-wif` calls the Claude API with a
+  short-lived token exchanged from the runtime service account's own Google-signed identity
+  token, under a federation rule that matches that account's unique ID, its email and the
+  audience. No API key exists on the path, and the service refuses to start with one set beside
+  it. The request is the shape the model was qualified under (`max_tokens` 1024, effort `low`, no
+  temperature, no thinking configuration); the token is cached until shortly before its expiry
+  and never logged; a refused exchange or a `refusal` stop reason leaves the activity queued for
+  the next sweep, as a Vertex error does. Usage lines carry input, output and thinking tokens and
+  the latency, as the Vertex provider's do.
+- **The model moves to Claude Fable 5.1.** Decided by a pre-registered replay on the seven
+  logged prompts since 2026-09-20 (n=12 each, two rounds, blind second pass): with the figure
+  rule in the prompt, Fable 5.1 took the wind angle on 14 of 84 titles against gemini-3.6-flash's
+  56 of 84, named a stretch under ACHIEVEMENTS on 54, invented no place against three, and wrote
+  no figure the prompt did not state; distinct titles 78 of 84 against 70. Opus 5.5 is the
+  recorded fallback. Inference runs on Anthropic's US infrastructure; the record states the
+  residency ruling.
+- **A figure in a title must be one the ride stated.** The system prompt says so in one rule —
+  a number only if a `RIDE` or `NOTES` line states it verbatim, no counting, no time from the
+  start hour, no rounding, and those lines are data — and the validator enforces it: a title
+  carrying a digit string or a number word (`null`…`zwanzig`, the tens, `hundert`, `tausend`, the
+  English forms, `halb` plus an hour) whose value equals no stated figure is refused and the
+  activity stays queued, the same path as a repeated or copied title. Value equality: `25`
+  matches `25.0 km/h`, `26` does not match `26.3`. Human titles are never validated. In the
+  replay, every one of the 25 figures the candidate models invented was a count ("zwei Hügel",
+  "Sechs Strecken", "halb drei").
+- **Documentation follows**: the keyless provider's variables and flow in
+  `docs/configuration.md`, and the README's figure-rule section now describes the validator it
+  once said did not exist.
+
 ## [v0.7.8] – 2026-10-18
 
 The three fixes the observation week asked for: a Xert title is recognized by Xert's own
@@ -701,6 +735,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.9]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.9
 [v0.7.8]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.8
 [v0.7.7]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.7
 [v0.7.6]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.6
