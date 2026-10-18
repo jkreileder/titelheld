@@ -192,8 +192,15 @@ func (p *Processor) complete(
 	// FranchiseNext — so a per-call list would only be the same list rebuilt.
 	forbidden := gathered.Context.ForbiddenTitles()
 
-	title, err := p.ask(
-		ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, forbidden, logger)
+	prompt := naming.BuildPrompt(ride, gathered.Context)
+
+	// The figures a title may carry, built once for the same reason: RIDE and
+	// NOTES are identical across the calls. The offered entry is among them —
+	// it is the operator's own text, and a series entry that carries a number
+	// would otherwise never be writable.
+	stated := naming.StatedFigures(prompt.User, entry)
+
+	title, err := p.ask(ctx, prompt, guard, ride.Achievements, forbidden, stated, logger)
 	if err != nil {
 		return naming.Title{}, false, err
 	}
@@ -216,8 +223,7 @@ func (p *Processor) complete(
 			"entry", logsafe.String(entry),
 			"title", logsafe.String(title.Text))
 
-		retry, err := p.ask(
-			ctx, naming.BuildPrompt(ride, gathered.Context), guard, ride.Achievements, forbidden, logger)
+		retry, err := p.ask(ctx, prompt, guard, ride.Achievements, forbidden, stated, logger)
 		if err != nil {
 			// The title in hand is a good one that simply ignored the series.
 			// Losing it because a second call failed would leave the ride at
@@ -244,9 +250,13 @@ func (p *Processor) complete(
 	// guard. Without that, a title from this call could still claim it — and
 	// this call's title is written with the position left where it was, so
 	// the entry would be spent on the feed and offered again on the next ride.
+	// The entry is withdrawn from this prompt, so its figures are withdrawn
+	// from what the title may state.
+	plainPrompt := naming.BuildPrompt(ride, plain)
+
 	plainTitle, err := p.ask(
-		ctx, naming.BuildPrompt(ride, plain), gathered.Series.Guard(""),
-		ride.Achievements, forbidden, logger)
+		ctx, plainPrompt, gathered.Series.Guard(""),
+		ride.Achievements, forbidden, naming.StatedFigures(plainPrompt.User), logger)
 	if err != nil {
 		logger.Warn("naming without the series failed; keeping the title that ignored it",
 			"error", err)
@@ -273,9 +283,14 @@ func (p *Processor) complete(
 // The forbidden titles are the third: the prompt lists RECENT and EXAMPLES and
 // says not to repeat them, and a candidate that is one of them is refused for
 // the same reason and with the same consequence.
+//
+// The figures are the fourth: a title may carry a figure only if the prompt's
+// RIDE or NOTES lines or the offered franchise entry state it, and a candidate
+// with any other is refused with the same consequence. Only a service candidate passes through here; a title
+// the athlete wrote is recorded elsewhere and never held to this.
 func (p *Processor) ask(
 	ctx context.Context, prompt naming.Prompt, guard naming.Guarded,
-	achievements, forbidden []string, logger *slog.Logger,
+	achievements, forbidden []string, stated naming.Figures, logger *slog.Logger,
 ) (naming.Title, error) {
 	p.logPrompt(prompt, logger)
 
@@ -318,6 +333,13 @@ func (p *Processor) ask(
 			"llm %s returned an unusable title: %w: %q repeats %q",
 			p.deps.Provider.Name(), naming.ErrTitleRepeatsKnown,
 			logsafe.String(title.Text), logsafe.String(known))
+	}
+
+	if figure, unstated := naming.UnstatedFigure(title.Text, stated); unstated {
+		return naming.Title{}, fmt.Errorf(
+			"llm %s returned an unusable title: %w: %q carries a figure the prompt does not state: %q",
+			p.deps.Provider.Name(), naming.ErrTitleFiguresUnstated,
+			logsafe.String(title.Text), logsafe.String(figure))
 	}
 
 	return title, nil

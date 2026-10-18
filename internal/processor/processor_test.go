@@ -252,10 +252,11 @@ func (f *fakeProvider) Complete(_ context.Context, prompt naming.Prompt) (string
 	// A model that does what it is told about repetition too: a candidate equal
 	// to a title the prompt already carries is refused, so the fake varies its
 	// usual answer once that title is on the list — which is what naming
-	// several activities in one sweep puts there.
+	// several activities in one sweep puts there. The variation is a letter,
+	// not a count: a figure the prompt does not state is refused as well.
 	title := defaultFakeTitle
 	if strings.Contains(prompt.User, defaultFakeTitle) {
-		title = fmt.Sprintf("%s %d", defaultFakeTitle, f.calls)
+		title = fmt.Sprintf("%s %c", defaultFakeTitle, 'A'+rune(f.calls))
 	}
 
 	return `{"title":"` + title + `","language":"de"}`, nil
@@ -881,6 +882,71 @@ func TestARepeatedRecentTitleIsNotWritten(t *testing.T) {
 
 	if writes := h.strava.writes(); len(writes) != 0 {
 		t.Errorf("a repeated title was written: %+v", writes)
+	}
+}
+
+// A title carrying a figure the prompt does not state is refused, not written,
+// and the activity stays queued for the next sweep's draw.
+//
+// Nine is no number in the ride's RIDE block, so "Neun" is invented. Remove
+// the check and the title is written and the queue empties.
+func TestATitleWithAnUnstatedFigureIsNotWritten(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Provider = &fakeProvider{
+			response: `{"title":"Neun auf einen Streich","language":"de"}`,
+		}
+	})
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Failed != 1 || result.Named != 0 {
+		t.Errorf("result = %+v, want a failure", result)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 0 {
+		t.Errorf("a title with an unstated figure was written: %+v", writes)
+	}
+
+	due, err := h.store.Due(t.Context(), h.now)
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+
+	if len(due) != 1 || due[0].ActivityID != 777 {
+		t.Errorf("queued after the refusal = %+v, want the activity kept", due)
+	}
+}
+
+// A figure the RIDE block states stands: 181 is the ride's moving time.
+func TestATitleWithAStatedFigureIsWritten(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, true, func(d *Deps) {
+		d.Provider = &fakeProvider{
+			response: `{"title":"181 Minuten am Musterbach","language":"de"}`,
+		}
+	})
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Named != 1 {
+		t.Errorf("result = %+v, want one naming", result)
+	}
+
+	if writes := h.strava.writes(); len(writes) != 1 {
+		t.Errorf("%d PUTs, want 1: a stated figure must stand", len(writes))
 	}
 }
 

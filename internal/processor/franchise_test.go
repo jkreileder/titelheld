@@ -394,6 +394,51 @@ func TestAnUnusableEntryIsNotOffered(t *testing.T) {
 	}
 }
 
+// A series entry that carries a number is writable: the entry is the
+// operator's own configuration, so its figure counts as stated, where the
+// same figure from anywhere else would be refused.
+func TestAFranchiseEntryWithAFigureIsWritten(t *testing.T) {
+	t.Parallel()
+
+	h := franchiseRide(t, true)
+	h.proc.deps.Franchises = []naming.Franchise{{
+		Name:     "pink-panther",
+		GearName: "Pink Panther",
+		Titles:   []string{"The Pink Panther 2"},
+	}}
+
+	provider := scripted(h, step{response: title("The Pink Panther 2 im Gegenwind")})
+
+	h.enqueue(t, "create")
+
+	result, err := h.proc.Sweep(t.Context())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if result.Named != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want the ride named", result)
+	}
+
+	if provider.calls != 1 {
+		t.Errorf("the model was called %d times, want 1", provider.calls)
+	}
+
+	writes := h.strava.writes()
+	if len(writes) != 1 || writes[0].name != "The Pink Panther 2 im Gegenwind" {
+		t.Fatalf("writes = %+v, want the entry's title written once", writes)
+	}
+
+	position, err := h.store.FranchisePosition(t.Context(), 4242, "pink-panther")
+	if err != nil {
+		t.Fatalf("FranchisePosition: %v", err)
+	}
+
+	if position != 1 {
+		t.Errorf("position = %d, want 1: the entry was used", position)
+	}
+}
+
 // The named log records what Strava kept, not what was sent.
 //
 // Strava deletes tokens from a title that look like a hostname: a hand-written
