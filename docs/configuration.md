@@ -234,15 +234,17 @@ or looked at.
 call the provider mints a Google-signed identity token for the runtime service account from the
 metadata server (`…/service-accounts/default/identity?audience=<ANTHROPIC_WIF_AUDIENCE>&format=full`),
 posts it to `https://api.anthropic.com/v1/oauth/token` under the federation rule, and calls
-`/v1/messages` with the returned bearer token, cached until 120 seconds before its expiry. The
-four identifiers are not secrets: they are plain configuration, carried the way `llm_model` is
-(see [Infrastructure](infrastructure.md)); the only secret in the flow is the token in memory,
-which never reaches a log. The request is the one the model was qualified under: `max_tokens` 1024,
-`output_config.effort` `low`, no temperature (the model rejects one), no thinking configuration,
-no JSON mode. A refused exchange or a `refusal` stop reason is a provider error: the activity
-stays queued and the next sweep retries, as after a Vertex 5xx. The federation rule on
-Anthropic's side matches the runtime service account's unique ID, its email and the audience,
-so no other identity can exchange a token under it.
+`/v1/messages` with the returned bearer token, cached until 120 seconds before its expiry. A 401
+on that call drops the cached token and, if the token came from the cache, exchanges once more
+and sends the request again; a second 401 fails the activity for this sweep, and a 403, 429 or
+5xx leaves the cache alone. The four identifiers are not secrets: they are plain configuration,
+carried the way `llm_model` is (see [Infrastructure](infrastructure.md)); the only secret in the
+flow is the token in memory, which never reaches a log. The request is the one the model was
+qualified under: `max_tokens` 1024, `output_config.effort` `low`, no temperature (the model
+rejects one), no thinking configuration, no JSON mode. A refused exchange or a `refusal` stop
+reason is a provider error: the activity stays queued and the next sweep retries, as after a
+Vertex 5xx. The federation rule on Anthropic's side matches the runtime service account's unique
+ID, its email and the audience, so no other identity can exchange a token under it.
 
 `LLM_BASE_URL` is the API root *including its version path*: the provider appends
 `/chat/completions` to it verbatim, so `https://openrouter.ai` would answer 404 on every call and
