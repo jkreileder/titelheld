@@ -70,14 +70,14 @@ repos:
       - id: shfmt
         args: [--write, --indent=2, --case-indent]
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: fa412071e4f5d44d44f9e365f4676f9df92456a2  # frozen: v1.30.1
+    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
     hooks:
       # Security audit of GitHub Actions workflows (template injection,
       # credential persistence, cache poisoning, ...); complements actionlint,
       # which checks correctness.
       - id: zizmor
   - repo: https://github.com/renovatebot/pre-commit-hooks
-    rev: 3f0e775a23955a4bd421247042f80ce0b0b13f8c  # frozen: 44.155.3
+    rev: 8adf64b386d97d11a5dfa890695278590c76fc43  # frozen: 44.164.7
     hooks:
       - id: renovate-config-validator
         args: [--strict]
