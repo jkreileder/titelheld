@@ -10,6 +10,23 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.10] – 2026-10-19
+
+One fix to the keyless Claude provider: a rejected access token is exchanged again, once.
+
+- **A 401 from the Messages API clears the cached credential.** The `anthropic-wif` provider
+  cached its access token until shortly before expiry and had no answer to a token the API
+  stopped accepting earlier — every ride failed with `unexpected status 401` until the hour was
+  up. Now a 401 on the completion drops that token (only that one: a concurrent caller that has
+  already refreshed keeps its newer token, and one exchange serves them all). If the rejected
+  token came from the cache, the provider exchanges a fresh one and sends the same request once
+  more, logging `anthropic access token rejected; re-exchanging`. A second 401 ends the attempt
+  with `access token rejected twice (status 401 after a fresh exchange)` and the activity stays
+  queued for the next sweep, as every provider error does. A token this call minted itself and
+  had rejected on first use is reported as the plain status error with no retry: it cannot have
+  been revoked early. 403, 429 and 5xx leave the cache untouched; a refused exchange is
+  unchanged. No token appears in any log line or error.
+
 ## [v0.7.9] – 2026-10-18
 
 The narrator changes: Claude Fable 5.1 names the rides, reached without a key, and a figure in a
@@ -735,6 +752,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.10]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.10
 [v0.7.9]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.9
 [v0.7.8]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.8
 [v0.7.7]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.7
