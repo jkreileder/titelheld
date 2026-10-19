@@ -259,8 +259,12 @@ variable "anthropic_wif_audience" {
   type        = string
   default     = ""
 
+  # The binary's own check (config.checkAudience): https, a host (a name or a
+  # bracketed IPv6 literal), an optional port in 1-65535, an optional path,
+  # and no user info, query or fragment. What the binary refuses must not
+  # pass a plan, or the revision fails after the apply.
   validation {
-    condition     = var.anthropic_wif_audience == "" || can(regex("^https://[a-z0-9.-]+(/.*)?$", var.anthropic_wif_audience))
-    error_message = "anthropic_wif_audience must be empty or an https URL."
+    condition     = var.anthropic_wif_audience == "" || can(regex("^https://([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\])(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(/[^?#]*)?$", var.anthropic_wif_audience))
+    error_message = "anthropic_wif_audience must be empty or a plain https URL with a host, an optional port in 1-65535 and an optional path: no user info, query or fragment."
   }
 }
