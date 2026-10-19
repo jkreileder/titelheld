@@ -582,19 +582,31 @@ func wifLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), &logs
 }
 
-// A completion rejected with 401 drops the cached token, exchanges once more
-// and resends the same request with the new bearer; the title comes back and
-// one warning, carrying the status and nothing else, records the recovery.
+// wifWarm runs one successful completion, which leaves the first exchanged
+// token in the cache.
+func wifWarm(t *testing.T, provider *AnthropicWIF) {
+	t.Helper()
+
+	if _, err := provider.Complete(t.Context(), Prompt{System: "warm", User: "warm"}); err != nil {
+		t.Fatalf("warming Complete: %v", err)
+	}
+}
+
+// A cached token rejected with 401 is dropped, a fresh one is exchanged and
+// the same request is resent with it; the title comes back and one warning,
+// carrying the status and nothing else, records the recovery.
 func TestAnthropicWIFRecoversFromARejectedToken(t *testing.T) {
 	t.Parallel()
 
 	fake := newWIFServer(t)
 	fake.rotateTokens = true
-	fake.messagesStatus = wifStatuses(http.StatusUnauthorized)
+	fake.messagesStatus = wifStatuses(http.StatusOK, http.StatusUnauthorized)
 
 	logger, logs := wifLogger()
 	provider := newWIFProvider(fake, &wifIdentity{})
 	provider.Logger = logger
+
+	wifWarm(t, provider)
 
 	raw, err := provider.Complete(t.Context(), Prompt{System: "sys", User: "usr"})
 	if err != nil {
@@ -605,8 +617,8 @@ func TestAnthropicWIFRecoversFromARejectedToken(t *testing.T) {
 		t.Errorf("ParseAndValidate = %+v, %v", title, err)
 	}
 
-	if fake.exchanges.Load() != 2 || fake.completions.Load() != 2 {
-		t.Errorf("exchanges = %d, completions = %d; want 2 and 2", fake.exchanges.Load(), fake.completions.Load())
+	if fake.exchanges.Load() != 2 || fake.completions.Load() != 3 {
+		t.Errorf("exchanges = %d, completions = %d; want 2 and 3", fake.exchanges.Load(), fake.completions.Load())
 	}
 
 	if fake.authorization != "Bearer "+wifRotatedToken(2) {
@@ -637,46 +649,102 @@ func TestAnthropicWIFRecoversFromARejectedToken(t *testing.T) {
 	}
 }
 
-// A second 401, from a token exchanged after the first, ends the call with
-// the distinct error and no third attempt; a retry rejected for any other
-// reason reports that status through the ordinary status error.
+// A cached token rejected, a fresh exchange, and the fresh token rejected too
+// ends the call with the distinct error and no third attempt, and leaves
+// nothing cached: the next call exchanges for itself. A retry rejected for any
+// other reason reports that status through the ordinary status error and
+// keeps its token.
 func TestAnthropicWIFRejectedTwice(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name   string
-		second int
-		want   string
+		name      string
+		second    int
+		want      string
+		exchanges int64
 	}{
 		{"401 twice", http.StatusUnauthorized,
-			"naming: anthropic-wif: access token rejected twice (status 401 after a fresh exchange)"},
-		{"401 then 500", http.StatusInternalServerError, "naming: anthropic-wif: unexpected status 500"},
+			"naming: anthropic-wif: access token rejected twice (status 401 after a fresh exchange)", 3},
+		{"401 then 500", http.StatusInternalServerError, "naming: anthropic-wif: unexpected status 500", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			fake := newWIFServer(t)
 			fake.rotateTokens = true
-			fake.messagesStatus = wifStatuses(http.StatusUnauthorized, tc.second)
+			fake.messagesStatus = wifStatuses(http.StatusOK, http.StatusUnauthorized, tc.second)
 
 			logger, logs := wifLogger()
 			provider := newWIFProvider(fake, &wifIdentity{})
 			provider.Logger = logger
+
+			wifWarm(t, provider)
 
 			_, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"})
 			if err == nil || err.Error() != tc.want {
 				t.Errorf("error = %v, want exactly %q", err, tc.want)
 			}
 
-			if fake.exchanges.Load() != 2 || fake.completions.Load() != 2 {
-				t.Errorf("exchanges = %d, completions = %d; want 2 and 2",
+			if fake.exchanges.Load() != 2 || fake.completions.Load() != 3 {
+				t.Errorf("exchanges = %d, completions = %d; want 2 and 3",
 					fake.exchanges.Load(), fake.completions.Load())
 			}
 
 			if len(wifRecoveryLines(t, logs)) != 1 {
 				t.Errorf("recovery lines = %d, want one per call:\n%s", len(wifRecoveryLines(t, logs)), logs)
 			}
+
+			// The token rejected twice is not cached; one rejected for
+			// another reason is.
+			if _, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"}); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+
+			if got := fake.exchanges.Load(); got != tc.exchanges {
+				t.Errorf("exchanges after the next Complete = %d, want %d", got, tc.exchanges)
+			}
 		})
+	}
+}
+
+// A token this call exchanged and had rejected on its first use was not
+// revoked early: the call returns the ordinary status error with one send,
+// one exchange and no warning, and the token is not cached.
+func TestAnthropicWIFFreshTokenRejected(t *testing.T) {
+	t.Parallel()
+
+	fake := newWIFServer(t)
+	fake.rotateTokens = true
+	fake.messagesStatus = wifStatuses(http.StatusUnauthorized)
+
+	logger, logs := wifLogger()
+	provider := newWIFProvider(fake, &wifIdentity{})
+	provider.Logger = logger
+
+	_, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"})
+	if want := "naming: anthropic-wif: unexpected status 401"; err == nil || err.Error() != want {
+		t.Errorf("error = %v, want exactly %q", err, want)
+	}
+
+	if fake.exchanges.Load() != 1 || fake.completions.Load() != 1 {
+		t.Errorf("exchanges = %d, completions = %d; want 1 and 1", fake.exchanges.Load(), fake.completions.Load())
+	}
+
+	if lines := wifRecoveryLines(t, logs); len(lines) != 0 {
+		t.Errorf("recovery lines = %v after a fresh token's 401, want none", lines)
+	}
+
+	if provider.token != "" {
+		t.Error("the rejected token is still cached")
+	}
+
+	if _, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	if fake.exchanges.Load() != 2 || fake.authorization != "Bearer "+wifRotatedToken(2) {
+		t.Errorf("exchanges = %d, Authorization = %q; want a second exchange and its token",
+			fake.exchanges.Load(), fake.authorization)
 	}
 }
 
@@ -724,9 +792,11 @@ func TestAnthropicWIFOtherStatusesKeepTheToken(t *testing.T) {
 	}
 }
 
-// Concurrent completions whose first attempts are all rejected share one
-// re-exchange: the first to invalidate clears the token, and the rest find
-// the replacement rather than clearing it again.
+// Concurrent completions whose first attempts all present the same cached
+// token, and all have it rejected, finish without a failure and with a single
+// re-exchange under this test's ordering. Which of them clears the token is
+// left to the scheduler; the equality guard that keeps the others from
+// clearing its replacement is pinned by the invalidate unit test.
 func TestAnthropicWIFSingleFlightReExchange(t *testing.T) {
 	t.Parallel()
 
@@ -735,9 +805,12 @@ func TestAnthropicWIFSingleFlightReExchange(t *testing.T) {
 	fake := newWIFServer(t)
 	fake.rotateTokens = true
 
+	// The first token is accepted until the cache is warm, then rejected.
+	var armed atomic.Bool
+
 	rejected := "Bearer " + wifRotatedToken(1)
 	fake.messagesStatus = func(_ int64, authorization string) int {
-		if authorization == rejected {
+		if armed.Load() && authorization == rejected {
 			return http.StatusUnauthorized
 		}
 
@@ -750,7 +823,7 @@ func TestAnthropicWIFSingleFlightReExchange(t *testing.T) {
 
 	release := make(chan struct{})
 	fake.messagesGate = func(authorization string) {
-		if authorization != rejected {
+		if !armed.Load() || authorization != rejected {
 			return
 		}
 
@@ -765,6 +838,9 @@ func TestAnthropicWIFSingleFlightReExchange(t *testing.T) {
 	}
 
 	provider := newWIFProvider(fake, &wifIdentity{})
+
+	wifWarm(t, provider)
+	armed.Store(true)
 
 	var (
 		wg     sync.WaitGroup
@@ -789,9 +865,9 @@ func TestAnthropicWIFSingleFlightReExchange(t *testing.T) {
 		t.Errorf("%d concurrent completions failed", failed.Load())
 	}
 
-	if fake.exchanges.Load() != 2 || fake.completions.Load() != 2*callers {
+	if fake.exchanges.Load() != 2 || fake.completions.Load() != 1+2*callers {
 		t.Errorf("exchanges = %d, completions = %d; want 2 and %d",
-			fake.exchanges.Load(), fake.completions.Load(), 2*callers)
+			fake.exchanges.Load(), fake.completions.Load(), 1+2*callers)
 	}
 }
 
@@ -823,9 +899,7 @@ func TestAnthropicWIFInvalidateClearsOnlyTheRejectedToken(t *testing.T) {
 func TestAnthropicWIFNeverLogsAToken(t *testing.T) {
 	t.Parallel()
 
-	var logs bytes.Buffer
-
-	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger, logs := wifLogger()
 
 	var errs []string
 
@@ -861,23 +935,32 @@ func TestAnthropicWIFNeverLogsAToken(t *testing.T) {
 		errs = append(errs, err.Error())
 	}
 
-	// A rejected token recovered, and a rejected token rejected again.
-	for _, statuses := range [][]int{
-		{http.StatusUnauthorized},
-		{http.StatusUnauthorized, http.StatusUnauthorized},
+	// A fresh token rejected; a cached token rejected and recovered; a cached
+	// token rejected and its replacement rejected too.
+	for _, tc := range []struct {
+		warm     bool
+		statuses []int
+	}{
+		{false, []int{http.StatusUnauthorized}},
+		{true, []int{http.StatusOK, http.StatusUnauthorized}},
+		{true, []int{http.StatusOK, http.StatusUnauthorized, http.StatusUnauthorized}},
 	} {
 		rejecting := newWIFServer(t)
 		rejecting.rotateTokens = true
-		rejecting.messagesStatus = wifStatuses(statuses...)
+		rejecting.messagesStatus = wifStatuses(tc.statuses...)
 		rejectingProvider := newWIFProvider(rejecting, &wifIdentity{})
 		rejectingProvider.Logger = logger
+
+		if tc.warm {
+			wifWarm(t, rejectingProvider)
+		}
 
 		if _, err := rejectingProvider.Complete(t.Context(), Prompt{System: "s", User: "u"}); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
 
-	if len(errs) != 6 {
+	if len(errs) != 7 {
 		t.Fatalf("errors = %v, want one per failure path", errs)
 	}
 

@@ -217,26 +217,25 @@ type anthropicWIFResponse struct {
 	} `json:"usage"`
 }
 
-// errTokenRejectedTwice ends a completion whose retry, made with a freshly
-// exchanged access token, was rejected as well. The processor logs the error
-// text alone, so the text is the reason.
+// errTokenRejectedTwice ends a completion whose cached access token was
+// rejected, and whose retry, made with a token exchanged after that, was
+// rejected as well. The processor logs the error text alone, so the text is
+// the reason.
 var errTokenRejectedTwice = errors.New(
 	"naming: anthropic-wif: access token rejected twice (status 401 after a fresh exchange)")
 
 // Complete sends the prompt to the Messages API and returns the model's text.
 //
-// A 401 from the Messages API means the cached access token is no longer
-// accepted, which the expiry alone cannot predict. That token is dropped and
-// the completion is sent once more with a fresh one; a second 401 is returned
-// as an error. Every other failure — a failed exchange included — is returned
-// as it is, so the caller leaves the activity queued and the next sweep is the
-// retry.
+// Every 401 from the Messages API drops the access token it rejected from the
+// cache, so no later call presents it again. A cached token can stop being
+// accepted before its expiry, so a rejected cached token earns one more
+// attempt with a fresh one; a second 401 is [errTokenRejectedTwice]. A token
+// exchanged by this call and rejected on its first use cannot have been
+// revoked early: that is a configuration or authorization failure, returned
+// as the ordinary status error with no retry. Every other failure — a failed
+// exchange included — is returned as it is, so the caller leaves the activity
+// queued and the next sweep is the retry.
 func (a *AnthropicWIF) Complete(ctx context.Context, prompt Prompt) (string, error) {
-	token, err := a.accessToken(ctx)
-	if err != nil {
-		return "", err
-	}
-
 	payload := anthropicWIFRequest{
 		Model:        a.model(),
 		MaxTokens:    maxOutputTokens,
@@ -250,24 +249,16 @@ func (a *AnthropicWIF) Complete(ctx context.Context, prompt Prompt) (string, err
 		return "", fmt.Errorf("naming: anthropic-wif: encode request: %w", err)
 	}
 
-	start := time.Now()
+	var (
+		response *http.Response
+		start    time.Time
+	)
 
-	response, err := a.send(ctx, token, body)
-	if err != nil {
-		return "", err
-	}
-
-	if response.StatusCode == http.StatusUnauthorized {
-		// The body can echo the request, so it is drained unread.
-		drainAndClose(response)
-
-		if a.Logger != nil {
-			a.Logger.Warn("anthropic access token rejected; re-exchanging", "status", http.StatusUnauthorized)
-		}
-
-		a.invalidate(token)
-
-		token, err = a.accessToken(ctx)
+	// At most two attempts. The second is made only after a cached token was
+	// rejected, and its token was exchanged after that rejection — by this
+	// call or by a concurrent one — so it is fresh by construction.
+	for attempt := range 2 {
+		token, cached, err := a.accessToken(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -281,10 +272,23 @@ func (a *AnthropicWIF) Complete(ctx context.Context, prompt Prompt) (string, err
 			return "", err
 		}
 
-		if response.StatusCode == http.StatusUnauthorized {
-			drainAndClose(response)
+		if response.StatusCode != http.StatusUnauthorized {
+			break
+		}
 
+		// The body can echo the request, so it is drained unread.
+		drainAndClose(response)
+		a.invalidate(token)
+
+		switch {
+		case attempt > 0:
 			return "", errTokenRejectedTwice
+		case !cached:
+			return "", fmt.Errorf("naming: anthropic-wif: %w", statusError(response))
+		}
+
+		if a.Logger != nil {
+			a.Logger.Warn("anthropic access token rejected; re-exchanging", "status", http.StatusUnauthorized)
 		}
 	}
 	defer drainAndClose(response)
@@ -379,27 +383,29 @@ func (a *AnthropicWIF) invalidate(rejected string) {
 }
 
 // accessToken returns a cached access token, or exchanges for a new one when
-// fewer than [tokenRefreshMargin] remain.
+// fewer than [tokenRefreshMargin] remain. cached reports which: a token served
+// from the cache may have been revoked since it was issued, one just exchanged
+// may not.
 //
 // The lock is held across the exchange: callers that arrive while one is in
-// flight wait for it and share its token. A failed exchange caches nothing,
-// so the next caller exchanges again.
-func (a *AnthropicWIF) accessToken(ctx context.Context) (string, error) {
+// flight wait for it and share its token, which they receive as cached. A
+// failed exchange caches nothing, so the next caller exchanges again.
+func (a *AnthropicWIF) accessToken(ctx context.Context) (token string, cached bool, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if a.token != "" && a.expiry.Sub(a.clock()) >= tokenRefreshMargin {
-		return a.token, nil
+		return a.token, true, nil
 	}
 
 	token, expiry, err := a.exchange(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	a.token, a.expiry = token, expiry
 
-	return token, nil
+	return token, false, nil
 }
 
 // exchange trades a fresh identity token for an access token.
