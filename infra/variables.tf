@@ -119,8 +119,15 @@ variable "llm_provider" {
   default     = ""
 
   validation {
-    condition     = contains(["", "gemini", "anthropic", "openrouter"], var.llm_provider)
-    error_message = "llm_provider must be empty, \"gemini\", \"anthropic\" or \"openrouter\"."
+    condition     = contains(["", "gemini", "anthropic", "anthropic-wif", "openrouter"], var.llm_provider)
+    error_message = "llm_provider must be empty, \"gemini\", \"anthropic\", \"anthropic-wif\" or \"openrouter\"."
+  }
+
+  validation {
+    # The binary refuses anthropic-wif without its three identifiers; refusing
+    # here keeps a half-set tfvars from rolling a revision that will not start.
+    condition     = var.llm_provider != "anthropic-wif" || (var.anthropic_federation_rule_id != "" && var.anthropic_organization_id != "" && var.anthropic_service_account_id != "")
+    error_message = "llm_provider = anthropic-wif requires anthropic_federation_rule_id, anthropic_organization_id and anthropic_service_account_id."
   }
 }
 
@@ -197,4 +204,67 @@ variable "machine_title_patterns" {
   description = "MACHINE_TITLE_PATTERNS: newline-separated regular expressions that replace the shipped machine-title list, the titles this service may overwrite. Empty means the binary's own list. The binary compiles the patterns and refuses to start on a bad one; nothing is checked here."
   type        = string
   default     = ""
+}
+
+# Workload identity federation to the Claude API, for llm_provider =
+# "anthropic-wif". Identifiers, not secrets: the credential is minted at
+# runtime from the service account's own identity token and never stored.
+# Each is carried only when set, so the Gemini default sees none of them.
+variable "anthropic_federation_rule_id" {
+  description = "ANTHROPIC_FEDERATION_RULE_ID: the federation rule (fdrl_...) the runtime service account's identity token is exchanged under. Required by the binary when llm_provider is anthropic-wif."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.anthropic_federation_rule_id == "" || can(regex("^fdrl_[A-Za-z0-9]+$", var.anthropic_federation_rule_id))
+    error_message = "anthropic_federation_rule_id must be empty or an fdrl_... identifier."
+  }
+}
+
+variable "anthropic_organization_id" {
+  description = "ANTHROPIC_ORGANIZATION_ID: the Anthropic organization UUID. Required by the binary when llm_provider is anthropic-wif."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.anthropic_organization_id == "" || can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.anthropic_organization_id))
+    error_message = "anthropic_organization_id must be empty or a UUID."
+  }
+}
+
+variable "anthropic_service_account_id" {
+  description = "ANTHROPIC_SERVICE_ACCOUNT_ID: the Anthropic service account (svac_...) the exchanged token acts as. Required by the binary when llm_provider is anthropic-wif."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.anthropic_service_account_id == "" || can(regex("^svac_[A-Za-z0-9]+$", var.anthropic_service_account_id))
+    error_message = "anthropic_service_account_id must be empty or an svac_... identifier."
+  }
+}
+
+variable "anthropic_workspace_id" {
+  description = "ANTHROPIC_WORKSPACE_ID: the Anthropic workspace (wrkspc_...) the token is scoped to. Optional; sent in the exchange when set."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.anthropic_workspace_id == "" || can(regex("^wrkspc_[A-Za-z0-9]+$", var.anthropic_workspace_id))
+    error_message = "anthropic_workspace_id must be empty or a wrkspc_... identifier."
+  }
+}
+
+variable "anthropic_wif_audience" {
+  description = "ANTHROPIC_WIF_AUDIENCE: the audience the identity token is minted for and the federation rule matches. Empty means the binary's own default, https://api.anthropic.com."
+  type        = string
+  default     = ""
+
+  # The binary's own check (config.checkAudience): https, a host (a name or a
+  # bracketed IPv6 literal), an optional port in 1-65535, an optional path,
+  # and no user info, query or fragment. What the binary refuses must not
+  # pass a plan, or the revision fails after the apply.
+  validation {
+    condition     = var.anthropic_wif_audience == "" || can(regex("^https://([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\])(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(/[^?#]*)?$", var.anthropic_wif_audience))
+    error_message = "anthropic_wif_audience must be empty or a plain https URL with a host, an optional port in 1-65535 and an optional path: no user info, query or fragment."
+  }
 }
