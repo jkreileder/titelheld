@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,7 +63,29 @@ type wifServer struct {
 	exchangeStatus int
 	exchangeReply  string
 	messagesReply  string
+
+	// rotateTokens makes exchange n issue wifRotatedToken(n) rather than the
+	// fixed reply, so a test can tell a rejected token from its replacement.
+	rotateTokens bool
+
+	// messagesStatus decides the status of completion call (counted from 1)
+	// presented with authorization. Nil answers 200. A non-200 reply carries a
+	// body that echoes a prompt marker, which must never surface.
+	messagesStatus func(call int64, authorization string) int
+
+	// messagesGate runs before the handler takes mu, so it may block a
+	// completion until others have arrived.
+	messagesGate func(authorization string)
 }
+
+// wifRotatedToken is the access token a rotating fake issues on exchange n.
+// It keeps the fixed token's prefix, so a search for "oat01" finds any of them.
+func wifRotatedToken(n int64) string {
+	return wifTestAccessToken + "-" + strconv.FormatInt(n, 10)
+}
+
+// wifRejectedBody is what a fake returns with a non-200 completion.
+const wifRejectedBody = `{"type":"error","error":{"message":"prompt was: SECRET-PROMPT-TEXT"}}`
 
 func newWIFServer(t *testing.T) *wifServer {
 	t.Helper()
@@ -74,21 +97,39 @@ func newWIFServer(t *testing.T) *wifServer {
 
 		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
 
+		if r.URL.Path == "/v1/messages" && fake.messagesGate != nil {
+			fake.messagesGate(r.Header.Get("Authorization"))
+		}
+
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
 
 		switch r.URL.Path {
 		case "/v1/oauth/token":
-			fake.exchanges.Add(1)
+			n := fake.exchanges.Add(1)
 			fake.exchangeBody = body
 
+			reply := fake.exchangeReply
+			if fake.rotateTokens {
+				reply = `{"access_token": "` + wifRotatedToken(n) + `", "token_type": "Bearer", "expires_in": 3600}`
+			}
+
 			w.WriteHeader(fake.exchangeStatus)
-			_, _ = io.WriteString(w, fake.exchangeReply)
+			_, _ = io.WriteString(w, reply)
 		case "/v1/messages":
-			fake.completions.Add(1)
+			call := fake.completions.Add(1)
 			fake.messagesBody = body
 			fake.authorization = r.Header.Get("Authorization")
 			fake.version = r.Header.Get("Anthropic-Version")
+
+			if fake.messagesStatus != nil {
+				if status := fake.messagesStatus(call, fake.authorization); status != http.StatusOK {
+					w.WriteHeader(status)
+					_, _ = io.WriteString(w, wifRejectedBody)
+
+					return
+				}
+			}
 
 			_, _ = io.WriteString(w, fake.messagesReply)
 		default:
@@ -241,7 +282,9 @@ func TestAnthropicWIFExchangeDenied(t *testing.T) {
 	fake := newWIFServer(t)
 	fake.exchangeStatus = http.StatusUnauthorized
 	fake.exchangeReply = `{"type":"error","error":{"type":"authentication_error","message":"Authentication failed"}}`
+	logger, logs := wifLogger()
 	provider := newWIFProvider(fake, &wifIdentity{})
+	provider.Logger = logger
 
 	_, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"})
 	if err == nil {
@@ -261,7 +304,13 @@ func TestAnthropicWIFExchangeDenied(t *testing.T) {
 	_, _ = provider.Complete(t.Context(), Prompt{System: "s", User: "u"})
 
 	if fake.exchanges.Load() != 2 {
-		t.Errorf("exchanges = %d, want a second attempt after a failure", fake.exchanges.Load())
+		t.Errorf("exchanges = %d, want one per call and no retry of the exchange", fake.exchanges.Load())
+	}
+
+	// A denied exchange is not a rejected access token: there is nothing to
+	// recover from, and no recovery is logged.
+	if lines := wifRecoveryLines(t, logs); len(lines) != 0 {
+		t.Errorf("recovery lines = %v after a denied exchange, want none", lines)
 	}
 }
 
@@ -491,6 +540,284 @@ func TestAnthropicWIFCompletionStatus(t *testing.T) {
 	}
 }
 
+// wifStatuses answers completion call n with statuses[n-1], and 200 past the
+// end of the list.
+func wifStatuses(statuses ...int) func(int64, string) int {
+	return func(call int64, _ string) int {
+		if call <= int64(len(statuses)) {
+			return statuses[call-1]
+		}
+
+		return http.StatusOK
+	}
+}
+
+// wifRecoveryLines returns the decoded "re-exchanging" lines in a JSON log.
+func wifRecoveryLines(t *testing.T, logs *bytes.Buffer) []map[string]any {
+	t.Helper()
+
+	var lines []map[string]any
+
+	for raw := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
+		if raw == "" {
+			continue
+		}
+
+		var line map[string]any
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			t.Fatalf("log line %q: %v", raw, err)
+		}
+
+		if line["msg"] == "anthropic access token rejected; re-exchanging" {
+			lines = append(lines, line)
+		}
+	}
+
+	return lines
+}
+
+func wifLogger() (*slog.Logger, *bytes.Buffer) {
+	var logs bytes.Buffer
+
+	return slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), &logs
+}
+
+// A completion rejected with 401 drops the cached token, exchanges once more
+// and resends the same request with the new bearer; the title comes back and
+// one warning, carrying the status and nothing else, records the recovery.
+func TestAnthropicWIFRecoversFromARejectedToken(t *testing.T) {
+	t.Parallel()
+
+	fake := newWIFServer(t)
+	fake.rotateTokens = true
+	fake.messagesStatus = wifStatuses(http.StatusUnauthorized)
+
+	logger, logs := wifLogger()
+	provider := newWIFProvider(fake, &wifIdentity{})
+	provider.Logger = logger
+
+	raw, err := provider.Complete(t.Context(), Prompt{System: "sys", User: "usr"})
+	if err != nil {
+		t.Fatalf("Complete after one 401 = %v, want the retried title", err)
+	}
+
+	if title, _, err := NewValidator(nil).ParseAndValidate(raw); err != nil || title.Text != "Testrunde am Abend" {
+		t.Errorf("ParseAndValidate = %+v, %v", title, err)
+	}
+
+	if fake.exchanges.Load() != 2 || fake.completions.Load() != 2 {
+		t.Errorf("exchanges = %d, completions = %d; want 2 and 2", fake.exchanges.Load(), fake.completions.Load())
+	}
+
+	if fake.authorization != "Bearer "+wifRotatedToken(2) {
+		t.Errorf("retry Authorization = %q, want the second exchange's token", fake.authorization)
+	}
+
+	if retried := fake.messagesBody; retried["system"] != "sys" || retried["model"] != DefaultAnthropicWIFModel {
+		t.Errorf("retried body = %v, want the original request", retried)
+	}
+
+	lines := wifRecoveryLines(t, logs)
+	if len(lines) != 1 {
+		t.Fatalf("recovery lines = %v, want exactly one:\n%s", lines, logs)
+	}
+
+	if len(lines[0]) != 4 || lines[0]["level"] != "WARN" || lines[0]["status"] != float64(http.StatusUnauthorized) {
+		t.Errorf("recovery line = %v, want time, level WARN, msg and status 401 alone", lines[0])
+	}
+
+	// The replacement is cached: the next completion neither exchanges nor
+	// warns.
+	if _, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	if fake.exchanges.Load() != 2 || len(wifRecoveryLines(t, logs)) != 1 {
+		t.Errorf("exchanges = %d after a clean completion, want 2 and no second warning", fake.exchanges.Load())
+	}
+}
+
+// A second 401, from a token exchanged after the first, ends the call with
+// the distinct error and no third attempt; a retry rejected for any other
+// reason reports that status through the ordinary status error.
+func TestAnthropicWIFRejectedTwice(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		second int
+		want   string
+	}{
+		{"401 twice", http.StatusUnauthorized,
+			"naming: anthropic-wif: access token rejected twice (status 401 after a fresh exchange)"},
+		{"401 then 500", http.StatusInternalServerError, "naming: anthropic-wif: unexpected status 500"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := newWIFServer(t)
+			fake.rotateTokens = true
+			fake.messagesStatus = wifStatuses(http.StatusUnauthorized, tc.second)
+
+			logger, logs := wifLogger()
+			provider := newWIFProvider(fake, &wifIdentity{})
+			provider.Logger = logger
+
+			_, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"})
+			if err == nil || err.Error() != tc.want {
+				t.Errorf("error = %v, want exactly %q", err, tc.want)
+			}
+
+			if fake.exchanges.Load() != 2 || fake.completions.Load() != 2 {
+				t.Errorf("exchanges = %d, completions = %d; want 2 and 2",
+					fake.exchanges.Load(), fake.completions.Load())
+			}
+
+			if len(wifRecoveryLines(t, logs)) != 1 {
+				t.Errorf("recovery lines = %d, want one per call:\n%s", len(wifRecoveryLines(t, logs)), logs)
+			}
+		})
+	}
+}
+
+// Any other non-200 from the Messages API returns the status error, leaves
+// the cached token alone and warns of nothing; the next completion reuses it.
+func TestAnthropicWIFOtherStatusesKeepTheToken(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{
+		http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable,
+	} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			t.Parallel()
+
+			fake := newWIFServer(t)
+			fake.rotateTokens = true
+			fake.messagesStatus = wifStatuses(status)
+
+			logger, logs := wifLogger()
+			provider := newWIFProvider(fake, &wifIdentity{})
+			provider.Logger = logger
+
+			_, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"})
+			if want := "naming: anthropic-wif: unexpected status " + strconv.Itoa(status); err == nil || err.Error() != want {
+				t.Errorf("error = %v, want exactly %q", err, want)
+			}
+
+			if fake.completions.Load() != 1 {
+				t.Errorf("completions = %d after a %d, want no retry", fake.completions.Load(), status)
+			}
+
+			if _, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"}); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+
+			if fake.exchanges.Load() != 1 || fake.authorization != "Bearer "+wifRotatedToken(1) {
+				t.Errorf("exchanges = %d, Authorization = %q; want the first token reused",
+					fake.exchanges.Load(), fake.authorization)
+			}
+
+			if lines := wifRecoveryLines(t, logs); len(lines) != 0 {
+				t.Errorf("recovery lines = %v after a %d, want none", lines, status)
+			}
+		})
+	}
+}
+
+// Concurrent completions whose first attempts are all rejected share one
+// re-exchange: the first to invalidate clears the token, and the rest find
+// the replacement rather than clearing it again.
+func TestAnthropicWIFSingleFlightReExchange(t *testing.T) {
+	t.Parallel()
+
+	const callers = 8
+
+	fake := newWIFServer(t)
+	fake.rotateTokens = true
+
+	rejected := "Bearer " + wifRotatedToken(1)
+	fake.messagesStatus = func(_ int64, authorization string) int {
+		if authorization == rejected {
+			return http.StatusUnauthorized
+		}
+
+		return http.StatusOK
+	}
+
+	// Every first attempt is held until all of them have arrived, so all of
+	// them carry the token that is about to be rejected.
+	var arrived atomic.Int64
+
+	release := make(chan struct{})
+	fake.messagesGate = func(authorization string) {
+		if authorization != rejected {
+			return
+		}
+
+		if arrived.Add(1) == callers {
+			close(release)
+		}
+
+		select {
+		case <-release:
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	provider := newWIFProvider(fake, &wifIdentity{})
+
+	var (
+		wg     sync.WaitGroup
+		failed atomic.Int64
+	)
+
+	for range callers {
+		wg.Go(func() {
+			if _, err := provider.Complete(t.Context(), Prompt{System: "s", User: "u"}); err != nil {
+				failed.Add(1)
+			}
+		})
+	}
+
+	wg.Wait()
+
+	if arrived.Load() != callers {
+		t.Fatalf("first attempts with the rejected token = %d, want %d", arrived.Load(), callers)
+	}
+
+	if failed.Load() != 0 {
+		t.Errorf("%d concurrent completions failed", failed.Load())
+	}
+
+	if fake.exchanges.Load() != 2 || fake.completions.Load() != 2*callers {
+		t.Errorf("exchanges = %d, completions = %d; want 2 and %d",
+			fake.exchanges.Load(), fake.completions.Load(), 2*callers)
+	}
+}
+
+// Only the token that failed is cleared; a newer one left by another caller
+// stays.
+func TestAnthropicWIFInvalidateClearsOnlyTheRejectedToken(t *testing.T) {
+	t.Parallel()
+
+	expiry := time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC)
+	provider := &AnthropicWIF{token: "newer", expiry: expiry}
+
+	provider.invalidate("older")
+
+	if provider.token != "newer" || !provider.expiry.Equal(expiry) {
+		t.Errorf("after invalidating another token: token = %q, expiry = %v; want both kept",
+			provider.token, provider.expiry)
+	}
+
+	provider.invalidate("newer")
+
+	if provider.token != "" || !provider.expiry.IsZero() {
+		t.Errorf("after invalidating the cached token: token = %q, expiry = %v; want both cleared",
+			provider.token, provider.expiry)
+	}
+}
+
 // Neither token reaches a log line or an error, on the success path or on any
 // failure path; the usage and exchange lines carry what they promise.
 func TestAnthropicWIFNeverLogsAToken(t *testing.T) {
@@ -534,13 +861,29 @@ func TestAnthropicWIFNeverLogsAToken(t *testing.T) {
 		errs = append(errs, err.Error())
 	}
 
-	if len(errs) != 5 {
+	// A rejected token recovered, and a rejected token rejected again.
+	for _, statuses := range [][]int{
+		{http.StatusUnauthorized},
+		{http.StatusUnauthorized, http.StatusUnauthorized},
+	} {
+		rejecting := newWIFServer(t)
+		rejecting.rotateTokens = true
+		rejecting.messagesStatus = wifStatuses(statuses...)
+		rejectingProvider := newWIFProvider(rejecting, &wifIdentity{})
+		rejectingProvider.Logger = logger
+
+		if _, err := rejectingProvider.Complete(t.Context(), Prompt{System: "s", User: "u"}); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+
+	if len(errs) != 6 {
 		t.Fatalf("errors = %v, want one per failure path", errs)
 	}
 
 	output := logs.String()
 
-	for _, secret := range []string{wifTestAccessToken, wifTestIdentityToken, "oat01"} {
+	for _, secret := range []string{wifTestAccessToken, wifTestIdentityToken, "oat01", "SECRET-PROMPT-TEXT"} {
 		if strings.Contains(output, secret) {
 			t.Errorf("logs carry %q:\n%s", secret, output)
 		}
@@ -556,6 +899,7 @@ func TestAnthropicWIFNeverLogsAToken(t *testing.T) {
 		`"msg":"anthropic exchange"`, `"expires_in":3600`, `"scope":"workspace:developer"`,
 		`"msg":"anthropic usage"`, `"model":"claude-fable-5-1"`, `"input_tokens":812`,
 		`"output_tokens":41`, `"thinking_tokens":17`, `"stop_reason":"end_turn"`, `"latency_ms":`,
+		`"msg":"anthropic access token rejected; re-exchanging","status":401`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("logs lack %s:\n%s", want, output)

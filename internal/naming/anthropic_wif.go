@@ -68,8 +68,9 @@ type AnthropicWIF struct {
 	// https://api.anthropic.com.
 	BaseURL string
 
-	// Logger receives one usage line per completion and one line per
-	// exchange. Nil logs nothing. Neither line carries a token.
+	// Logger receives one usage line per completion, one line per exchange
+	// and one warning per access token the Messages API rejects. Nil logs
+	// nothing. No line carries a token.
 	Logger *slog.Logger
 
 	// now is the clock the cache reads. Nil means time.Now.
@@ -216,10 +217,19 @@ type anthropicWIFResponse struct {
 	} `json:"usage"`
 }
 
+// errTokenRejectedTwice ends a completion whose retry, made with a freshly
+// exchanged access token, was rejected as well. The processor logs the error
+// text alone, so the text is the reason.
+var errTokenRejectedTwice = errors.New(
+	"naming: anthropic-wif: access token rejected twice (status 401 after a fresh exchange)")
+
 // Complete sends the prompt to the Messages API and returns the model's text.
 //
-// A failed exchange is returned like any other provider error, so the caller
-// leaves the activity queued. Nothing here retries: the next sweep is the
+// A 401 from the Messages API means the cached access token is no longer
+// accepted, which the expiry alone cannot predict. That token is dropped and
+// the completion is sent once more with a fresh one; a second 401 is returned
+// as an error. Every other failure — a failed exchange included — is returned
+// as it is, so the caller leaves the activity queued and the next sweep is the
 // retry.
 func (a *AnthropicWIF) Complete(ctx context.Context, prompt Prompt) (string, error) {
 	token, err := a.accessToken(ctx)
@@ -240,20 +250,42 @@ func (a *AnthropicWIF) Complete(ctx context.Context, prompt Prompt) (string, err
 		return "", fmt.Errorf("naming: anthropic-wif: encode request: %w", err)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.url("/v1/messages"), bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("naming: anthropic-wif: build request: %w", err)
-	}
-
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Anthropic-Version", anthropicVersion)
-
 	start := time.Now()
 
-	response, err := a.client().Do(request)
+	response, err := a.send(ctx, token, body)
 	if err != nil {
-		return "", fmt.Errorf("naming: anthropic-wif: request: %w", err)
+		return "", err
+	}
+
+	if response.StatusCode == http.StatusUnauthorized {
+		// The body can echo the request, so it is drained unread.
+		drainAndClose(response)
+
+		if a.Logger != nil {
+			a.Logger.Warn("anthropic access token rejected; re-exchanging", "status", http.StatusUnauthorized)
+		}
+
+		a.invalidate(token)
+
+		token, err = a.accessToken(ctx)
+		if err != nil {
+			return "", err
+		}
+
+		// The usage line's latency describes the completion that produced
+		// the usage.
+		start = time.Now()
+
+		response, err = a.send(ctx, token, body)
+		if err != nil {
+			return "", err
+		}
+
+		if response.StatusCode == http.StatusUnauthorized {
+			drainAndClose(response)
+
+			return "", errTokenRejectedTwice
+		}
 	}
 	defer drainAndClose(response)
 
@@ -310,6 +342,40 @@ func (a *AnthropicWIF) Complete(ctx context.Context, prompt Prompt) (string, err
 	}
 
 	return text.String(), nil
+}
+
+// send posts one completion with the given bearer. The request is built
+// afresh from the encoded body on every call, because an [http.Request] is
+// spent once it has been sent.
+func (a *AnthropicWIF) send(ctx context.Context, token string, body []byte) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.url("/v1/messages"), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("naming: anthropic-wif: build request: %w", err)
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Anthropic-Version", anthropicVersion)
+
+	response, err := a.client().Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("naming: anthropic-wif: request: %w", err)
+	}
+
+	return response, nil
+}
+
+// invalidate drops the cached access token if it is still the one that was
+// rejected. A concurrent caller that already replaced it has left a newer
+// token, which is kept: clearing it would cost a second exchange for a token
+// nobody has seen fail.
+func (a *AnthropicWIF) invalidate(rejected string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.token == rejected {
+		a.token, a.expiry = "", time.Time{}
+	}
 }
 
 // accessToken returns a cached access token, or exchanges for a new one when
