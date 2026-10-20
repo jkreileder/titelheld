@@ -75,7 +75,7 @@ jobs:
       - name: Start the Firestore emulator
         run: |
           docker run -d --rm -p 127.0.0.1:8080:8080 --name firestore-emulator \
-            gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators@sha256:dff831e11d4013af597446d43e1222a9196d9b2b0c8180606bb2e35bf1ea6e03 \
+            gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators@sha256:ba2726407ae3654d11ffdcd2eff74879f46c2ce805a8caa554d690afb615e433 \
             gcloud emulators firestore start --host-port=0.0.0.0:8080
 
           # Wait for the emulator to say it is running, not for the port to be
