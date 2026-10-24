@@ -3,9 +3,9 @@ module github.com/jkreileder/titelheld
 go 1.27.3
 
 require (
-	cloud.google.com/go/firestore v1.26.0
+	cloud.google.com/go/firestore v1.27.0
 	golang.org/x/text v0.43.0
-	google.golang.org/api v0.304.0
+	google.golang.org/api v0.306.0
 	google.golang.org/grpc v1.84.0
 )
 
