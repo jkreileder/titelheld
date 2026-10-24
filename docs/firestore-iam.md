@@ -184,7 +184,7 @@ in `.github/renovate.json`; changing one by hand will drift.
 
 ```sh
 docker run --rm -p 8080:8080 \
-  gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators@sha256:ba2726407ae3654d11ffdcd2eff74879f46c2ce805a8caa554d690afb615e433 \
+  gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators@sha256:cced7aefc06898a91efcfc942e6ab98537b3ec2d15d66ec54cffa62ac6d7f19b \
   gcloud emulators firestore start --host-port=0.0.0.0:8080
 
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 go test ./internal/store/...
