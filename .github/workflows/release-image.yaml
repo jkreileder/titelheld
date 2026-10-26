@@ -63,7 +63,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           disable-sudo: true
           egress-policy: block
@@ -162,7 +162,7 @@ jobs:
           # pinned by digest like every other image here. Renovate keeps it
           # current; see the custom manager in .github/renovate.json.
           driver-opts: image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
-          version: v0.38.0
+          version: v0.38.1
           # The buildx binary is the builder itself, so a release fetches it
           # fresh from the pinned version rather than restoring it from a
           # cache — the same hermetic argument as the cache-free build below.
@@ -234,7 +234,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           disable-sudo: true
           egress-policy: block
