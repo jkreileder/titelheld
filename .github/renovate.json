@@ -314,6 +314,19 @@
                 "patch"
             ],
             "minimumReleaseAge": "0 days"
+        },
+        {
+            "automerge": false,
+            "description": "A golang image minor update is reviewed by hand even when it lands ahead of the directive. The rule above lets the image skip minimumReleaseAge, and the docker group would otherwise automerge a minor that arrives alone; in the go toolchain group a minor already waits for review because the directive's minor does.",
+            "matchDatasources": [
+                "docker"
+            ],
+            "matchDepNames": [
+                "docker.io/library/golang"
+            ],
+            "matchUpdateTypes": [
+                "minor"
+            ]
         }
     ],
     "postUpdateOptions": [
