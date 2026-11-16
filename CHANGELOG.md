@@ -10,6 +10,27 @@ Releases are cut by hand from a signed tag — see
 section for the tag being released still says *Unreleased*, so dating this file is a required
 step rather than a habit.
 
+## [v0.7.11] – 2026-11-16
+
+A security release: the Go toolchain and the dependency tree move to their fixed versions. No
+behavior changes.
+
+- **Go 1.27.4.** Fixes GO-2026-6859 in `net/http`, which govulncheck traces through the webhook
+  and sweep handlers, the HTTP server and the outbound geocoder and Firestore clients. The
+  released v0.7.10 image was built with go1.27.2 and also carries GO-2026-6809 (`crypto/x509`
+  trusting compromised intermediates), fixed in 1.27.3. The `go` directive and the build image
+  move together; the image is
+  `golang:1.27.4-alpine3.24@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280`.
+- **Module updates.** `golang.org/x/net` v0.62.0 (GO-2026-6860, GO-2026-6866 in its `html`
+  package) and `golang.org/x/crypto` v0.59.0 (GO-2026-5932, `openpgp`); govulncheck finds no
+  call path from this code to either. Alongside them: `cloud.google.com/go/firestore` v1.27.0,
+  `google.golang.org/api` v0.306.0, `golang.org/x/text` v0.44.0, and the indirect Google auth,
+  gax, genproto, `x/oauth2`, `x/sync` and `x/sys` updates. The distroless runtime image digest is
+  refreshed.
+- **Release build egress.** Docker Hub serves image layers from Cloudflare R2 or from S3, chosen
+  per request; the image workflows now allow both, so a release build no longer fails on which
+  store answered.
+
 ## [v0.7.10] – 2026-10-19
 
 One fix to the keyless Claude provider: a rejected access token is exchanged again, once.
@@ -752,6 +773,7 @@ and describes, and `DRY_RUN` is on, so it cannot write to Strava.
 - **Release automation.** A signed tag builds the image once, attests it with SLSA provenance,
   and deploys that digest to Cloud Run.
 
+[v0.7.11]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.11
 [v0.7.10]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.10
 [v0.7.9]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.9
 [v0.7.8]: https://github.com/jkreileder/titelheld/releases/tag/v0.7.8
