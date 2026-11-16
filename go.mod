@@ -1,6 +1,6 @@
 module github.com/jkreileder/titelheld
 
-go 1.27.3
+go 1.27.4
 
 require (
 	cloud.google.com/go/firestore v1.27.0
