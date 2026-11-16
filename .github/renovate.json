@@ -300,6 +300,33 @@
                 "minor",
                 "patch"
             ]
+        },
+        {
+            "description": "Exempt the golang image's version updates from minimumReleaseAge, so the image cannot fall behind the go directive in the go toolchain group. The two members age on different clocks: the directive from the Go release date, the image from Docker Hub's tag_last_pushed, which every rebuild of the tag resets, and Docker rebuilds these tags every week or two for as long as they are current. A grouped branch does not wait for a pending member, it drops it, and a directive ahead of the image fails the build under the image's GOTOOLCHAIN=local. Exempt, the image is never the pending one; the age gate on the toolchain stays, counted from the Go release and carried by the directive. If the directive is the pending one, the image lands ahead of it, which builds. Digest refreshes keep their gate.",
+            "matchDatasources": [
+                "docker"
+            ],
+            "matchDepNames": [
+                "docker.io/library/golang"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
+            ],
+            "minimumReleaseAge": "0 days"
+        },
+        {
+            "automerge": false,
+            "description": "A golang image minor update is reviewed by hand even when it lands ahead of the directive. The rule above lets the image skip minimumReleaseAge, and the docker group would otherwise automerge a minor that arrives alone; in the go toolchain group a minor already waits for review because the directive's minor does.",
+            "matchDatasources": [
+                "docker"
+            ],
+            "matchDepNames": [
+                "docker.io/library/golang"
+            ],
+            "matchUpdateTypes": [
+                "minor"
+            ]
         }
     ],
     "postUpdateOptions": [
