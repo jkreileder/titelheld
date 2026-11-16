@@ -49,10 +49,10 @@ jobs:
           # Artifact Registry and the Google credential endpoints are absent,
           # so this job could not publish or authenticate even if it tried. dockerd
           # fetches Sigstore's TUF metadata (tuf-repo-cdn) when it pulls an image.
-          # Docker Hub serves image layers from two blob stores and picks one per
-          # request: Cloudflare R2 (docker-images-prod.<id>.r2...) and S3
-          # (docker-images-prod.s3.dualstack...). Every workflow that pulls from
-          # Docker Hub allows both.
+          # Docker Hub serves image layers from whichever blob store it picks per
+          # request: CloudFront (production.cloudfront.docker.com), Cloudflare R2
+          # (docker-images-prod.<id>.r2...) or S3 (docker-images-prod.s3.dualstack...).
+          # Every workflow that pulls from Docker Hub allows all three.
           allowed-endpoints: >
             *.actions.githubusercontent.com:443
             api.github.com:443
